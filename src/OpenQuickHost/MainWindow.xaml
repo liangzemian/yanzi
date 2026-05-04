@@ -65,6 +65,22 @@
         <Storyboard x:Key="FadeIn">
             <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.2" />
         </Storyboard>
+
+        <ContextMenu x:Key="FileResultContextMenu">
+            <MenuItem Header="打开"
+                      Click="OpenFileResultMenuItem_Click" />
+            <MenuItem Header="打开路径"
+                      Click="OpenFileResultDirectoryMenuItem_Click" />
+            <Separator />
+            <MenuItem Header="复制"
+                      Click="CopyFileResultMenuItem_Click" />
+            <MenuItem Header="复制完整路径"
+                      Click="CopyFileResultFullPathMenuItem_Click" />
+            <MenuItem Header="剪切"
+                      Click="CutFileResultMenuItem_Click" />
+            <MenuItem Header="删除"
+                      Click="DeleteFileResultMenuItem_Click" />
+        </ContextMenu>
     </Window.Resources>
 
     <Border Margin="15"
@@ -116,7 +132,7 @@
                 <!-- Search Box Placeholder -->
                 <TextBlock Grid.Column="1"
                            IsHitTestVisible="False"
-                           Text="开始搜索，或输入 @谷歌 关键词..."
+                           Text="搜索应用、扩展、系统项，或输入 @应用 / @系统 ..."
                            VerticalAlignment="Center"
                            Foreground="#FF555555"
                            FontSize="20"
@@ -178,6 +194,14 @@
                                         FontWeight="SemiBold"
                                         BorderThickness="1"
                                         Cursor="Hand">
+                                    <Button.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="删除顶部标签"
+                                                      Tag="{Binding}"
+                                                      Click="RemovePinnedSearchScopeMenuItem_Click"
+                                                      Visibility="{Binding IsPinnedCommand, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        </ContextMenu>
+                                    </Button.ContextMenu>
                                     <Button.Style>
                                         <Style TargetType="Button">
                                             <Setter Property="Background" Value="#E012151B" />
@@ -225,7 +249,7 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <Button Content="+"
-                            ToolTip="自定义添加"
+                            ToolTip="固定当前选中项到顶部标签"
                             Click="SearchScopeAddButton_Click"
                             Margin="1,0,0,0"
                             Padding="7,3"
@@ -286,9 +310,11 @@
                          ContextMenuOpening="CommandList_ContextMenuOpening"
                          MouseDoubleClick="CommandList_MouseDoubleClick"
                          PreviewMouseRightButtonDown="CommandList_PreviewMouseRightButtonDown"
+                         PreviewMouseRightButtonUp="CommandList_PreviewMouseRightButtonUp"
                          PreviewKeyDown="CommandList_PreviewKeyDown"
                          SelectionChanged="CommandList_SelectionChanged"
-                         ScrollViewer.VerticalScrollBarVisibility="Hidden">
+                         ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     
                     <ListBox.ContextMenu>
                         <ContextMenu>
@@ -319,6 +345,13 @@
                                       Click="EditExtensionMenuItem_Click">
                                 <MenuItem.Icon>
                                     <Path Data="M14.06,9L15,9.94L5.92,19H5V18.08L14.06,9M17.66,3C17.41,3 17.15,3.1 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18.17,3.09 17.92,3 17.66,3M14.06,6.19L3,17.25V21H6.75L17.81,9.94L14.06,6.19Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem x:Name="PublishExtensionMenuItem"
+                                      Header="发布到商店"
+                                      Click="PublishExtensionMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <Path Data="M12,2L14.39,8.26L21,9L16,13.74L17.18,20.5L12,17.27L6.82,20.5L8,13.74L3,9L9.61,8.26L12,2M11,11V15H13V11H16L12,7L8,11H11Z" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
                                 </MenuItem.Icon>
                             </MenuItem>
                             <MenuItem x:Name="DeleteExtensionMenuItem"
@@ -408,8 +441,10 @@
                                         Margin="0,0,12,0">
                                     <Grid>
                                         <Image Source="{Binding IconSource}"
-                                               Margin="1"
-                                               Stretch="UniformToFill"
+                                               Margin="3"
+                                               Stretch="Uniform"
+                                               RenderOptions.BitmapScalingMode="HighQuality"
+                                               SnapsToDevicePixels="True"
                                                Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                         <Viewbox Margin="6"
                                                  Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -428,24 +463,24 @@
                                 </Border>
 
                                 <!-- Text Area -->
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                    <StackPanel Orientation="Horizontal">
-                                        <TextBlock Text="{Binding Title}"
-                                                   FontSize="14"
-                                                   FontWeight="Medium"
-                                                   Foreground="White" />
-                                        <TextBlock Text="{Binding Category}"
-                                                   Margin="8,0,0,0"
-                                                   Foreground="#FF666666"
-                                                   FontSize="12"
-                                                   VerticalAlignment="Bottom"/>
-                                    </StackPanel>
+                                <Grid Grid.Column="1" VerticalAlignment="Center">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="{Binding Title}"
+                                               Grid.Row="0"
+                                               FontSize="14"
+                                               FontWeight="Medium"
+                                               Foreground="White"
+                                               TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{Binding DisplaySubtitle}"
+                                               Grid.Row="1"
                                                Margin="0,2,0,0"
                                                Foreground="#FF888888"
                                                FontSize="11"
                                                TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
+                                </Grid>
 
                                 <!-- Action Label -->
                                 <StackPanel Grid.Column="2"
@@ -464,10 +499,11 @@
                                                    FontSize="10"
                                                    FontWeight="SemiBold" />
                                     </Border>
-                                    <TextBlock Text="{Binding ItemKindLabel}" 
+                                    <TextBlock Text="{Binding DisplayTypeLabel}" 
                                                Foreground="#FF666666" 
                                                FontSize="12" 
-                                               VerticalAlignment="Center"/>
+                                               VerticalAlignment="Center"
+                                               Visibility="{Binding HasDisplayTypeLabel, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                 </StackPanel>
                             </Grid>
                         </DataTemplate>
@@ -743,22 +779,6 @@
                                 </StackPanel>
 
                                 <Separator Background="#12FFFFFF" Margin="6,0,6,8"/>
-
-                                <Button Style="{StaticResource QuickMenuButtonStyle}"
-                                        ToolTip="新建单文件 JSON 格式的扩展功能"
-                                        Click="QuickMenuAddExtension_Click">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="42" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Path Data="M5,12 H19 M12,5 V19" 
-                                              Stroke="White" StrokeThickness="1.5" Height="16" Width="16" Stretch="Uniform" HorizontalAlignment="Center" Opacity="0.9"/>
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                            <TextBlock Text="添加扩展" Foreground="#F0FFFFFF" FontSize="13" FontWeight="Medium"/>
-                                        </StackPanel>
-                                    </Grid>
-                                </Button>
 
                                 <Button Style="{StaticResource QuickMenuButtonStyle}"
                                         ToolTip="把程序内置技能组复制到外部文件夹进行编辑或备份"

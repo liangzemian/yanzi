@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -180,7 +181,12 @@ public sealed class CloudSyncClient
 
     public async Task<IReadOnlyList<CloudExtensionRecord>> GetExtensionsAsync(CancellationToken cancellationToken = default)
     {
-        using var response = await SendAsyncWithFallback(HttpMethod.Get, "/v1/extensions", includeAuth: false, cancellationToken: cancellationToken);
+        var cacheBust = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        using var response = await SendAsyncWithFallback(
+            HttpMethod.Get,
+            $"/v1/extensions?_ts={cacheBust}",
+            includeAuth: false,
+            cancellationToken: cancellationToken);
         response.EnsureSuccessStatusCode();
         var payload = await ReadAsync<ExtensionListResponse>(response, cancellationToken);
         return payload?.Items ?? [];
@@ -196,7 +202,7 @@ public sealed class CloudSyncClient
         return payload?.Items ?? [];
     }
 
-    public async Task UpsertExtensionAsync(CommandItem command, CancellationToken cancellationToken = default)
+    public async Task UpsertExtensionAsync(CommandItem command, string? iconOverride = null, CancellationToken cancellationToken = default)
     {
         await EnsureAuthenticatedAsync(cancellationToken);
         var body = JsonSerializer.Serialize(new
@@ -209,6 +215,7 @@ public sealed class CloudSyncClient
                 category = command.Category,
                 description = command.Subtitle,
                 keywords = command.Keywords,
+                icon = string.IsNullOrWhiteSpace(iconOverride) ? command.IconReference : iconOverride,
                 queryPrefixes = command.QueryPrefixes,
                 queryTargetTemplate = command.QueryTargetTemplate,
                 globalShortcut = command.GlobalShortcut,
@@ -246,6 +253,41 @@ public sealed class CloudSyncClient
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<string?> PublishIconAsync(CommandItem command, string version, CancellationToken cancellationToken = default)
+    {
+        var iconReference = command.IconReference?.Trim();
+        if (string.IsNullOrWhiteSpace(iconReference) || ExtensionIconLibrary.IsBuiltInReference(iconReference))
+        {
+            return iconReference;
+        }
+
+        if (Uri.TryCreate(iconReference, UriKind.Absolute, out var absoluteUri) &&
+            (string.Equals(absoluteUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(absoluteUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
+        {
+            return iconReference;
+        }
+
+        var localPath = ExtensionIconLibrary.ResolveLocalIconFilePath(iconReference, command.ExtensionDirectoryPath);
+        if (string.IsNullOrWhiteSpace(localPath) || !File.Exists(localPath))
+        {
+            return iconReference;
+        }
+
+        await EnsureAuthenticatedAsync(cancellationToken);
+        using var request = CreateRequest(
+            HttpMethod.Put,
+            $"/v1/extensions/{Uri.EscapeDataString(command.ExtensionId)}/icon?version={Uri.EscapeDataString(version)}&filename={Uri.EscapeDataString(Path.GetFileName(localPath))}",
+            includeAuth: true);
+        request.Content = new ByteArrayContent(await File.ReadAllBytesAsync(localPath, cancellationToken));
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue(GetMimeType(localPath));
+        using var response = await SendAsyncWithFallback(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        var payload = await ReadAsync<UploadIconResponse>(response, cancellationToken)
+            ?? throw new InvalidOperationException("图标上传响应为空。");
+        return string.IsNullOrWhiteSpace(payload.IconUrl) ? iconReference : payload.IconUrl;
+    }
+
     public async Task UpsertUserExtensionAsync(CommandItem command, CancellationToken cancellationToken = default)
     {
         await EnsureAuthenticatedAsync(cancellationToken);
@@ -267,6 +309,17 @@ public sealed class CloudSyncClient
             includeAuth: true);
         using var response = await SendAsyncWithFallback(request, cancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+
+    public async Task DeleteExtensionAsync(string extensionId, CancellationToken cancellationToken = default)
+    {
+        await EnsureAuthenticatedAsync(cancellationToken);
+        using var request = CreateRequest(
+            HttpMethod.Delete,
+            $"/v1/extensions/{Uri.EscapeDataString(extensionId)}",
+            includeAuth: true);
+        using var response = await SendAsyncWithFallback(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
     }
 
     public async Task RemoveUserExtensionAsync(string extensionId, CancellationToken cancellationToken = default)
@@ -375,6 +428,23 @@ public sealed class CloudSyncClient
         }
 
         return collapsed.Trim('-');
+    }
+
+    private static string GetMimeType(string filePath)
+    {
+        var extension = Path.GetExtension(filePath).ToLowerInvariant();
+        return extension switch
+        {
+            ".png" => "image/png",
+            ".jpg" => "image/jpeg",
+            ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            ".ico" => "image/x-icon",
+            ".svg" => "image/svg+xml",
+            _ => "application/octet-stream"
+        };
     }
 
     private bool HasValidSession()

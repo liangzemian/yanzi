@@ -11,6 +11,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using OpenQuickHost.Sync;
 
 namespace OpenQuickHost;
@@ -34,6 +35,13 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private string _webDavUsername = string.Empty;
     private string _webDavStatusText = "未启用个人扩展同步。";
     private string _syncActivityLogText = "暂无同步记录。";
+    private string _recycleBinSummary = "回收站为空。";
+    private string _recycleBinSearchText = string.Empty;
+    private bool _isExtensionsLoading;
+    private int _extensionsRefreshVersion;
+    private IReadOnlyList<SettingsExtensionItem> _cachedExtensionItems = [];
+    private IReadOnlyList<SettingsRecycleBinItem> _cachedRecycleBinItems = [];
+    private bool _suppressWindowBoundsPersistence;
 
     public SettingsWindow(MainWindow mainWindow)
     {
@@ -46,6 +54,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             new SettingsNavigationItem("general", "M12,15.5A3.5,3.5 0 1,1 12,8.5A3.5,3.5 0 1,1 12,15.5M19.4,15L21.7,13.5L19.9,8.9L17.3,10L15.7,8.6L16.1,5.8L11.2,5.8L10.8,8.6L9.2,10L6.6,8.9L4.7,13.5L7,15L7,17L4.7,18.5L6.6,23.1L9.2,22L10.8,23.4L11.2,26.2L16.1,26.2L16.5,23.4L18.1,22L20.7,23.1L22.6,18.5L20.3,17Z", "常规", "#FF3B82F6"),
             new SettingsNavigationItem("sync", "M12,6V9L16,5L12,1V4A8,8 0 0,0 4,12C4,13.43 4.37,14.77 5.03,15.94L6.47,14.5C6.17,13.73 6,12.89 6,12A6,6 0 0,1 12,6M18.97,8.06L17.53,9.5C17.83,10.27 18,11.11 18,12A6,6 0 0,1 12,18V15L8,19L12,23V20A8,8 0 0,0 20,12C20,10.57 19.63,9.23 18.97,8.06Z", "同步", "#FF22C55E"),
             new SettingsNavigationItem("extensions", "M20.5,11H19V7C19,5.89 18.11,5 17,5H13V3.5A1.5,1.5 0 0,0 11.5,2A1.5,1.5 0 0,0 10,3.5V5H6C4.89,5 4,5.89 4,7V11H2.5A1.5,1.5 0 0,0 1,12.5A1.5,1.5 0 0,0 2.5,14H4V18C4,19.11 4.89,20 6,20H10V21.5A1.5,1.5 0 0,0 11.5,23A1.5,1.5 0 0,0 13,21.5V20H17C18.11,20 19,19.11 19,18V14H20.5A1.5,1.5 0 0,0 22,12.5A1.5,1.5 0 0,0 20.5,11Z", "扩展", "#FFF97316"),
+            new SettingsNavigationItem("recycle", "M9,3H15L16,5H20A1,1 0 0,1 21,6V8H3V6A1,1 0 0,1 4,5H8L9,3M5,10H19L18.2,20.2A2,2 0 0,1 16.21,22H7.79A2,2 0 0,1 5.8,20.2L5,10M9,12V19H11V12H9M13,12V19H15V12H13Z", "回收站", "#FFEF4444"),
             new SettingsNavigationItem("shortcuts", "M7,7H17V9H7V7M7,11H13V13H7V11M15,11H17V13H15V11M7,15H11V17H7V15M13,15H17V17H13V15M5,3H19A2,2 0 0,1 21,5V19A2,2 0 0,1 19,21H5A2,2 0 0,1 3,19V5A2,2 0 0,1 5,3Z", "快捷键", "#FFEAB308"),
             new SettingsNavigationItem("quickpanel", "M4,4H20V20H4V4M6,6V18H18V6H6M8,8H10V10H8V8M14,8H16V10H14V8M8,14H10V16H8V14M14,14H16V16H14V14Z", "鼠标面板", "#FFEC4899"),
             new SettingsNavigationItem("about", "M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z", "关于", "#FF8B5CF6")
@@ -64,9 +73,14 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         AppVersionText = AppVersionInfo.DisplayText;
         ShortcutItems = new ObservableCollection<SettingsShortcutItem>();
         ExtensionItems = new ObservableCollection<SettingsExtensionItem>();
+        RecycleBinItems = new ObservableCollection<SettingsRecycleBinItem>();
         DataContext = this;
+        ApplySavedWindowBounds();
         Loaded += SettingsWindow_Loaded;
         Activated += SettingsWindow_Activated;
+        LocationChanged += SettingsWindow_BoundsChanged;
+        SizeChanged += SettingsWindow_BoundsChanged;
+        Closing += SettingsWindow_Closing;
         LoadLogoImage();
     }
 
@@ -75,6 +89,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     public ObservableCollection<SettingsShortcutItem> ShortcutItems { get; }
 
     public ObservableCollection<SettingsExtensionItem> ExtensionItems { get; }
+
+    public ObservableCollection<SettingsRecycleBinItem> RecycleBinItems { get; }
 
     public SettingsNavigationItem? SelectedNavigation
     {
@@ -87,18 +103,40 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             }
 
             _selectedNavigation = value;
+            HostAssets.AppendLog($"Settings navigation selected: key={_selectedNavigation?.Key ?? "null"}");
             OnPropertyChanged();
             OnPropertyChanged(nameof(SelectedSectionTitle));
             OnPropertyChanged(nameof(SelectedSectionDescription));
             OnPropertyChanged(nameof(IsGeneralSelected));
             OnPropertyChanged(nameof(IsSyncSelected));
             OnPropertyChanged(nameof(IsExtensionsSelected));
+            OnPropertyChanged(nameof(IsRecycleBinSelected));
             OnPropertyChanged(nameof(IsShortcutsSelected));
             OnPropertyChanged(nameof(IsQuickPanelSelected));
             OnPropertyChanged(nameof(IsAboutSelected));
             if (IsExtensionsSelected)
             {
-                RefreshExtensionsFromDisk();
+                _ = RefreshExtensionsFromDiskAsync();
+            }
+            else if (IsRecycleBinSelected)
+            {
+                _ = RefreshExtensionsFromDiskAsync();
+            }
+            else if (IsSyncSelected)
+            {
+                RefreshSyncActivityLog();
+            }
+            else if (IsShortcutsSelected)
+            {
+                try
+                {
+                    RefreshExtensionCacheFromMainWindow();
+                    RefreshShortcutItems();
+                }
+                catch (Exception ex)
+                {
+                    HostAssets.AppendLog($"Settings shortcuts refresh failed on navigation: {ex}");
+                }
             }
         }
     }
@@ -352,6 +390,21 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public string RecycleBinSummary
+    {
+        get => _recycleBinSummary;
+        private set
+        {
+            if (value == _recycleBinSummary)
+            {
+                return;
+            }
+
+            _recycleBinSummary = value;
+            OnPropertyChanged();
+        }
+    }
+
     public string LocalExtensionSummary
     {
         get => _localExtensionSummary;
@@ -399,10 +452,61 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public string RecycleBinSearchText
+    {
+        get => _recycleBinSearchText;
+        set
+        {
+            if (value == _recycleBinSearchText)
+            {
+                return;
+            }
+
+            _recycleBinSearchText = value;
+            OnPropertyChanged();
+            RefreshRecycleBinItems();
+        }
+    }
+
     public string ExtensionSearchSummary =>
-        ExtensionItems.Count == 0
+        IsExtensionsLoading
+            ? "正在刷新..."
+            : ExtensionItems.Count == 0
             ? "无匹配项"
             : $"显示 {ExtensionItems.Count} 项";
+
+    public string RecycleBinSearchSummary =>
+        IsExtensionsLoading
+            ? "正在刷新..."
+            : RecycleBinItems.Count == 0
+            ? "无匹配项"
+            : $"显示 {RecycleBinItems.Count} 项";
+
+    public bool IsExtensionsLoading
+    {
+        get => _isExtensionsLoading;
+        private set
+        {
+            if (value == _isExtensionsLoading)
+            {
+                return;
+            }
+
+            _isExtensionsLoading = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ExtensionsLoadingVisibility));
+            OnPropertyChanged(nameof(ExtensionsListVisibility));
+            OnPropertyChanged(nameof(CanRefreshExtensions));
+            OnPropertyChanged(nameof(ExtensionSearchSummary));
+            OnPropertyChanged(nameof(RecycleBinSearchSummary));
+        }
+    }
+
+    public Visibility ExtensionsLoadingVisibility => IsExtensionsLoading ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility ExtensionsListVisibility => IsExtensionsLoading ? Visibility.Collapsed : Visibility.Visible;
+
+    public bool CanRefreshExtensions => !IsExtensionsLoading;
 
     public bool TriggerMiddleButtonDown
     {
@@ -493,6 +597,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         "general" => "控制燕子(Swallow)的基础行为，包括启动同步和托盘停驻策略。",
         "sync" => "管理云账号状态、同步入口和当前服务端连接信息。",
         "extensions" => "查看本地扩展目录和当前机器已发现的扩展数量。",
+        "recycle" => "查看已删除扩展，支持恢复和彻底删除。",
         "shortcuts" => "查看和管理主程序与扩展的全局快捷键。",
         "quickpanel" => "控制悬浮网格的操作面板，包括触发逻辑和槽位预设。",
         "about" => "查看当前版本与这套设置窗口的结构定位。",
@@ -504,6 +609,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     public bool IsSyncSelected => SelectedNavigation?.Key == "sync";
 
     public bool IsExtensionsSelected => SelectedNavigation?.Key == "extensions";
+
+    public bool IsRecycleBinSelected => SelectedNavigation?.Key == "recycle";
 
     public bool IsShortcutsSelected => SelectedNavigation?.Key == "shortcuts";
 
@@ -531,12 +638,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private void SettingsWindow_Loaded(object sender, RoutedEventArgs e)
     {
         RefreshAccountSummary();
-        RefreshExtensionSummary();
-        RefreshExtensionItems();
-        RefreshShortcutItems();
         RefreshQuickPanelTriggerBindings();
         SyncStatusText = _mainWindow.SyncStatus;
-        RefreshSyncActivityLog();
+        RefreshVisibleSectionData();
     }
 
     private void SettingsWindow_Activated(object? sender, EventArgs e)
@@ -564,12 +668,36 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
         
         RefreshAccountSummary();
-        RefreshExtensionSummary();
-        RefreshExtensionItems();
-        RefreshShortcutItems();
         RefreshWebDavSummary();
         SyncStatusText = _mainWindow.SyncStatus;
-        RefreshSyncActivityLog();
+        RefreshVisibleSectionData();
+    }
+
+    private void RefreshVisibleSectionData()
+    {
+        if (IsExtensionsSelected)
+        {
+            _ = RefreshExtensionsFromDiskAsync();
+            return;
+        }
+
+        if (IsRecycleBinSelected)
+        {
+            _ = RefreshExtensionsFromDiskAsync();
+            return;
+        }
+
+        if (IsShortcutsSelected)
+        {
+            RefreshExtensionCacheFromMainWindow();
+            RefreshShortcutItems();
+            return;
+        }
+
+        if (IsSyncSelected)
+        {
+            RefreshSyncActivityLog();
+        }
     }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -579,6 +707,26 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        BeginWindowDrag();
+    }
+
+    private void WindowFrame_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState != MouseButtonState.Pressed || IsInteractiveSource(e.OriginalSource as DependencyObject))
+        {
+            return;
+        }
+
+        if (e.GetPosition(this).Y > 64)
+        {
+            return;
+        }
+
+        BeginWindowDrag();
+    }
+
+    private void BeginWindowDrag()
+    {
         try
         {
             DragMove();
@@ -587,6 +735,146 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         {
             // DragMove can throw if the mouse button is released before WPF starts the drag loop.
         }
+    }
+
+    private void ResizeBottomRightThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        ResizeWindow(rightDelta: e.HorizontalChange, bottomDelta: e.VerticalChange);
+    }
+
+    private void ResizeTopThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        ResizeWindow(topDelta: e.VerticalChange);
+    }
+
+    private void ResizeBottomThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        ResizeWindow(bottomDelta: e.VerticalChange);
+    }
+
+    private void ResizeLeftThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        ResizeWindow(leftDelta: e.HorizontalChange);
+    }
+
+    private void ResizeRightThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        ResizeWindow(rightDelta: e.HorizontalChange);
+    }
+
+    private void ResizeTopLeftThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        ResizeWindow(leftDelta: e.HorizontalChange, topDelta: e.VerticalChange);
+    }
+
+    private void ResizeTopRightThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        ResizeWindow(rightDelta: e.HorizontalChange, topDelta: e.VerticalChange);
+    }
+
+    private void ResizeBottomLeftThumb_DragDelta(object sender, DragDeltaEventArgs e)
+    {
+        ResizeWindow(leftDelta: e.HorizontalChange, bottomDelta: e.VerticalChange);
+    }
+
+    private void ResizeWindow(double leftDelta = 0, double topDelta = 0, double rightDelta = 0, double bottomDelta = 0)
+    {
+        if (WindowState != WindowState.Normal)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        var newLeft = Left;
+        var newTop = Top;
+        var newWidth = Width;
+        var newHeight = Height;
+
+        if (leftDelta != 0)
+        {
+            var targetWidth = Math.Max(MinWidth, Width - leftDelta);
+            newLeft = Left + (Width - targetWidth);
+            newWidth = targetWidth;
+        }
+
+        if (topDelta != 0)
+        {
+            var targetHeight = Math.Max(MinHeight, Height - topDelta);
+            newTop = Top + (Height - targetHeight);
+            newHeight = targetHeight;
+        }
+
+        if (rightDelta != 0)
+        {
+            newWidth = Math.Max(MinWidth, newWidth + rightDelta);
+        }
+
+        if (bottomDelta != 0)
+        {
+            newHeight = Math.Max(MinHeight, newHeight + bottomDelta);
+        }
+
+        Left = newLeft;
+        Top = newTop;
+        Width = newWidth;
+        Height = newHeight;
+        PersistWindowBounds();
+    }
+
+    private void ApplySavedWindowBounds()
+    {
+        var settings = _settings;
+        if (settings.SettingsWindowWidth is not > 0 || settings.SettingsWindowHeight is not > 0)
+        {
+            return;
+        }
+
+        _suppressWindowBoundsPersistence = true;
+        try
+        {
+            Width = Math.Max(MinWidth, settings.SettingsWindowWidth.Value);
+            Height = Math.Max(MinHeight, settings.SettingsWindowHeight.Value);
+
+            if (settings.SettingsWindowLeft.HasValue)
+            {
+                Left = settings.SettingsWindowLeft.Value;
+            }
+
+            if (settings.SettingsWindowTop.HasValue)
+            {
+                Top = settings.SettingsWindowTop.Value;
+            }
+        }
+        finally
+        {
+            _suppressWindowBoundsPersistence = false;
+        }
+    }
+
+    private void SettingsWindow_BoundsChanged(object? sender, EventArgs e)
+    {
+        PersistWindowBounds();
+    }
+
+    private void SettingsWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        PersistWindowBounds();
+    }
+
+    private void PersistWindowBounds()
+    {
+        if (_suppressWindowBoundsPersistence || WindowState != WindowState.Normal)
+        {
+            return;
+        }
+
+        _settings = _settings with
+        {
+            SettingsWindowLeft = Left,
+            SettingsWindowTop = Top,
+            SettingsWindowWidth = Width,
+            SettingsWindowHeight = Height
+        };
+        AppSettingsStore.Save(_settings);
     }
 
     private void SettingsSearchBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -718,7 +1006,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         SaveWebDavSettingsButton_Click(sender, e);
         var result = await _mainWindow.SyncWebDavNowAsync();
         WebDavStatusText = result.message;
-        RefreshExtensionsFromDisk();
+        await RefreshExtensionsFromDiskAsync();
         RefreshSyncActivityLog();
         if (!result.ok)
         {
@@ -735,9 +1023,14 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         });
     }
 
-    private void RefreshExtensionStatsButton_Click(object sender, RoutedEventArgs e)
+    private async void RefreshExtensionStatsButton_Click(object sender, RoutedEventArgs e)
     {
-        RefreshExtensionsFromDisk();
+        await RefreshExtensionsFromDiskAsync();
+    }
+
+    private async void RefreshRecycleBinButton_Click(object sender, RoutedEventArgs e)
+    {
+        await RefreshExtensionsFromDiskAsync();
     }
 
     private void OpenExtensionDirectoryButton_Click(object sender, RoutedEventArgs e)
@@ -750,7 +1043,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         if (!Directory.Exists(item.DirectoryPath))
         {
             System.Windows.MessageBox.Show(this, "扩展目录不存在。", "打开目录失败", MessageBoxButton.OK, MessageBoxImage.Warning);
-            RefreshExtensionsFromDisk();
+            _ = RefreshExtensionsFromDiskAsync();
             return;
         }
 
@@ -785,6 +1078,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
 
         _settings = _mainWindow.GetCurrentAppSettings();
+        RefreshExtensionCacheFromMainWindow();
         RefreshExtensionSummary();
         RefreshExtensionItems();
         RefreshShortcutItems();
@@ -815,17 +1109,306 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         ExtensionItems.Remove(item);
         _settings = _mainWindow.GetCurrentAppSettings();
+        RefreshExtensionCacheFromMainWindow();
         RefreshExtensionSummary();
         OnPropertyChanged(nameof(ExtensionSearchSummary));
         RefreshShortcutItems();
+        await RefreshExtensionsFromDiskAsync();
     }
 
-    private void RefreshExtensionsFromDisk()
+    private async void RestoreRecycleBinExtensionButton_Click(object sender, RoutedEventArgs e)
     {
-        _mainWindow.ReloadLocalExtensionsFromExternal();
-        RefreshExtensionSummary();
-        RefreshExtensionItems();
-        RefreshShortcutItems();
+        if (sender is not FrameworkElement { DataContext: SettingsRecycleBinItem item } || item.IsOperationBusy)
+        {
+            return;
+        }
+
+        item.IsRestoring = true;
+        try
+        {
+            var result = await _mainWindow.RestoreExtensionFromRecycleBinAsync(item.ItemId);
+            if (!string.IsNullOrWhiteSpace(result.message))
+            {
+                SyncStatusText = result.message;
+            }
+
+            if (!result.ok)
+            {
+                System.Windows.MessageBox.Show(this, result.message, "恢复扩展失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            await RefreshExtensionsFromDiskAsync();
+            if (System.Windows.Application.Current is App app)
+            {
+                app.ShowDesktopNotification("扩展已恢复", $"{item.Title} 已从回收站恢复。");
+            }
+        }
+        finally
+        {
+            item.IsRestoring = false;
+        }
+    }
+
+    private async void DeleteRecycleBinExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SettingsRecycleBinItem item } || item.IsOperationBusy)
+        {
+            return;
+        }
+
+        var confirm = System.Windows.MessageBox.Show(
+            this,
+            $"确认彻底删除“{item.Title}”吗？这会清空回收站中的本地副本，无法恢复。",
+            "彻底删除扩展",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        item.IsDeletingPermanently = true;
+        try
+        {
+            var result = await _mainWindow.PurgeExtensionFromRecycleBinAsync(item.ItemId);
+            if (!string.IsNullOrWhiteSpace(result.message))
+            {
+                SyncStatusText = result.message;
+            }
+
+            if (!result.ok)
+            {
+                System.Windows.MessageBox.Show(this, result.message, "彻底删除失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            await RefreshExtensionsFromDiskAsync();
+            if (System.Windows.Application.Current is App app)
+            {
+                app.ShowDesktopNotification("回收站扩展已清理", $"{item.Title} 已从回收站彻底删除。");
+            }
+        }
+        finally
+        {
+            item.IsDeletingPermanently = false;
+        }
+    }
+
+    private async void PublishExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SettingsExtensionItem item } || item.IsOperationBusy)
+        {
+            return;
+        }
+
+        item.IsPublishing = true;
+        try
+        {
+            var result = await _mainWindow.PublishExtensionFromSettingsAsync(item.ExtensionId);
+            if (!string.IsNullOrWhiteSpace(result.message))
+            {
+                SyncStatusText = result.message;
+            }
+
+            if (!result.ok)
+            {
+                System.Windows.MessageBox.Show(this, result.message, "发布扩展失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            await RefreshExtensionsFromDiskAsync();
+            if (System.Windows.Application.Current is App app)
+            {
+                app.ShowDesktopNotification("扩展已发布到商店", $"{item.Title} 已完成发布，可在扩展商店查看。");
+            }
+        }
+        finally
+        {
+            item.IsPublishing = false;
+        }
+    }
+
+    private async void UnpublishExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SettingsExtensionItem item } || item.IsOperationBusy)
+        {
+            return;
+        }
+
+        var confirm = System.Windows.MessageBox.Show(
+            this,
+            $"确认下线扩展“{item.Title}”吗？下线后扩展商店将不再展示它。",
+            "确认下线扩展",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        item.IsUnpublishing = true;
+        try
+        {
+            var result = await _mainWindow.UnpublishExtensionFromSettingsAsync(item.ExtensionId);
+            if (!string.IsNullOrWhiteSpace(result.message))
+            {
+                SyncStatusText = result.message;
+            }
+
+            if (!result.ok)
+            {
+                System.Windows.MessageBox.Show(this, result.message, "下线扩展失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            await RefreshExtensionsFromDiskAsync();
+            if (System.Windows.Application.Current is App app)
+            {
+                app.ShowDesktopNotification("扩展已从商店下线", $"{item.Title} 已从扩展商店移除。");
+            }
+        }
+        finally
+        {
+            item.IsUnpublishing = false;
+        }
+    }
+
+    private async Task RefreshExtensionsFromDiskAsync()
+    {
+        if (IsExtensionsLoading)
+        {
+            return;
+        }
+
+        var refreshVersion = ++_extensionsRefreshVersion;
+        var startedAt = Stopwatch.StartNew();
+        IsExtensionsLoading = true;
+        LocalExtensionSummary = "正在后台刷新扩展数据...";
+        HostAssets.AppendLog($"Settings extensions refresh started: version={refreshVersion}");
+
+        try
+        {
+            var publishedMap = await _mainWindow.GetOwnedPublishedExtensionsForSettingsAsync();
+            HostAssets.AppendLog($"Settings extensions refresh cloud publish map count={publishedMap.Count}");
+            var data = await Task.Run(() =>
+            {
+                var backgroundStartedAt = Stopwatch.StartNew();
+                LocalExtensionCatalog.EnsureSampleExtension();
+                var entries = LocalExtensionCatalog.LoadEntries()
+                    .ToList();
+                var recycleBinItems = _mainWindow.GetRecycleBinEntriesForSettings()
+                    .Select(item => new SettingsRecycleBinItem(
+                        item.ItemId,
+                        item.ExtensionId,
+                        item.Title,
+                        item.Category,
+                        item.Version,
+                        item.DeletedAtUtc))
+                    .ToList();
+                var settings = _mainWindow.GetCurrentAppSettings();
+                settings.DisabledExtensionIds ??= [];
+                var disabledIds = new HashSet<string>(settings.DisabledExtensionIds, StringComparer.OrdinalIgnoreCase);
+                var extensionItems = entries
+                    .Select(entry => new
+                    {
+                        entry.Manifest.Id,
+                        entry.Manifest.Name,
+                        Category = entry.Manifest.Category ?? "扩展",
+                        Version = entry.Manifest.Version ?? "0.1.0",
+                        DirectoryPath = Path.GetDirectoryName(entry.ManifestPath) ?? string.Empty
+                    })
+                    .OrderBy(static item => item.Category, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(static item => item.Name, StringComparer.OrdinalIgnoreCase)
+                    .Select(item =>
+                    {
+                        publishedMap.TryGetValue(item.Id, out var cloudRecord);
+                        return new SettingsExtensionItem(
+                            item.Id,
+                            item.Name,
+                            item.Category,
+                            item.Version,
+                            item.DirectoryPath,
+                            item.Category.Contains("网页搜索", StringComparison.OrdinalIgnoreCase) ? "网页搜索扩展" : "本地扩展",
+                            true,
+                            !disabledIds.Contains(item.Id),
+                            cloudRecord?.IsPublished != 0,
+                            cloudRecord?.PublisherUsername ?? string.Empty);
+                    })
+                    .ToList();
+                var shortcutItems = entries
+                    .Select(entry => new
+                    {
+                        entry.Manifest.Id,
+                        entry.Manifest.Name,
+                        Category = entry.Manifest.Category ?? "扩展",
+                        entry.Manifest.GlobalShortcut
+                    })
+                    .OrderBy(static item => item.Name, StringComparer.OrdinalIgnoreCase)
+                    .Select(item => new SettingsShortcutItem(
+                        item.Id,
+                        item.Name,
+                        item.Category,
+                        item.GlobalShortcut))
+                    .ToList();
+                HostAssets.AppendLog(
+                    $"Settings extensions refresh background prepared: version={refreshVersion}, " +
+                    $"entries={entries.Count}, extensionItems={extensionItems.Count}, recycleBinItems={recycleBinItems.Count}, shortcutItems={shortcutItems.Count}, " +
+                    $"elapsedMs={backgroundStartedAt.ElapsedMilliseconds}");
+                return (entries, extensionItems, recycleBinItems, shortcutItems);
+            });
+
+            if (refreshVersion != _extensionsRefreshVersion)
+            {
+                HostAssets.AppendLog($"Settings extensions refresh skipped stale result: version={refreshVersion}");
+                return;
+            }
+
+            var uiApplyStartedAt = Stopwatch.StartNew();
+            await Dispatcher.InvokeAsync(() =>
+            {
+                _mainWindow.ReloadLocalExtensionsFromEntries(data.entries, "已刷新本地扩展。");
+                _cachedExtensionItems = data.extensionItems;
+                _cachedRecycleBinItems = data.recycleBinItems;
+                if (IsExtensionsSelected)
+                {
+                    RefreshExtensionSummary();
+                    RefreshExtensionItems();
+                }
+
+                if (IsRecycleBinSelected)
+                {
+                    RefreshRecycleBinSummary();
+                    RefreshRecycleBinItems();
+                }
+
+                if (IsShortcutsSelected)
+                {
+                    ShortcutItems.Clear();
+                    foreach (var item in data.shortcutItems)
+                    {
+                        ShortcutItems.Add(item);
+                    }
+                }
+            }, DispatcherPriority.Background);
+            HostAssets.AppendLog(
+                $"Settings extensions refresh UI applied: version={refreshVersion}, elapsedMs={uiApplyStartedAt.ElapsedMilliseconds}");
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Settings extensions refresh failed: version={refreshVersion}, error={ex.Message}");
+            LocalExtensionSummary = $"刷新扩展失败：{ex.Message}";
+        }
+        finally
+        {
+            if (refreshVersion == _extensionsRefreshVersion)
+            {
+                IsExtensionsLoading = false;
+            }
+
+            HostAssets.AppendLog(
+                $"Settings extensions refresh finished: version={refreshVersion}, totalElapsedMs={startedAt.ElapsedMilliseconds}");
+        }
     }
 
     private void RefreshWebDavSummary()
@@ -980,6 +1563,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         _mainWindow.SetExtensionEnabled(item.ExtensionId, checkbox.IsChecked == true);
         _settings = _mainWindow.GetCurrentAppSettings();
+        RefreshExtensionCacheFromMainWindow();
         RefreshExtensionSummary();
         RefreshExtensionItems();
     }
@@ -1004,7 +1588,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                 return;
             }
 
-            var lines = File.ReadAllLines(HostAssets.HostLogPath)
+            var lines = ReadLogTailLines(HostAssets.HostLogPath, 512 * 1024)
                 .Where(static line =>
                     line.Contains("sync", StringComparison.OrdinalIgnoreCase) ||
                     line.Contains("webdav", StringComparison.OrdinalIgnoreCase) ||
@@ -1022,6 +1606,27 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         {
             SyncActivityLogText = $"读取同步记录失败：{ex.Message}";
         }
+    }
+
+    private static IEnumerable<string> ReadLogTailLines(string path, int maxBytes)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var length = stream.Length;
+        if (length <= 0)
+        {
+            return [];
+        }
+
+        var bytesToRead = (int)Math.Min(length, maxBytes);
+        stream.Seek(-bytesToRead, SeekOrigin.End);
+        using var reader = new StreamReader(stream);
+        if (bytesToRead < length)
+        {
+            _ = reader.ReadLine();
+        }
+
+        var content = reader.ReadToEnd();
+        return content.Split([Environment.NewLine, "\n"], StringSplitOptions.RemoveEmptyEntries);
     }
 
     private void ClearWebDavConfiguration()
@@ -1079,32 +1684,39 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
     private void RefreshExtensionSummary()
     {
-        var count = _mainWindow.GetExtensionsForSettings().Count;
+        var count = _cachedExtensionItems.Count > 0
+            ? _cachedExtensionItems.Count
+            : _mainWindow.GetExtensionsForSettings().Count;
         LocalExtensionSummary = $"当前机器已发现 {count} 个扩展。";
         OnPropertyChanged(nameof(ExtensionSearchSummary));
     }
 
+    private void RefreshRecycleBinSummary()
+    {
+        var count = _cachedRecycleBinItems.Count;
+        RecycleBinSummary = count == 0
+            ? "回收站为空。"
+            : $"当前回收站中有 {count} 个扩展。";
+        OnPropertyChanged(nameof(RecycleBinSearchSummary));
+    }
+
     private void RefreshExtensionItems()
     {
+        if (_cachedExtensionItems.Count == 0)
+        {
+            RefreshExtensionCacheFromMainWindow();
+        }
+
         ExtensionItems.Clear();
 
         var keyword = ExtensionSearchText.Trim();
-        var items = _mainWindow.GetExtensionsForSettings()
-            .Where(command =>
+        var items = _cachedExtensionItems
+            .Where(item =>
                 string.IsNullOrWhiteSpace(keyword) ||
-                command.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
-                command.ExtensionId.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
-                command.Category.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
-                (command.ExtensionDirectoryPath?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false))
-            .Select(command => new SettingsExtensionItem(
-                command.ExtensionId,
-                command.Title,
-                command.Category,
-                command.DeclaredVersion,
-                command.ExtensionDirectoryPath ?? string.Empty,
-                command.Category.Contains("网页搜索", StringComparison.OrdinalIgnoreCase) ? "网页搜索扩展" : "本地扩展",
-                command.Source == CommandSource.LocalExtension,
-                _mainWindow.IsExtensionEnabled(command.ExtensionId)))
+                item.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.ExtensionId.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.Category.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.DirectoryPath.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         foreach (var item in items)
@@ -1113,6 +1725,44 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(ExtensionSearchSummary));
+    }
+
+    private void RefreshRecycleBinItems()
+    {
+        RecycleBinItems.Clear();
+
+        var keyword = RecycleBinSearchText.Trim();
+        var items = _cachedRecycleBinItems
+            .Where(item =>
+                string.IsNullOrWhiteSpace(keyword) ||
+                item.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.ExtensionId.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                item.Category.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        foreach (var item in items)
+        {
+            RecycleBinItems.Add(item);
+        }
+
+        OnPropertyChanged(nameof(RecycleBinSearchSummary));
+    }
+
+    private void RefreshExtensionCacheFromMainWindow()
+    {
+        _cachedExtensionItems = _mainWindow.GetExtensionsForSettings()
+            .Select(command => new SettingsExtensionItem(
+                command.ExtensionId,
+                command.Title,
+                command.Category,
+                command.DeclaredVersion,
+                command.ExtensionDirectoryPath ?? string.Empty,
+                command.Category.Contains("网页搜索", StringComparison.OrdinalIgnoreCase) ? "网页搜索扩展" : "本地扩展",
+                command.Source == CommandSource.LocalExtension,
+                _mainWindow.IsExtensionEnabled(command.ExtensionId),
+                false,
+                string.Empty))
+            .ToList();
     }
 
     private void RefreshShortcutItems()
@@ -1164,6 +1814,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         [
             "扩展", "插件", "目录", "本地", "删除", "编辑", "搜索", "打开目录", "extension", "plugin", "folder", "delete", "edit"
         ],
+        "recycle" =>
+        [
+            "回收站", "恢复", "彻底删除", "已删除", "扩展回收站", "recycle", "trash", "restore", "deleted"
+        ],
         "shortcuts" =>
         [
             "快捷键", "热键", "组合键", "录制", "全局快捷键", "shortcut", "hotkey", "keyboard"
@@ -1212,6 +1866,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         AppSettingsStore.Save(_settings);
         _mainWindow.RefreshAppSettings();
+        _mainWindow.NotifyQuickPanelSettingsChanged("quickpanel-trigger-settings-saved");
         SyncStatusText = $"鼠标面板触发已保存：{QuickPanelTriggerSummary}";
     }
 
@@ -1280,12 +1935,286 @@ public sealed record SettingsShortcutItem(string ExtensionId, string Title, stri
     public bool HasShortcut => !string.IsNullOrWhiteSpace(Shortcut);
 }
 
-public sealed record SettingsExtensionItem(
-    string ExtensionId,
-    string Title,
-    string Category,
-    string Version,
-    string DirectoryPath,
-    string SourceLabel,
-    bool CanOpenDirectory,
-    bool IsEnabled);
+public sealed class SettingsExtensionItem : INotifyPropertyChanged
+{
+    private bool _isPublished;
+    private string _publisherName;
+    private bool _isPublishing;
+    private bool _isUnpublishing;
+
+    public SettingsExtensionItem(
+        string extensionId,
+        string title,
+        string category,
+        string version,
+        string directoryPath,
+        string sourceLabel,
+        bool canOpenDirectory,
+        bool isEnabled,
+        bool isPublished,
+        string publisherName)
+    {
+        ExtensionId = extensionId;
+        Title = title;
+        Category = category;
+        Version = version;
+        DirectoryPath = directoryPath;
+        SourceLabel = sourceLabel;
+        CanOpenDirectory = canOpenDirectory;
+        IsEnabled = isEnabled;
+        _isPublished = isPublished;
+        _publisherName = publisherName;
+    }
+
+    public string ExtensionId { get; }
+
+    public string Title { get; }
+
+    public string Category { get; }
+
+    public string Version { get; }
+
+    public string DirectoryPath { get; }
+
+    public string SourceLabel { get; }
+
+    public bool CanOpenDirectory { get; }
+
+    public bool IsEnabled { get; }
+
+    public bool IsPublished
+    {
+        get => _isPublished;
+        set
+        {
+            if (_isPublished == value)
+            {
+                return;
+            }
+
+            _isPublished = value;
+            NotifyPublishStateChanged();
+        }
+    }
+
+    public string PublisherName
+    {
+        get => _publisherName;
+        set
+        {
+            if (string.Equals(_publisherName, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _publisherName = value;
+            NotifyPublishStateChanged();
+        }
+    }
+
+    public bool IsPublishing
+    {
+        get => _isPublishing;
+        set
+        {
+            if (_isPublishing == value)
+            {
+                return;
+            }
+
+            _isPublishing = value;
+            NotifyBusyStateChanged();
+        }
+    }
+
+    public bool IsUnpublishing
+    {
+        get => _isUnpublishing;
+        set
+        {
+            if (_isUnpublishing == value)
+            {
+                return;
+            }
+
+            _isUnpublishing = value;
+            NotifyBusyStateChanged();
+        }
+    }
+
+    public bool IsPublishedInStore => IsPublished && !string.IsNullOrWhiteSpace(PublisherName);
+
+    public bool IsOperationBusy => IsPublishing || IsUnpublishing;
+
+    public string PublishActionLabel => IsPublishedInStore ? "更新商店版本" : "发布到商店";
+
+    public string PublishButtonText => IsPublishing
+        ? (IsPublishedInStore ? "更新中..." : "发布中...")
+        : PublishActionLabel;
+
+    public string UnpublishButtonText => IsUnpublishing ? "下线中..." : "下线";
+
+    public Visibility PublishSpinnerVisibility => IsPublishing ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility UnpublishSpinnerVisibility => IsUnpublishing ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility PublishNewButtonVisibility => IsPublishedInStore ? Visibility.Collapsed : Visibility.Visible;
+
+    public Visibility PublishUpdateButtonVisibility => IsPublishedInStore ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility UnpublishButtonVisibility => CanUnpublish ? Visibility.Visible : Visibility.Collapsed;
+
+    public string PublisherLabel => string.IsNullOrWhiteSpace(PublisherName) ? "未发布" : $"发布者：{PublisherName}";
+
+    public bool CanUnpublish => IsPublishedInStore;
+
+    public bool PublishButtonEnabled => !IsOperationBusy;
+
+    public bool UnpublishButtonEnabled => CanUnpublish && !IsOperationBusy;
+
+    public bool EditButtonEnabled => !IsOperationBusy;
+
+    public bool DeleteButtonEnabled => !IsOperationBusy;
+
+    public bool OpenDirectoryButtonEnabled => CanOpenDirectory && !IsOperationBusy;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void NotifyPublishStateChanged()
+    {
+        OnPropertyChanged(nameof(IsPublished));
+        OnPropertyChanged(nameof(PublisherName));
+        OnPropertyChanged(nameof(IsPublishedInStore));
+        OnPropertyChanged(nameof(PublishActionLabel));
+        OnPropertyChanged(nameof(PublishButtonText));
+        OnPropertyChanged(nameof(PublisherLabel));
+        OnPropertyChanged(nameof(CanUnpublish));
+        OnPropertyChanged(nameof(PublishNewButtonVisibility));
+        OnPropertyChanged(nameof(PublishUpdateButtonVisibility));
+        OnPropertyChanged(nameof(UnpublishButtonVisibility));
+        OnPropertyChanged(nameof(UnpublishButtonEnabled));
+    }
+
+    private void NotifyBusyStateChanged()
+    {
+        OnPropertyChanged(nameof(IsPublishing));
+        OnPropertyChanged(nameof(IsUnpublishing));
+        OnPropertyChanged(nameof(IsOperationBusy));
+        OnPropertyChanged(nameof(PublishButtonText));
+        OnPropertyChanged(nameof(UnpublishButtonText));
+        OnPropertyChanged(nameof(PublishSpinnerVisibility));
+        OnPropertyChanged(nameof(UnpublishSpinnerVisibility));
+        OnPropertyChanged(nameof(PublishButtonEnabled));
+        OnPropertyChanged(nameof(UnpublishButtonEnabled));
+        OnPropertyChanged(nameof(EditButtonEnabled));
+        OnPropertyChanged(nameof(DeleteButtonEnabled));
+        OnPropertyChanged(nameof(OpenDirectoryButtonEnabled));
+    }
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+}
+
+public sealed class SettingsRecycleBinItem : INotifyPropertyChanged
+{
+    private bool _isRestoring;
+    private bool _isDeletingPermanently;
+
+    public SettingsRecycleBinItem(
+        string itemId,
+        string extensionId,
+        string title,
+        string category,
+        string version,
+        string deletedAtUtc)
+    {
+        ItemId = itemId;
+        ExtensionId = extensionId;
+        Title = title;
+        Category = category;
+        Version = version;
+        DeletedAtUtc = deletedAtUtc;
+    }
+
+    public string ItemId { get; }
+
+    public string ExtensionId { get; }
+
+    public string Title { get; }
+
+    public string Category { get; }
+
+    public string Version { get; }
+
+    public string DeletedAtUtc { get; }
+
+    public string DeletedAtLabel => DateTimeOffset.TryParse(DeletedAtUtc, out var timestamp)
+        ? $"删除时间：{timestamp.LocalDateTime:yyyy-MM-dd HH:mm:ss}"
+        : "删除时间：未知";
+
+    public bool IsRestoring
+    {
+        get => _isRestoring;
+        set
+        {
+            if (_isRestoring == value)
+            {
+                return;
+            }
+
+            _isRestoring = value;
+            NotifyBusyStateChanged();
+        }
+    }
+
+    public bool IsDeletingPermanently
+    {
+        get => _isDeletingPermanently;
+        set
+        {
+            if (_isDeletingPermanently == value)
+            {
+                return;
+            }
+
+            _isDeletingPermanently = value;
+            NotifyBusyStateChanged();
+        }
+    }
+
+    public bool IsOperationBusy => IsRestoring || IsDeletingPermanently;
+
+    public string RestoreButtonText => IsRestoring ? "恢复中..." : "恢复";
+
+    public string DeleteButtonText => IsDeletingPermanently ? "删除中..." : "彻底删除";
+
+    public Visibility RestoreSpinnerVisibility => IsRestoring ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility DeleteSpinnerVisibility => IsDeletingPermanently ? Visibility.Visible : Visibility.Collapsed;
+
+    public bool RestoreButtonEnabled => !IsOperationBusy;
+
+    public bool DeleteButtonEnabled => !IsOperationBusy;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void NotifyBusyStateChanged()
+    {
+        OnPropertyChanged(nameof(IsRestoring));
+        OnPropertyChanged(nameof(IsDeletingPermanently));
+        OnPropertyChanged(nameof(IsOperationBusy));
+        OnPropertyChanged(nameof(RestoreButtonText));
+        OnPropertyChanged(nameof(DeleteButtonText));
+        OnPropertyChanged(nameof(RestoreSpinnerVisibility));
+        OnPropertyChanged(nameof(DeleteSpinnerVisibility));
+        OnPropertyChanged(nameof(RestoreButtonEnabled));
+        OnPropertyChanged(nameof(DeleteButtonEnabled));
+    }
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+}

@@ -1,13 +1,45 @@
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Basic.Reference.Assemblies;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Text;
 
 namespace OpenQuickHost;
 
 public static class ScriptExtensionRunner
 {
+    private const string CSharpCacheVersion = "v5";
+
+    public static async Task<ScriptExecutionResult> PreparePortableAssetsAsync(
+        CommandItem command,
+        CancellationToken cancellationToken = default)
+    {
+        if (!string.Equals(command.Runtime, "csharp", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(command.Runtime, "cs", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(command.Runtime, "c#", StringComparison.OrdinalIgnoreCase))
+        {
+            return new ScriptExecutionResult(true, string.Empty, string.Empty, 0);
+        }
+
+        var isInline = string.Equals(command.EntryMode, "inline", StringComparison.OrdinalIgnoreCase);
+        var source = isInline
+            ? command.InlineScriptSource
+            : await ReadEntrySourceAsync(command, cancellationToken);
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return new ScriptExecutionResult(false, string.Empty, "C# 扩展缺少源码入口。", -1);
+        }
+
+        return await EnsureCSharpBuildAsync(command, source, cancellationToken);
+    }
+
     public static bool CanExecute(CommandItem command)
     {
         if (string.IsNullOrWhiteSpace(command.Runtime) || string.IsNullOrWhiteSpace(command.ExtensionDirectoryPath))
@@ -39,53 +71,73 @@ public static class ScriptExtensionRunner
         IReadOnlyDictionary<string, string>? state,
         CancellationToken cancellationToken = default)
     {
+        var executionStopwatch = Stopwatch.StartNew();
         if (!CanExecute(command))
         {
             return new ScriptExecutionResult(false, string.Empty, "扩展没有可执行脚本入口。", -1);
         }
 
+        HostAssets.AppendLog(
+            $"ScriptRunner execute start: id={command.ExtensionId}, title={command.Title}, runtime={command.Runtime}, uiMode={command.UiMode ?? "none"}, launchSource={launchSource}, inputLength={(inputText ?? string.Empty).Length}");
+
         var isInline = string.Equals(command.EntryMode, "inline", StringComparison.OrdinalIgnoreCase);
-        switch (command.Runtime?.ToLowerInvariant())
+        var result = command.Runtime?.ToLowerInvariant() switch
         {
-            case "powershell":
-            case "ps1":
-            {
-                var entryPath = isInline
-                    ? await MaterializeInlineScriptAsync(command, ".ps1", cancellationToken)
-                    : Path.Combine(command.ExtensionDirectoryPath!, command.EntryPoint!);
-                if (!File.Exists(entryPath))
-                {
-                    return new ScriptExecutionResult(false, string.Empty, $"没有找到脚本入口：{entryPath}", -1);
-                }
+            "powershell" or "ps1" => await ExecutePowerShellEntryAsync(command, inputText, launchSource, state, isInline, cancellationToken),
 
-                try
-                {
-                    return await ExecutePowerShellAsync(command, entryPath, inputText, launchSource, state, cancellationToken);
-                }
-                finally
-                {
-                    if (isInline)
-                    {
-                        TryDeleteTempFile(entryPath);
-                    }
-                }
-            }
+            "csharp" or "cs" or "c#" => await ExecuteCSharpEntryAsync(command, inputText, launchSource, state, isInline, cancellationToken),
 
-            case "csharp":
-            case "cs":
-            case "c#":
-            {
-                var source = isInline
-                    ? command.InlineScriptSource
-                    : await ReadEntrySourceAsync(command, cancellationToken);
-                return string.IsNullOrWhiteSpace(source)
-                    ? new ScriptExecutionResult(false, string.Empty, "C# 扩展缺少源码入口。", -1)
-                    : await ExecuteCSharpAsync(command, source, inputText, launchSource, state, cancellationToken);
-            }
+            _ => new ScriptExecutionResult(false, string.Empty, $"当前还不支持脚本运行时：{command.Runtime}", -1)
+        };
 
-            default:
-                return new ScriptExecutionResult(false, string.Empty, $"当前还不支持脚本运行时：{command.Runtime}", -1);
+        HostAssets.AppendLog(
+            $"ScriptRunner execute done: id={command.ExtensionId}, title={command.Title}, success={result.Success}, exitCode={result.ExitCode}, elapsedMs={executionStopwatch.ElapsedMilliseconds}, outputLength={result.Output.Length}, errorLength={result.Error.Length}");
+        return result;
+    }
+
+    private static async Task<ScriptExecutionResult> ExecutePowerShellEntryAsync(
+        CommandItem command,
+        string? inputText,
+        string launchSource,
+        IReadOnlyDictionary<string, string>? state,
+        bool isInline,
+        CancellationToken cancellationToken)
+    {
+        var entryPath = isInline
+            ? await MaterializeInlineScriptAsync(command, ".ps1", cancellationToken)
+            : Path.Combine(command.ExtensionDirectoryPath!, command.EntryPoint!);
+        if (!File.Exists(entryPath))
+        {
+            return new ScriptExecutionResult(false, string.Empty, $"没有找到脚本入口：{entryPath}", -1);
         }
+
+        try
+        {
+            return await ExecutePowerShellAsync(command, entryPath, inputText, launchSource, state, cancellationToken);
+        }
+        finally
+        {
+            if (isInline)
+            {
+                TryDeleteTempFile(entryPath);
+            }
+        }
+    }
+
+    private static async Task<ScriptExecutionResult> ExecuteCSharpEntryAsync(
+        CommandItem command,
+        string? inputText,
+        string launchSource,
+        IReadOnlyDictionary<string, string>? state,
+        bool isInline,
+        CancellationToken cancellationToken)
+    {
+        var source = isInline
+            ? command.InlineScriptSource
+            : await ReadEntrySourceAsync(command, cancellationToken);
+        return string.IsNullOrWhiteSpace(source)
+            ? new ScriptExecutionResult(false, string.Empty, "C# 扩展缺少源码入口。", -1)
+            : await ExecuteCSharpAsync(command, source, inputText, launchSource, state, cancellationToken);
     }
 
     private static async Task<string> MaterializeInlineScriptAsync(CommandItem command, string extension, CancellationToken cancellationToken)
@@ -148,9 +200,9 @@ public static class ScriptExtensionRunner
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
-            ApplyRuntimeEnvironment(startInfo, command, inputText, contextPath, stateUpdatePath, launchSource);
+            ApplyRuntimeEnvironment(startInfo, command, inputText, contextPath, stateUpdatePath, null, launchSource);
 
-            return await RunProcessAsync(startInfo, "脚本", stateUpdatePath, cancellationToken);
+            return await RunProcessAsync(startInfo, "脚本", stateUpdatePath, null, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -172,9 +224,13 @@ public static class ScriptExtensionRunner
         IReadOnlyDictionary<string, string>? state,
         CancellationToken cancellationToken)
     {
+        var compileStopwatch = Stopwatch.StartNew();
         var context = CreateContext(command, inputText, launchSource, state);
         var contextPath = Path.Combine(Path.GetTempPath(), $"yanzi-{command.ExtensionId}-{Guid.NewGuid():N}.json");
         var stateUpdatePath = Path.Combine(Path.GetTempPath(), $"yanzi-{command.ExtensionId}-{Guid.NewGuid():N}-state.json");
+        var readyPath = command.UsesNativeWindowUi
+            ? Path.Combine(Path.GetTempPath(), $"yanzi-{command.ExtensionId}-{Guid.NewGuid():N}-ready.txt")
+            : null;
 
         try
         {
@@ -185,26 +241,26 @@ public static class ScriptExtensionRunner
                 cancellationToken);
 
             var build = await EnsureCSharpBuildAsync(command, source, cancellationToken);
+            HostAssets.AppendLog(
+                $"ScriptRunner csharp build done: id={command.ExtensionId}, title={command.Title}, success={build.Success}, elapsedMs={compileStopwatch.ElapsedMilliseconds}, output={build.Output.Trim()}");
             if (!build.Success)
             {
                 return build;
             }
-
-            var startInfo = new ProcessStartInfo
+            var assemblyPath = build.Output.Trim();
+            if (File.Exists(assemblyPath))
             {
-                FileName = "dotnet",
-                Arguments = Quote(build.Output.Trim()),
-                WorkingDirectory = command.ExtensionDirectoryPath!,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                StandardErrorEncoding = Encoding.UTF8
-            };
-            ApplyRuntimeEnvironment(startInfo, command, inputText, contextPath, stateUpdatePath, launchSource);
+                return await ExecuteManagedAssemblyOutOfProcessAsync(
+                    command,
+                    assemblyPath,
+                    contextPath,
+                    stateUpdatePath,
+                    readyPath,
+                    launchSource,
+                    cancellationToken);
+            }
 
-            return await RunProcessAsync(startInfo, "C# 扩展", stateUpdatePath, cancellationToken);
+            return new ScriptExecutionResult(false, string.Empty, $"没有找到已编译的 C# 扩展输出：{assemblyPath}", -1);
         }
         catch (Exception ex)
         {
@@ -214,6 +270,10 @@ public static class ScriptExtensionRunner
         {
             TryDeleteTempFile(contextPath);
             TryDeleteTempFile(stateUpdatePath);
+            if (!command.UsesNativeWindowUi)
+            {
+                TryDeleteTempFile(readyPath ?? string.Empty);
+            }
         }
     }
 
@@ -222,9 +282,15 @@ public static class ScriptExtensionRunner
         string source,
         CancellationToken cancellationToken)
     {
-        var sourceHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(source)))[..16].ToLowerInvariant();
+        var cacheFingerprint = string.Join(
+            "\n---\n",
+            CSharpCacheVersion,
+            command.ExtensionId ?? string.Empty,
+            source,
+            CSharpProgramSource,
+            CSharpRuntimeSource);
+        var sourceHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cacheFingerprint)))[..16].ToLowerInvariant();
         var buildRoot = Path.Combine(command.ExtensionDirectoryPath!, ".yanzi-csharp-cache", sourceHash);
-        var projectPath = Path.Combine(buildRoot, "YanziExtension.csproj");
         var dllPath = Path.Combine(buildRoot, "bin", "Release", "net9.0", "YanziExtension.dll");
         if (File.Exists(dllPath))
         {
@@ -232,28 +298,386 @@ public static class ScriptExtensionRunner
         }
 
         Directory.CreateDirectory(buildRoot);
-        await File.WriteAllTextAsync(projectPath, CSharpProjectSource, Encoding.UTF8, cancellationToken);
+        var outputDirectory = Path.GetDirectoryName(dllPath)!;
+        Directory.CreateDirectory(outputDirectory);
         await File.WriteAllTextAsync(Path.Combine(buildRoot, "Action.cs"), source, Encoding.UTF8, cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(buildRoot, "Program.cs"), CSharpProgramSource, Encoding.UTF8, cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(buildRoot, "YanziRuntime.cs"), CSharpRuntimeSource, Encoding.UTF8, cancellationToken);
-
-        var startInfo = new ProcessStartInfo
+        var syntaxTrees = new[]
         {
-            FileName = "dotnet",
-            Arguments = $"build {Quote(projectPath)} -c Release -nologo",
-            WorkingDirectory = buildRoot,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8
+            CSharpSyntaxTree.ParseText(SourceText.From(source, Encoding.UTF8), new CSharpParseOptions(LanguageVersion.Latest), path: "Action.cs", cancellationToken: cancellationToken),
+            CSharpSyntaxTree.ParseText(SourceText.From(CSharpProgramSource, Encoding.UTF8), new CSharpParseOptions(LanguageVersion.Latest), path: "Program.cs", cancellationToken: cancellationToken),
+            CSharpSyntaxTree.ParseText(SourceText.From(CSharpRuntimeSource, Encoding.UTF8), new CSharpParseOptions(LanguageVersion.Latest), path: "YanziRuntime.cs", cancellationToken: cancellationToken)
         };
 
-        var result = await RunProcessAsync(startInfo, "C# 扩展编译", null, cancellationToken);
-        return result.Success && File.Exists(dllPath)
-            ? new ScriptExecutionResult(true, dllPath, string.Empty, 0)
-            : result;
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "YanziExtension",
+            syntaxTrees: syntaxTrees,
+            references: BuildCSharpMetadataReferences(command),
+            options: new CSharpCompilationOptions(
+                OutputKind.ConsoleApplication,
+                optimizationLevel: OptimizationLevel.Release,
+                nullableContextOptions: NullableContextOptions.Enable));
+
+        await using var peStream = new FileStream(dllPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+        await using var pdbStream = new FileStream(
+            Path.Combine(outputDirectory, "YanziExtension.pdb"),
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.Read);
+        var emitResult = compilation.Emit(peStream, pdbStream: pdbStream, cancellationToken: cancellationToken);
+        if (emitResult.Success && File.Exists(dllPath))
+        {
+            return new ScriptExecutionResult(true, dllPath, string.Empty, 0);
+        }
+
+        var diagnostics = emitResult.Diagnostics
+            .Where(static diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning)
+            .Select(static diagnostic => diagnostic.ToString())
+            .ToArray();
+        var error = diagnostics.Length == 0
+            ? "C# 扩展编译失败。"
+            : string.Join(Environment.NewLine, diagnostics);
+        if (command.UsesNativeWindowUi)
+        {
+            error = BuildNativeWindowReferenceDebugInfo() + Environment.NewLine + error;
+        }
+        return new ScriptExecutionResult(false, string.Empty, error, -1);
+    }
+
+    private static IReadOnlyList<MetadataReference> BuildCSharpMetadataReferences(CommandItem command)
+    {
+        if (command.UsesNativeWindowUi)
+        {
+            var references = new List<MetadataReference>(
+                global::Basic.Reference.Assemblies.Net90.ReferenceInfos.All
+                    .Select(static info => (MetadataReference)info.Reference));
+
+            var bundledDirectory = GetBundledNativeWindowReferenceDirectory();
+            if (!string.IsNullOrWhiteSpace(bundledDirectory) && Directory.Exists(bundledDirectory))
+            {
+                references.AddRange(Directory.EnumerateFiles(bundledDirectory, "*.dll", SearchOption.TopDirectoryOnly)
+                    .Select(static path => (MetadataReference)MetadataReference.CreateFromFile(path)));
+            }
+
+            var referenceDirectories = new[]
+            {
+                GetWindowsDesktopReferenceDirectory()
+            }
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+            if (referenceDirectories.Length > 0)
+            {
+                references.AddRange(referenceDirectories
+                    .SelectMany(static directory => Directory.EnumerateFiles(directory, "*.dll", SearchOption.TopDirectoryOnly))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(static path => (MetadataReference)MetadataReference.CreateFromFile(path))
+                    .ToArray());
+            }
+
+            var runtimeReferences = BuildNativeWindowRuntimeReferences();
+            if (runtimeReferences.Count > 0)
+            {
+                references.AddRange(runtimeReferences);
+            }
+
+            if (references.Count > 0)
+            {
+                return references
+                    .GroupBy(static reference => reference.Display, StringComparer.OrdinalIgnoreCase)
+                    .Select(static group => group.First())
+                    .ToArray();
+            }
+        }
+
+        return global::Basic.Reference.Assemblies.Net90.ReferenceInfos.All
+            .Select(static info => (MetadataReference)info.Reference)
+            .ToArray();
+    }
+
+    private static string GetBundledNativeWindowReferenceDirectory()
+    {
+        return Path.Combine(AppContext.BaseDirectory, "NativeWindowRefs");
+    }
+
+    private static string? GetWindowsDesktopReferenceDirectory()
+    {
+        return GetReferencePackDirectory("Microsoft.WindowsDesktop.App.Ref", "net9.0", "net8.0", "net6.0");
+    }
+
+    private static string? GetNetCoreReferenceDirectory()
+    {
+        return GetReferencePackDirectory("Microsoft.NETCore.App.Ref", "net9.0", "net8.0", "net6.0");
+    }
+
+    private static string? GetReferencePackDirectory(string packName, params string[] tfmCandidates)
+    {
+        var packsRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "packs", packName);
+        if (!Directory.Exists(packsRoot))
+        {
+            return null;
+        }
+
+        var candidate = Directory.EnumerateDirectories(packsRoot)
+            .Select(path => new DirectoryInfo(path))
+            .Where(info => Version.TryParse(info.Name, out var version) && version.Major == 9)
+            .OrderByDescending(info => Version.Parse(info.Name))
+            .SelectMany(info => tfmCandidates.Select(tfm => Path.Combine(info.FullName, "ref", tfm)))
+            .FirstOrDefault(Directory.Exists);
+
+        if (candidate != null)
+        {
+            return candidate;
+        }
+
+        return Directory.EnumerateDirectories(packsRoot)
+            .Select(path => new DirectoryInfo(path))
+            .OrderByDescending(info =>
+            {
+                return Version.TryParse(info.Name, out var parsed) ? parsed : new Version(0, 0);
+            })
+            .SelectMany(info => tfmCandidates.Select(tfm => Path.Combine(info.FullName, "ref", tfm)))
+            .FirstOrDefault(Directory.Exists);
+    }
+
+    private static string? GetSharedRuntimeDirectory(string sharedName)
+    {
+        var sharedRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "shared", sharedName);
+        if (!Directory.Exists(sharedRoot))
+        {
+            return null;
+        }
+
+        return Directory.EnumerateDirectories(sharedRoot)
+            .Select(path => new DirectoryInfo(path))
+            .OrderByDescending(info =>
+            {
+                return Version.TryParse(info.Name, out var parsed) ? parsed : new Version(0, 0);
+            })
+            .Select(static info => info.FullName)
+            .FirstOrDefault(Directory.Exists);
+    }
+
+    private static IReadOnlyList<MetadataReference> BuildNativeWindowRuntimeReferences()
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        static void AddAssemblyPath(HashSet<string> set, Assembly? assembly)
+        {
+            if (assembly == null || assembly.IsDynamic)
+            {
+                return;
+            }
+
+            var location = assembly.Location;
+            if (!string.IsNullOrWhiteSpace(location) && File.Exists(location))
+            {
+                set.Add(location);
+            }
+        }
+
+        static void AddCandidateFile(HashSet<string> set, string? directory, string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                return;
+            }
+
+            var fullPath = Path.Combine(directory, fileName);
+            if (File.Exists(fullPath))
+            {
+                set.Add(fullPath);
+            }
+        }
+
+        static void AddTrustedPlatformAssembly(HashSet<string> set, string? tpaValue, string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(tpaValue))
+            {
+                return;
+            }
+
+            var match = tpaValue
+                .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(path => string.Equals(Path.GetFileName(path), fileName, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(match) && File.Exists(match))
+            {
+                set.Add(match);
+            }
+        }
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            AddAssemblyPath(paths, assembly);
+        }
+
+        var knownAssemblies = new[]
+        {
+            typeof(object).Assembly,
+            typeof(Task).Assembly,
+            typeof(Enumerable).Assembly,
+            typeof(Uri).Assembly,
+            typeof(System.Windows.Window).Assembly,
+            typeof(System.Windows.Controls.Button).Assembly,
+            typeof(System.Windows.Media.Brush).Assembly,
+            typeof(System.Windows.Markup.XmlLanguage).Assembly
+        };
+
+        foreach (var assembly in knownAssemblies)
+        {
+            AddAssemblyPath(paths, assembly);
+        }
+
+        var runtimeDirectory = Path.GetDirectoryName(typeof(object).Assembly.Location);
+        var coreSharedDirectory = GetSharedRuntimeDirectory("Microsoft.NETCore.App");
+        var windowsDesktopSharedDirectory = GetSharedRuntimeDirectory("Microsoft.WindowsDesktop.App");
+        var appDirectory = AppContext.BaseDirectory;
+        var trustedPlatformAssemblies = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
+
+        foreach (var fileName in new[]
+                 {
+                     "System.Private.CoreLib.dll",
+                     "System.Runtime.dll",
+                     "System.Console.dll",
+                     "System.Collections.dll",
+                     "System.ObjectModel.dll",
+                     "System.Linq.dll",
+                     "System.Runtime.Extensions.dll",
+                     "System.Text.RegularExpressions.dll",
+                     "System.Threading.dll",
+                     "System.Threading.Tasks.dll",
+                     "netstandard.dll",
+                     "WindowsBase.dll",
+                     "PresentationCore.dll",
+                     "PresentationFramework.dll",
+                     "System.Xaml.dll"
+                 })
+        {
+            AddTrustedPlatformAssembly(paths, trustedPlatformAssemblies, fileName);
+        }
+
+        foreach (var directory in new[] { runtimeDirectory, coreSharedDirectory, windowsDesktopSharedDirectory, appDirectory }.Where(static path => !string.IsNullOrWhiteSpace(path)))
+        {
+            AddCandidateFile(paths, directory, "System.Private.CoreLib.dll");
+            AddCandidateFile(paths, directory, "System.Runtime.dll");
+            AddCandidateFile(paths, directory, "System.Console.dll");
+            AddCandidateFile(paths, directory, "System.Collections.dll");
+            AddCandidateFile(paths, directory, "System.ObjectModel.dll");
+            AddCandidateFile(paths, directory, "System.Linq.dll");
+            AddCandidateFile(paths, directory, "System.Runtime.Extensions.dll");
+            AddCandidateFile(paths, directory, "System.Text.RegularExpressions.dll");
+            AddCandidateFile(paths, directory, "System.Threading.dll");
+            AddCandidateFile(paths, directory, "System.Threading.Tasks.dll");
+            AddCandidateFile(paths, directory, "netstandard.dll");
+            AddCandidateFile(paths, directory, "WindowsBase.dll");
+            AddCandidateFile(paths, directory, "PresentationCore.dll");
+            AddCandidateFile(paths, directory, "PresentationFramework.dll");
+            AddCandidateFile(paths, directory, "System.Xaml.dll");
+        }
+
+        return paths
+            .Select(static path => (MetadataReference)MetadataReference.CreateFromFile(path))
+            .ToArray();
+    }
+
+    private static string BuildNativeWindowReferenceDebugInfo()
+    {
+        var bundledDirectory = GetBundledNativeWindowReferenceDirectory();
+        var sharedCore = GetSharedRuntimeDirectory("Microsoft.NETCore.App") ?? "(missing)";
+        var sharedDesktop = GetSharedRuntimeDirectory("Microsoft.WindowsDesktop.App") ?? "(missing)";
+        var packCore = GetNetCoreReferenceDirectory() ?? "(missing)";
+        var packDesktop = GetWindowsDesktopReferenceDirectory() ?? "(missing)";
+        var tpaValue = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
+        var tpaFiles = new[]
+        {
+            "PresentationFramework.dll",
+            "PresentationCore.dll",
+            "WindowsBase.dll",
+            "System.Xaml.dll"
+        }
+        .Select(fileName =>
+        {
+            var match = string.IsNullOrWhiteSpace(tpaValue)
+                ? null
+                : tpaValue.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault(path => string.Equals(Path.GetFileName(path), fileName, StringComparison.OrdinalIgnoreCase));
+            return $"{fileName}={(string.IsNullOrWhiteSpace(match) ? "(missing)" : match)}";
+        });
+
+        return string.Join(
+            Environment.NewLine,
+            [
+                $"NativeWindow refs: bundled={(Directory.Exists(bundledDirectory) ? bundledDirectory : "(missing)")}",
+                $"NativeWindow refs: corePack={packCore}",
+                $"NativeWindow refs: desktopPack={packDesktop}",
+                $"NativeWindow refs: coreShared={sharedCore}",
+                $"NativeWindow refs: desktopShared={sharedDesktop}",
+                .. tpaFiles.Select(static line => $"NativeWindow refs: {line}")
+            ]);
+    }
+
+    private static async Task<ScriptExecutionResult> ExecuteManagedAssemblyOutOfProcessAsync(
+        CommandItem command,
+        string assemblyPath,
+        string contextPath,
+        string stateUpdatePath,
+        string? readyPath,
+        string launchSource,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var hostPath = GetExtensionHostProcessPath();
+            if (string.IsNullOrWhiteSpace(hostPath) || !File.Exists(hostPath))
+            {
+                return new ScriptExecutionResult(false, string.Empty, "没有找到扩展宿主进程。", -1);
+            }
+
+            var isDetachedNativeWindow = command.UsesNativeWindowUi;
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = hostPath,
+                WorkingDirectory = command.ExtensionDirectoryPath!,
+                UseShellExecute = false,
+                RedirectStandardOutput = !isDetachedNativeWindow,
+                RedirectStandardError = !isDetachedNativeWindow,
+                CreateNoWindow = true
+            };
+            if (!isDetachedNativeWindow)
+            {
+                startInfo.StandardOutputEncoding = Encoding.UTF8;
+                startInfo.StandardErrorEncoding = Encoding.UTF8;
+            }
+
+            startInfo.ArgumentList.Add("--assembly");
+            startInfo.ArgumentList.Add(assemblyPath);
+            ApplyRuntimeEnvironment(startInfo, command, null, contextPath, stateUpdatePath, readyPath, launchSource);
+            return await RunProcessAsync(
+                startInfo,
+                "C# 扩展宿主",
+                stateUpdatePath,
+                readyPath,
+                cancellationToken,
+                allowEarlySuccess: isDetachedNativeWindow);
+        }
+        catch (Exception ex)
+        {
+            return new ScriptExecutionResult(false, string.Empty, ex.Message, -1);
+        }
+    }
+
+    private static string? GetExtensionHostProcessPath()
+    {
+        var candidate = Path.Combine(AppContext.BaseDirectory, "ExtensionHost", "Yanzi.ExtensionHost.exe");
+        if (File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        return null;
     }
 
     private static async Task<string?> ReadEntrySourceAsync(CommandItem command, CancellationToken cancellationToken)
@@ -273,21 +697,164 @@ public static class ScriptExtensionRunner
         ProcessStartInfo startInfo,
         string label,
         string? stateUpdatePath,
-        CancellationToken cancellationToken)
+        string? readyPath,
+        CancellationToken cancellationToken,
+        bool allowEarlySuccess = false)
     {
-        using var process = new Process { StartInfo = startInfo };
+        var processStopwatch = Stopwatch.StartNew();
+        var process = new Process { StartInfo = startInfo };
         process.Start();
+        var argumentText = startInfo.ArgumentList.Count > 0
+            ? string.Join(" ", startInfo.ArgumentList)
+            : startInfo.Arguments;
+        HostAssets.AppendLog(
+            $"ScriptRunner process started: label={label}, file={startInfo.FileName}, args={argumentText}, pid={process.Id}, allowEarlySuccess={allowEarlySuccess}, workingDir={startInfo.WorkingDirectory}");
+        Task<string>? outputTask = startInfo.RedirectStandardOutput
+            ? process.StandardOutput.ReadToEndAsync(cancellationToken)
+            : null;
+        Task<string>? errorTask = startInfo.RedirectStandardError
+            ? process.StandardError.ReadToEndAsync(cancellationToken)
+            : null;
 
-        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        if (allowEarlySuccess)
+        {
+            var earlyResult = await WaitForNativeWindowStartupAsync(process, label, readyPath, cancellationToken);
+            if (earlyResult != null)
+            {
+                if (earlyResult.Success)
+                {
+                    _ = ObserveProcessAfterEarlySuccessAsync(process, label, stateUpdatePath, outputTask, errorTask);
+                    HostAssets.AppendLog(
+                        $"ScriptRunner process early success: label={label}, pid={process.Id}, elapsedMs={processStopwatch.ElapsedMilliseconds}");
+                    return earlyResult;
+                }
+
+                HostAssets.AppendLog(
+                    $"ScriptRunner process early failure: label={label}, pid={TryGetProcessId(process)}, elapsedMs={processStopwatch.ElapsedMilliseconds}, error={earlyResult.Error}");
+                process.Dispose();
+                return earlyResult;
+            }
+        }
+
         await process.WaitForExitAsync(cancellationToken);
 
-        var output = (await outputTask).Trim();
-        var error = (await errorTask).Trim();
+        var output = outputTask == null ? string.Empty : (await outputTask).Trim();
+        var error = errorTask == null ? string.Empty : (await errorTask).Trim();
         var stateUpdates = await TryReadStateUpdatesAsync(stateUpdatePath, cancellationToken);
-        return process.ExitCode == 0
+        HostAssets.AppendLog(
+            $"ScriptRunner process exited: label={label}, pid={process.Id}, exitCode={process.ExitCode}, elapsedMs={processStopwatch.ElapsedMilliseconds}, outputLength={output.Length}, errorLength={error.Length}");
+        var result = process.ExitCode == 0
             ? new ScriptExecutionResult(true, output, error, process.ExitCode, stateUpdates)
             : new ScriptExecutionResult(false, output, string.IsNullOrWhiteSpace(error) ? $"{label}退出码：{process.ExitCode}" : error, process.ExitCode, stateUpdates);
+        process.Dispose();
+        return result;
+    }
+
+    private static async Task<ScriptExecutionResult?> WaitForNativeWindowStartupAsync(
+        Process process,
+        string label,
+        string? readyPath,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(4);
+        var readySeenAt = (DateTimeOffset?)null;
+
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (!string.IsNullOrWhiteSpace(readyPath) && File.Exists(readyPath))
+            {
+                readySeenAt ??= DateTimeOffset.UtcNow;
+                if (DateTimeOffset.UtcNow - readySeenAt.Value >= TimeSpan.FromMilliseconds(1200))
+                {
+                    return new ScriptExecutionResult(
+                        true,
+                        "native-window-started",
+                        "原生窗口已启动。",
+                        0);
+                }
+            }
+
+            if (process.HasExited)
+            {
+                var exitCode = TryGetProcessExitCode(process);
+                return new ScriptExecutionResult(
+                    false,
+                    string.Empty,
+                    string.IsNullOrWhiteSpace(readyPath) || !File.Exists(readyPath)
+                        ? $"{label}未完成运行时初始化就退出，退出码：{exitCode}"
+                        : $"{label}在原生窗口稳定启动前退出，退出码：{exitCode}",
+                    int.TryParse(exitCode, out var parsedExitCode) ? parsedExitCode : -1);
+            }
+
+            await Task.Delay(100, cancellationToken);
+        }
+
+        return process.HasExited
+            ? new ScriptExecutionResult(false, string.Empty, $"{label}在原生窗口稳定启动前退出，退出码：{TryGetProcessExitCode(process)}", process.ExitCode)
+            : new ScriptExecutionResult(true, "native-window-started", "原生窗口已启动。", 0);
+    }
+
+    private static async Task ObserveProcessAfterEarlySuccessAsync(
+        Process process,
+        string label,
+        string? stateUpdatePath,
+        Task<string>? outputTask,
+        Task<string>? errorTask)
+    {
+        try
+        {
+            process.EnableRaisingEvents = true;
+            await process.WaitForExitAsync();
+            var output = outputTask == null ? string.Empty : (await outputTask).Trim();
+            var error = errorTask == null ? string.Empty : (await errorTask).Trim();
+            var stateUpdates = await TryReadStateUpdatesAsync(stateUpdatePath, CancellationToken.None);
+            HostAssets.AppendLog(
+                $"ScriptRunner process exited after early success: label={label}, pid={process.Id}, exitCode={process.ExitCode}, elapsedMs={TryGetProcessElapsedMilliseconds(process)}, outputLength={output.Length}, errorLength={error.Length}, stateUpdateCount={stateUpdates.Count}");
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"ScriptRunner process observe failed after early success: label={label}, pid={TryGetProcessId(process)}, error={ex.Message}");
+        }
+        finally
+        {
+            process.Dispose();
+        }
+    }
+
+    private static string TryGetProcessExitCode(Process process)
+    {
+        try
+        {
+            return process.ExitCode.ToString();
+        }
+        catch
+        {
+            return "unknown";
+        }
+    }
+
+    private static string TryGetProcessId(Process process)
+    {
+        try
+        {
+            return process.Id.ToString();
+        }
+        catch
+        {
+            return "unknown";
+        }
+    }
+
+    private static string TryGetProcessElapsedMilliseconds(Process process)
+    {
+        try
+        {
+            return ((long)(DateTime.Now - process.StartTime).TotalMilliseconds).ToString();
+        }
+        catch
+        {
+            return "unknown";
+        }
     }
 
     private static ScriptExecutionContext CreateContext(CommandItem command, string? inputText, string launchSource, IReadOnlyDictionary<string, string>? state)
@@ -311,17 +878,43 @@ public static class ScriptExtensionRunner
     }
 
     private static void ApplyRuntimeEnvironment(
+        CommandItem command,
+        string contextPath,
+        string stateUpdatePath,
+        string launchSource)
+    {
+        var settings = AppSettingsStore.Load();
+        Environment.SetEnvironmentVariable("YANZI_INPUT", string.Empty);
+        Environment.SetEnvironmentVariable("YANZI_CONTEXT_PATH", contextPath);
+        Environment.SetEnvironmentVariable("YANZI_STATE_UPDATES_PATH", stateUpdatePath);
+        Environment.SetEnvironmentVariable("YANZI_EXTENSION_ID", command.ExtensionId);
+        Environment.SetEnvironmentVariable("YANZI_EXTENSION_DIR", command.ExtensionDirectoryPath!);
+        Environment.SetEnvironmentVariable("YANZI_EXTENSION_DATA_DIR", ExtensionStorageService.GetExtensionStorageDirectoryPath(command.ExtensionId));
+        Environment.SetEnvironmentVariable("YANZI_LAUNCH_SOURCE", launchSource);
+        Environment.SetEnvironmentVariable("YANZI_AGENT_API_BASE_URL", settings.EnableAgentApi
+            ? $"http://127.0.0.1:{settings.AgentApiPort}"
+            : string.Empty);
+        Environment.SetEnvironmentVariable("YANZI_AGENT_API_TOKEN", settings.AgentApiToken ?? string.Empty);
+        Environment.SetEnvironmentVariable("YANZI_HOST_LOG_PATH", HostAssets.HostLogPath);
+    }
+
+    private static void ApplyRuntimeEnvironment(
         ProcessStartInfo startInfo,
         CommandItem command,
         string? inputText,
         string contextPath,
         string stateUpdatePath,
+        string? readyPath,
         string launchSource)
     {
         var settings = AppSettingsStore.Load();
         startInfo.Environment["YANZI_INPUT"] = inputText ?? string.Empty;
         startInfo.Environment["YANZI_CONTEXT_PATH"] = contextPath;
         startInfo.Environment["YANZI_STATE_UPDATES_PATH"] = stateUpdatePath;
+        if (!string.IsNullOrWhiteSpace(readyPath))
+        {
+            startInfo.Environment["YANZI_READY_PATH"] = readyPath;
+        }
         startInfo.Environment["YANZI_EXTENSION_ID"] = command.ExtensionId;
         startInfo.Environment["YANZI_EXTENSION_DIR"] = command.ExtensionDirectoryPath!;
         startInfo.Environment["YANZI_EXTENSION_DATA_DIR"] = ExtensionStorageService.GetExtensionStorageDirectoryPath(command.ExtensionId);
@@ -330,6 +923,7 @@ public static class ScriptExtensionRunner
             ? $"http://127.0.0.1:{settings.AgentApiPort}"
             : string.Empty;
         startInfo.Environment["YANZI_AGENT_API_TOKEN"] = settings.AgentApiToken ?? string.Empty;
+        startInfo.Environment["YANZI_HOST_LOG_PATH"] = HostAssets.HostLogPath;
     }
 
     private static string Quote(string value)
@@ -413,24 +1007,19 @@ public static class ScriptExtensionRunner
         WriteIndented = true
     };
 
-    private const string CSharpProjectSource =
-        """
-        <Project Sdk="Microsoft.NET.Sdk">
-          <PropertyGroup>
-            <OutputType>Exe</OutputType>
-            <TargetFramework>net9.0</TargetFramework>
-            <Nullable>enable</Nullable>
-            <ImplicitUsings>enable</ImplicitUsings>
-          </PropertyGroup>
-        </Project>
-        """;
-
     private const string CSharpProgramSource =
         """
+        using System;
         using OpenQuickHost.CSharpRuntime;
 
-        var context = await YanziActionContext.LoadFromEnvironmentAsync();
-        var result = await YanziAction.RunAsync(context);
+        var context = await YanziActionContext.LoadFromEnvironmentAsync().ConfigureAwait(false);
+        var readyPath = Environment.GetEnvironmentVariable("YANZI_READY_PATH");
+        if (!string.IsNullOrWhiteSpace(readyPath))
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(readyPath)!);
+            System.IO.File.WriteAllText(readyPath, DateTimeOffset.Now.ToString("O"));
+        }
+        var result = await YanziAction.RunAsync(context).ConfigureAwait(false);
         if (!string.IsNullOrEmpty(result))
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -440,11 +1029,15 @@ public static class ScriptExtensionRunner
 
     private const string CSharpRuntimeSource =
         """
+        using System;
+        using System.Collections.Generic;
+        using System.IO;
         using System.Linq;
         using System.Net.Http;
         using System.Net.Http.Json;
         using System.Text;
         using System.Text.Json;
+        using System.Threading.Tasks;
 
         namespace OpenQuickHost.CSharpRuntime;
 

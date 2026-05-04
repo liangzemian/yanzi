@@ -14,9 +14,13 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.IO;
+using System.Collections.Specialized;
+using System.Net.Http;
+using System.Net.NetworkInformation;
 using System.Windows.Threading;
 using System.Windows.Markup;
 using System.Windows.Forms;
+using Microsoft.VisualBasic.FileIO;
 using Forms = System.Windows.Forms;
 
 namespace OpenQuickHost;
@@ -31,8 +35,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const uint ModNoRepeat = 0x4000;
     private const int WmHotKey = 0x0312;
     private const string CloudWebDavConfigId = "yanzi-webdav-settings";
+    private const string CloudQuickPanelConfigId = "yanzi-quickpanel-settings";
     private const string SearchScopeAll = "all";
-    private const string SearchScopeWeb = "web";
+    private const string SearchScopeExtension = "extension";
+    private const string SearchScopeApplication = "application";
+    private const string SearchScopeFile = "file";
+    private const string SearchScopeSystem = "system";
 
     private readonly List<CommandItem> _allCommands;
     private readonly CloudSyncClient? _cloudSyncClient;
@@ -57,8 +65,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private int _nextExtensionHotkeyId = 0x5400;
     private QuickPanelWindow? _quickPanel;
     private readonly DispatcherTimer _backgroundWebDavSyncTimer;
+    private readonly DispatcherTimer _cloudReconnectTimer;
+    private readonly DispatcherTimer _fileSearchDebounceTimer;
+    private int _fileSearchRequestVersion;
+    private DateTimeOffset _lastFileSearchManualInitPromptAt = DateTimeOffset.MinValue;
     private bool _backgroundWebDavSyncRunning;
     private bool _backgroundWebDavSyncRequested;
+    private bool _cloudReconnectInProgress;
+    private int _cloudReconnectAttemptCount;
+    private string? _cloudReconnectPendingReason;
+    private string _pendingFileSearchTerm = string.Empty;
     private SearchScopeTab? _selectedSearchScope;
     private bool _listenerServicesPaused;
     private readonly double _defaultWindowWidth;
@@ -88,14 +104,30 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _cloudSyncClient = new CloudSyncClient(_syncOptions);
         }
 
+        _backgroundWebDavSyncTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromHours(6)
+        };
+        _backgroundWebDavSyncTimer.Tick += (_, _) => QueueBackgroundWebDavSync("timer");
+
+        _cloudReconnectTimer = new DispatcherTimer();
+        _cloudReconnectTimer.Tick += CloudReconnectTimer_Tick;
+
+        _fileSearchDebounceTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(120)
+        };
+        _fileSearchDebounceTimer.Tick += FileSearchDebounceTimer_Tick;
+
         _allCommands = CreateSeedCommands();
         _allCommands.AddRange(LocalExtensionCatalog.LoadCommands());
+        _allCommands.AddRange(CreateInstalledApplicationCommands());
         _localExtensionIndex = _allCommands
             .Where(x => x.Source == CommandSource.LocalExtension)
             .GroupBy(x => x.ExtensionId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
         FilteredCommands = new ObservableCollection<CommandItem>(_allCommands);
-        SearchScopes = new ObservableCollection<SearchScopeTab>(CreateSearchScopes());
+        SearchScopes = new ObservableCollection<SearchScopeTab>(BuildSearchScopes());
         _selectedSearchScope = SearchScopes.First();
         SelectedCommand = FilteredCommands.FirstOrDefault();
         DataContext = this;
@@ -114,11 +146,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         };
 
         _quickPanel = new QuickPanelWindow(this);
-        _backgroundWebDavSyncTimer = new DispatcherTimer
-        {
-            Interval = TimeSpan.FromHours(6)
-        };
-        _backgroundWebDavSyncTimer.Tick += (_, _) => QueueBackgroundWebDavSync("timer");
+
+        NetworkChange.NetworkAvailabilityChanged += NetworkChange_NetworkAvailabilityChanged;
+        NetworkChange.NetworkAddressChanged += NetworkChange_NetworkAddressChanged;
     }
 
     private void ApplyWindowIcon()
@@ -163,6 +193,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private IEnumerable<SearchScopeTab> BuildSearchScopes()
+    {
+        yield return new SearchScopeTab(SearchScopeAll, "全部", "所有结果", true);
+        yield return new SearchScopeTab(SearchScopeExtension, "扩展", "所有扩展");
+        yield return new SearchScopeTab(SearchScopeApplication, "应用", "已安装应用");
+        yield return new SearchScopeTab(SearchScopeFile, "文件", "Everything 文件结果");
+        yield return new SearchScopeTab(SearchScopeSystem, "系统", "Windows 系统与设置");
+
+        foreach (var pinnedCommand in GetPinnedSearchScopeCommands())
+        {
+            yield return SearchScopeTab.CreatePinnedCommand(pinnedCommand.ExtensionId, pinnedCommand.Title, $"固定扩展：{pinnedCommand.Title}");
+        }
+    }
+
     public bool AllowClose { get; set; }
 
     public CommandItem? SelectedCommand
@@ -202,10 +246,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public string VisibleCountText => $"{FilteredCommands.Count} 条结果";
+    public string VisibleCountText => string.Equals(SelectedSearchScope?.Key, SearchScopeFile, StringComparison.OrdinalIgnoreCase)
+        ? $"{FilteredCommands.Count} 个文件结果"
+        : $"{FilteredCommands.Count} 条结果";
 
     public string FooterHint => SelectedCommand == null
         ? "Up / Down 切换   Enter 执行   Ctrl+K 动作   Esc 收起"
+        : SelectedCommand.Source == CommandSource.File
+            ? "Up / Down 切换   Enter 打开   右键原生菜单   Esc 收起"
         : SelectedCommand.SupportsQueryArgument && !string.IsNullOrWhiteSpace(_activeQueryArgument)
             ? $"{SelectedCommand.Title}   ·   {BuildQueryPreviewText(SelectedCommand, _activeQueryArgument)}"
             : $"{SelectedCommand.Title}   ·   {SelectedCommand.Category}   ·   Ctrl+K 动作";
@@ -354,6 +402,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         await RefreshCloudStateAsync(allowLoginPrompt: false);
+        if (_cloudSyncClient != null && _cloudSyncClient.HasCredential)
+        {
+            ScheduleSilentCloudReconnect("startup-post-refresh");
+        }
         StartStartupExtensions();
     }
 
@@ -364,6 +416,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void SearchBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
+        if (e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            CopySearchSelectionToClipboard();
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Down)
         {
             MoveSelection(1);
@@ -386,6 +445,32 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void CopySearchSelectionToClipboard()
+    {
+        var text = SearchBox.SelectedText;
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+
+        try
+        {
+            Forms.Clipboard.SetText(text, Forms.TextDataFormat.UnicodeText);
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Search box copy failed: {FormatExceptionMessage(ex)}");
+            try
+            {
+                System.Windows.Clipboard.SetText(text);
+            }
+            catch (Exception fallbackEx)
+            {
+                SyncStatus = $"复制搜索框内容失败：{FormatExceptionMessage(fallbackEx)}";
+            }
+        }
+    }
+
     private void SearchScopeButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: SearchScopeTab scope })
@@ -396,15 +481,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void RemovePinnedSearchScopeMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: SearchScopeTab scope })
+        {
+            RemovePinnedSearchScope(scope);
+            SearchBox.Focus();
+            SearchBox.CaretIndex = SearchBox.Text.Length;
+        }
+    }
+
     private void SearchScopeAddButton_Click(object sender, RoutedEventArgs e)
     {
-        var command = ShowJsonExtensionEditorAsync(CreateWebSearchTemplateJson(), false);
-        if (command != null)
-        {
-            LastRunMessage = $"已添加网页搜索扩展：{command.Title}";
-            QueueBackgroundWebDavSync("web-search-extension-add");
-        }
-
+        AddCurrentCommandToPinnedSearchScopes();
         SearchBox.Focus();
         SearchBox.CaretIndex = SearchBox.Text.Length;
     }
@@ -443,6 +532,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             SelectedCommand = command;
             CommandList.SelectedItem = command;
+            if (command.Source == CommandSource.File)
+            {
+                e.Handled = true;
+            }
+        }
+    }
+
+    private void CommandList_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        var dependencyObject = e.OriginalSource as DependencyObject;
+        while (dependencyObject != null && dependencyObject is not ListBoxItem)
+        {
+            dependencyObject = VisualTreeHelper.GetParent(dependencyObject);
+        }
+
+        if (dependencyObject is ListBoxItem item && item.DataContext is CommandItem { Source: CommandSource.File } command)
+        {
+            SelectedCommand = command;
+            CommandList.SelectedItem = command;
+            e.Handled = true;
+            ShowFileResultContextMenu(item);
         }
     }
 
@@ -500,6 +610,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async void DeleteExtensionMenuItem_Click(object sender, RoutedEventArgs e)
     {
         await DeleteSelectedExtensionAsync();
+    }
+
+    private async void PublishExtensionMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var ok = await PublishSelectedExtensionAsync();
+        if (!ok)
+        {
+            System.Windows.MessageBox.Show(
+                this,
+                SyncStatus,
+                "发布到商店失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        System.Windows.MessageBox.Show(
+            this,
+            SyncStatus,
+            "发布到商店",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
     }
 
     private async void RefreshCloudButton_Click(object sender, RoutedEventArgs e)
@@ -583,12 +715,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     private async void FooterAddExtensionButton_Click(object sender, RoutedEventArgs e)
-    {
-        FooterQuickMenuPopup.IsOpen = false;
-        await AddJsonExtensionAsync();
-    }
-
-    private async void QuickMenuAddExtension_Click(object sender, RoutedEventArgs e)
     {
         FooterQuickMenuPopup.IsOpen = false;
         await AddJsonExtensionAsync();
@@ -692,6 +818,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void CommandList_ContextMenuOpening(object sender, System.Windows.Controls.ContextMenuEventArgs? e)
     {
+        if (SelectedCommand?.Source == CommandSource.File)
+        {
+            if (e != null)
+            {
+                e.Handled = true;
+            }
+
+            return;
+        }
+
         if (!UpdateCommandContextMenuState() && e != null)
         {
             e.Handled = true;
@@ -704,7 +840,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var actionable = current != null && !IsInternalCommand(current) ? current : _lastActionableCommand;
         var resolved = actionable == null ? null : ResolveRunnableCommand(actionable);
 
-        if (resolved == null)
+        if (resolved == null || resolved.Source == CommandSource.File)
         {
             return false;
         }
@@ -714,6 +850,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SetCommandShortcutMenuItem.IsEnabled = canManageLocalExtension;
         RenameCommandMenuItem.IsEnabled = canManageLocalExtension;
         EditExtensionMenuItem.IsEnabled = canManageLocalExtension;
+        PublishExtensionMenuItem.IsEnabled = canManageLocalExtension && _cloudSyncClient != null;
         DeleteExtensionMenuItem.IsEnabled = canManageLocalExtension;
         CopyExtensionMenuItem.IsEnabled = true;
         CutExtensionMenuItem.IsEnabled = true;
@@ -726,6 +863,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var parsed = ParseSearchQuery(query);
         UpdateSearchScopeCounts(parsed);
         _activeQueryArgument = string.Empty;
+
+        if (string.Equals(parsed.ScopeKey, SearchScopeFile, StringComparison.OrdinalIgnoreCase))
+        {
+            QueueFileSearchResults(parsed.Term);
+            return;
+        }
+
+        Interlocked.Increment(ref _fileSearchRequestVersion);
+        _fileSearchDebounceTimer.Stop();
+
         var sourceCommands = parsed.IsEmpty
             ? _allCommands
                 .Where(command => IsExtensionEnabled(command.ExtensionId))
@@ -784,6 +931,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             FilteredCommands.Add(item);
         }
 
+        if (string.Equals(parsed.ScopeKey, SearchScopeApplication, StringComparison.OrdinalIgnoreCase))
+        {
+            HostAssets.AppendLog($"Application scope filter: totalCommands={_allCommands.Count}, appCommands={_allCommands.Count(x => x.Source == CommandSource.Application)}, visible={matches.Count}, query='{parsed.Term}'.");
+        }
+
         SelectedCommand = FilteredCommands.FirstOrDefault();
         CommandList.SelectedItem = SelectedCommand;
         OnPropertyChanged(nameof(VisibleCountText));
@@ -810,20 +962,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         SelectedSearchScope = SearchScopes[nextIndex];
-    }
-
-    private static List<SearchScopeTab> CreateSearchScopes()
-    {
-        return
-        [
-            new(SearchScopeAll, "全部", "所有结果", true),
-            new(SearchScopeWeb, "网页", "百度 / Bing / 谷歌"),
-            new("baidu", "百度", "只显示百度搜索"),
-            new("bing", "Bing", "只显示 Bing 搜索"),
-            new("google", "谷歌", "只显示 Google 搜索"),
-            new("extension", "扩展", "本地扩展"),
-            new("command", "命令", "系统命令")
-        ];
     }
 
     private SearchQueryState ParseSearchQuery(string? query)
@@ -854,14 +992,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         scope = token.Trim().ToLowerInvariant() switch
         {
             "all" or "全部" => SearchScopeAll,
-            "web" or "网页" or "搜索" => SearchScopeWeb,
-            "baidu" or "bd" or "百度" => "baidu",
-            "bing" or "必应" => "bing",
-            "google" or "gg" or "谷歌" or "guge" => "google",
-            "extension" or "ext" or "扩展" or "插件" => "extension",
-            "command" or "cmd" or "命令" or "动作" => "command",
+            "extension" or "ext" or "扩展" or "插件" => SearchScopeExtension,
+            "application" or "app" or "应用" or "程序" => SearchScopeApplication,
+            "file" or "files" or "everything" or "文件" => SearchScopeFile,
+            "system" or "sys" or "设置" or "系统" => SearchScopeSystem,
             _ => string.Empty
         };
+
+        if (scope.Length == 0 && token.StartsWith("pin:", StringComparison.OrdinalIgnoreCase))
+        {
+            scope = token;
+        }
+
         return scope.Length > 0;
     }
 
@@ -870,16 +1012,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return scope switch
         {
             SearchScopeAll => true,
-            SearchScopeWeb => command.Source == CommandSource.LocalExtension &&
-                              command.Category.Contains("网页搜索", StringComparison.OrdinalIgnoreCase),
-            "baidu" => command.ExtensionId.Contains("baidu", StringComparison.OrdinalIgnoreCase) ||
-                       command.Keywords.Any(keyword => keyword.Contains("baidu", StringComparison.OrdinalIgnoreCase) || keyword.Contains("百度", StringComparison.OrdinalIgnoreCase)),
-            "bing" => command.ExtensionId.Contains("bing", StringComparison.OrdinalIgnoreCase) ||
-                      command.Keywords.Any(keyword => keyword.Contains("bing", StringComparison.OrdinalIgnoreCase) || keyword.Contains("必应", StringComparison.OrdinalIgnoreCase)),
-            "google" => command.ExtensionId.Contains("google", StringComparison.OrdinalIgnoreCase) ||
-                        command.Keywords.Any(keyword => keyword.Contains("google", StringComparison.OrdinalIgnoreCase) || keyword.Contains("谷歌", StringComparison.OrdinalIgnoreCase)),
-            "extension" => command.Source == CommandSource.LocalExtension,
-            "command" => command.Source != CommandSource.LocalExtension,
+            SearchScopeExtension => command.Source == CommandSource.LocalExtension || command.Source == CommandSource.WebSearch,
+            SearchScopeApplication => command.Source == CommandSource.Application,
+            SearchScopeFile => command.Source == CommandSource.File,
+            SearchScopeSystem => command.Category.Contains("系统", StringComparison.OrdinalIgnoreCase),
+            _ when SearchScopeTab.TryParsePinnedCommandScope(scope, out var extensionId) =>
+                command.ExtensionId.Equals(extensionId, StringComparison.OrdinalIgnoreCase),
             _ => true
         };
     }
@@ -905,6 +1043,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private int CountScopeResults(SearchQueryState query)
     {
+        if (string.Equals(query.ScopeKey, SearchScopeFile, StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(SelectedSearchScope?.Key, SearchScopeFile, StringComparison.OrdinalIgnoreCase)
+                ? FilteredCommands.Count(command => command.Source == CommandSource.File)
+                : 0;
+        }
+
         var commandCount = query.IsEmpty
             ? 0
             : _allCommands.Count(command =>
@@ -914,8 +1059,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return commandCount;
     }
 
-    private static bool AllowsRawQueryArgument(string scopeKey) =>
-        scopeKey is SearchScopeWeb or "baidu" or "bing" or "google";
+    private static bool AllowsRawQueryArgument(string scopeKey) => false;
 
     private void ApplyQueryPreview(CommandItem command, string rawInput, bool allowRawQueryArgument)
     {
@@ -1039,6 +1183,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = executionTarget,
+                    Arguments = runnable.LaunchArguments ?? string.Empty,
+                    WorkingDirectory = string.IsNullOrWhiteSpace(runnable.WorkingDirectory) ? string.Empty : runnable.WorkingDirectory,
                     UseShellExecute = true
                 });
                 RecordCommandUsage(runnable);
@@ -2161,6 +2307,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             var me = await _cloudSyncClient.GetMeAsync();
             var pulledConfig = await PullWebDavConfigFromCloudAsync();
+            var pulledQuickPanelConfig = await PullQuickPanelConfigFromCloudAsync();
             _allCommands.RemoveAll(x => x.Source == CommandSource.Cloud);
             foreach (var command in _allCommands)
             {
@@ -2168,13 +2315,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
             ApplyFilter(SearchBox.Text);
             SyncStatus = $"已登录 {me?.Username ?? _cloudSyncClient.CurrentUserLabel}";
-            LastRunMessage = pulledConfig
-                ? "已同步账号状态，并更新了坚果云 / WebDAV 配置。"
+            ResetSilentCloudReconnect();
+            LastRunMessage = pulledConfig || pulledQuickPanelConfig
+                ? "已同步账号状态，并更新了云端配置。"
                 : "已同步账号状态。";
             OnPropertyChanged(nameof(SyncSummaryText));
         }
         catch (Exception ex)
         {
+            if (!allowLoginPrompt && IsTransientNetworkException(ex))
+            {
+                ScheduleSilentCloudReconnect("refresh-cloud-failed");
+            }
+
             if (allowLoginPrompt && await TryRecoverAuthenticationAsync(ex))
             {
                 await RefreshCloudStateAsync();
@@ -2236,6 +2389,244 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             SyncStatus = $"下载失败：{FormatExceptionMessage(ex)}";
         }
+    }
+
+    private async Task<bool> PublishSelectedExtensionAsync()
+    {
+        if (_cloudSyncClient == null)
+        {
+            SyncStatus = "云同步未配置，无法发布到商店。";
+            return false;
+        }
+
+        var sourceCommand = SelectedCommand != null && !IsInternalCommand(SelectedCommand)
+            ? SelectedCommand
+            : _lastActionableCommand;
+        if (sourceCommand == null)
+        {
+            SyncStatus = "没有可发布的扩展。";
+            return false;
+        }
+
+        var command = ResolveRunnableCommand(sourceCommand);
+        if (command.Source != CommandSource.LocalExtension)
+        {
+            SyncStatus = "只有本地扩展才能发布到商店。";
+            return false;
+        }
+
+        try
+        {
+            if (!await EnsureAuthenticatedAsync())
+            {
+                SyncStatus = "发布已取消：未完成登录。";
+                return false;
+            }
+
+            SyncStatus = $"正在发布扩展：{command.Title} ...";
+            var version = string.IsNullOrWhiteSpace(command.DeclaredVersion) ? "0.1.0" : command.DeclaredVersion;
+            var publishedIcon = await _cloudSyncClient.PublishIconAsync(command, version);
+            var packageBytes = ExtensionPackageService.BuildPackage(command, version, publishedIcon);
+            await _cloudSyncClient.UpsertExtensionAsync(command, publishedIcon);
+            await _cloudSyncClient.UploadExtensionArchiveAsync(command, packageBytes, version);
+            await _cloudSyncClient.UpsertUserExtensionAsync(command);
+            command.MarkAsSynced(version);
+            LastRunMessage = $"已发布到扩展商店：{command.Title} (v{version})";
+            SyncStatus = $"发布成功：{command.Title}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (await TryRecoverAuthenticationAsync(ex))
+            {
+                return await PublishSelectedExtensionAsync();
+            }
+
+            SyncStatus = $"发布失败：{FormatExceptionMessage(ex)}";
+            return false;
+        }
+    }
+
+    public async Task<(bool ok, string message)> PublishExtensionFromSettingsAsync(string extensionId)
+    {
+        try
+        {
+            if (!_localExtensionIndex.TryGetValue(extensionId, out var command))
+            {
+                return (false, "没有找到对应扩展。");
+            }
+
+            SelectedCommand = command;
+            CommandList.SelectedItem = command;
+            var ok = await PublishSelectedExtensionAsync();
+            return (ok, SyncStatus);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"发布失败：{FormatExceptionMessage(ex)}");
+        }
+    }
+
+    public async Task<(bool ok, string message)> UnpublishExtensionFromSettingsAsync(string extensionId)
+    {
+        try
+        {
+            if (_cloudSyncClient == null)
+            {
+                return (false, "云同步未配置，无法下线扩展。");
+            }
+
+            if (!_localExtensionIndex.TryGetValue(extensionId, out var command))
+            {
+                return (false, "没有找到对应扩展。");
+            }
+
+            if (!await EnsureAuthenticatedAsync())
+            {
+                return (false, "下线已取消：未完成登录。");
+            }
+
+            await _cloudSyncClient.DeleteExtensionAsync(command.ExtensionId);
+            SyncStatus = $"已下线扩展：{command.Title}";
+            LastRunMessage = $"扩展已从商店下线：{command.Title}";
+            return (true, SyncStatus);
+        }
+        catch (Exception ex)
+        {
+            if (await TryRecoverAuthenticationAsync(ex))
+            {
+                return await UnpublishExtensionFromSettingsAsync(extensionId);
+            }
+
+            return (false, $"下线失败：{FormatExceptionMessage(ex)}");
+        }
+    }
+
+    public async Task<IReadOnlyDictionary<string, CloudExtensionRecord>> GetOwnedPublishedExtensionsForSettingsAsync()
+    {
+        if (_cloudSyncClient == null)
+        {
+            return new Dictionary<string, CloudExtensionRecord>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        try
+        {
+            if (!await EnsureAuthenticatedAsync(allowPrompt: false))
+            {
+                return new Dictionary<string, CloudExtensionRecord>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            var me = await _cloudSyncClient.GetMeAsync();
+            if (me == null || string.IsNullOrWhiteSpace(me.UserId))
+            {
+                return new Dictionary<string, CloudExtensionRecord>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            var items = await _cloudSyncClient.GetExtensionsAsync();
+            var owned = items
+                .Where(item =>
+                    item.IsPublished != 0 &&
+                    item.PublisherUserId.Equals(me.UserId, StringComparison.OrdinalIgnoreCase))
+                .ToDictionary(item => item.ExtensionId, item => item, StringComparer.OrdinalIgnoreCase);
+            HostAssets.AppendLog($"Owned published extensions fetched for settings: userId={me.UserId}, count={owned.Count}");
+            return owned;
+        }
+        catch
+        {
+            return new Dictionary<string, CloudExtensionRecord>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    public async Task HandleProtocolLaunchAsync(string protocolArgument)
+    {
+        if (!Uri.TryCreate(protocolArgument, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, "yanzi", StringComparison.OrdinalIgnoreCase))
+        {
+            SyncStatus = "收到的本地协议无效。";
+            return;
+        }
+
+        if (!string.Equals(uri.Host, "install", StringComparison.OrdinalIgnoreCase))
+        {
+            SyncStatus = $"暂不支持的协议动作：{uri.Host}";
+            return;
+        }
+
+        var parameters = ParseProtocolQuery(uri.Query);
+        var source = GetProtocolValue(parameters, "source");
+        var extensionId = GetProtocolValue(parameters, "extensionId") ?? GetProtocolValue(parameters, "id");
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            SyncStatus = "安装协议缺少 source 参数。";
+            return;
+        }
+
+        try
+        {
+            SyncStatus = "正在通过本地协议下载安装扩展 ...";
+            using var httpClient = new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(30)
+            };
+            var packageBytes = await httpClient.GetByteArrayAsync(source);
+            var result = await ExtensionInstallService.InstallPackageAsync(packageBytes, extensionId);
+            ReloadLocalExtensionsFromExternal();
+            RevealInstalledExtension(result.ExtensionId, result.Name);
+            LastRunMessage = $"已安装扩展：{result.Name} ({result.ExtensionId})";
+            SyncStatus = $"安装成功：{result.Name}";
+            if (System.Windows.Application.Current is App app)
+            {
+                app.ShowDesktopNotification("燕子扩展已安装", $"{result.Name} 已安装到本地扩展目录。");
+            }
+            ShowPanel();
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"安装失败：{FormatExceptionMessage(ex)}";
+            HostAssets.AppendLog($"Protocol install failed: source={source}, extensionId={extensionId}, error={ex}");
+            if (System.Windows.Application.Current is App app)
+            {
+                app.ShowDesktopNotification("燕子扩展安装失败", FormatExceptionMessage(ex), Forms.ToolTipIcon.Error);
+            }
+            System.Windows.MessageBox.Show(
+                this,
+                $"扩展安装失败：{FormatExceptionMessage(ex)}",
+                "燕子扩展安装失败",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+            ShowPanel();
+        }
+    }
+
+    private void RevealInstalledExtension(string extensionId, string? extensionName = null)
+    {
+        if (string.IsNullOrWhiteSpace(extensionId))
+        {
+            return;
+        }
+
+        ShowPanel();
+        var displayQuery = string.IsNullOrWhiteSpace(extensionName) ? extensionId : extensionName.Trim();
+        SearchBox.Text = $"@扩展 {displayQuery}";
+        SearchBox.CaretIndex = SearchBox.Text.Length;
+        ApplyFilter(SearchBox.Text);
+
+        var installedCommand = FilteredCommands.FirstOrDefault(command =>
+            command.ExtensionId.Equals(extensionId, StringComparison.OrdinalIgnoreCase));
+        if (installedCommand == null)
+        {
+            return;
+        }
+
+        var currentIndex = FilteredCommands.IndexOf(installedCommand);
+        if (currentIndex > 0)
+        {
+            FilteredCommands.Move(currentIndex, 0);
+        }
+
+        SelectedCommand = installedCommand;
+        CommandList.SelectedItem = installedCommand;
+        CommandList.ScrollIntoView(installedCommand);
     }
 
     private Task AddJsonExtensionAsync()
@@ -2319,8 +2710,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var confirm = System.Windows.MessageBox.Show(
-            $"确认删除扩展“{deletable.Title}”吗？\n这会删除本地扩展目录；如果已启用坚果云/WebDAV，同步器会在后台更新远端副本。",
-            "删除扩展",
+            $"确认将扩展“{deletable.Title}”移入回收站吗？\n如果已启用坚果云/WebDAV，同步器会在后台把这次删除同步到其他设备。",
+            "移入扩展回收站",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
         if (confirm != MessageBoxResult.Yes)
@@ -2331,14 +2722,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             WebDavSyncService.MarkExtensionDeletedLocally(deletable.ExtensionId, deletable.DeclaredVersion);
-            LocalExtensionCatalog.DeleteExtension(deletable.ExtensionId);
+            ExtensionRecycleBinService.MoveToRecycleBin(deletable.ExtensionId);
             RemoveLocalExtensionCommand(deletable.ExtensionId);
             ApplyFilter(SearchBox.Text);
             SelectedCommand = FilteredCommands.FirstOrDefault();
             CommandList.SelectedItem = SelectedCommand;
 
-            LastRunMessage = $"已删除本地扩展：{deletable.Title}";
-            SyncStatus = $"已删除扩展：{deletable.Title}";
+            LastRunMessage = $"已将扩展移入回收站：{deletable.Title}";
+            SyncStatus = $"已将扩展移入回收站：{deletable.Title}";
             QueueBackgroundWebDavSync("extension-delete");
         }
         catch (Exception ex)
@@ -2387,6 +2778,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             {
                 SyncStatus = $"云端账号同步失败，已跳过登录弹窗：{FormatExceptionMessage(ex)}";
                 HostAssets.AppendLog($"Cloud silent auth failed: {FormatExceptionMessage(ex)}");
+                if (IsTransientNetworkException(ex))
+                {
+                    ScheduleSilentCloudReconnect("silent-auth-failed");
+                }
                 return false;
             }
 
@@ -2485,9 +2880,255 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return string.Join(" | ", messages.Distinct(StringComparer.Ordinal));
     }
 
+    private void NetworkChange_NetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!e.IsAvailable)
+            {
+                return;
+            }
+
+            HostAssets.AppendLog("Network availability restored, scheduling silent cloud reconnect.");
+            ScheduleSilentCloudReconnect("network-available", immediate: true);
+        });
+    }
+
+    private void NetworkChange_NetworkAddressChanged(object? sender, EventArgs e)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!NetworkInterface.GetIsNetworkAvailable())
+            {
+                return;
+            }
+
+            HostAssets.AppendLog("Network address changed, scheduling silent cloud reconnect.");
+            ScheduleSilentCloudReconnect("network-address-changed", immediate: true);
+        });
+    }
+
+    private void ScheduleSilentCloudReconnect(string reason, bool immediate = false)
+    {
+        if (_cloudSyncClient == null || !_cloudSyncClient.HasCredential || !_appSettings.RefreshCloudOnStartup)
+        {
+            return;
+        }
+
+        _cloudReconnectPendingReason = reason;
+        if (_cloudReconnectInProgress)
+        {
+            HostAssets.AppendLog($"Silent cloud reconnect already running, marked pending: {reason}");
+            return;
+        }
+
+        var delay = immediate ? TimeSpan.FromSeconds(1) : GetSilentCloudReconnectDelay(_cloudReconnectAttemptCount);
+        if (_cloudReconnectTimer.IsEnabled && _cloudReconnectTimer.Interval <= delay)
+        {
+            return;
+        }
+
+        _cloudReconnectTimer.Stop();
+        _cloudReconnectTimer.Interval = delay;
+        _cloudReconnectTimer.Start();
+        HostAssets.AppendLog($"Silent cloud reconnect scheduled: reason={reason}, delay={delay}.");
+    }
+
+    private async void CloudReconnectTimer_Tick(object? sender, EventArgs e)
+    {
+        _cloudReconnectTimer.Stop();
+        if (_cloudReconnectInProgress || _cloudSyncClient == null || !_cloudSyncClient.HasCredential || !_appSettings.RefreshCloudOnStartup)
+        {
+            return;
+        }
+
+        _cloudReconnectInProgress = true;
+        var reason = _cloudReconnectPendingReason ?? "timer";
+        try
+        {
+            HostAssets.AppendLog($"Silent cloud reconnect attempt started: reason={reason}, attempt={_cloudReconnectAttemptCount + 1}.");
+            await RefreshCloudStateAsync(allowLoginPrompt: false);
+        }
+        catch
+        {
+            // RefreshCloudStateAsync records failures and schedules follow-up retries.
+        }
+        finally
+        {
+            _cloudReconnectInProgress = false;
+        }
+    }
+
+    private void ResetSilentCloudReconnect()
+    {
+        _cloudReconnectAttemptCount = 0;
+        _cloudReconnectPendingReason = null;
+        _cloudReconnectTimer.Stop();
+    }
+
+    private TimeSpan GetSilentCloudReconnectDelay(int attemptCount)
+    {
+        var seconds = attemptCount switch
+        {
+            <= 0 => 5,
+            1 => 15,
+            2 => 30,
+            3 => 60,
+            4 => 120,
+            _ => 300
+        };
+
+        _cloudReconnectAttemptCount = Math.Min(attemptCount + 1, 5);
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    private static bool IsTransientNetworkException(Exception ex)
+    {
+        var message = FormatExceptionMessage(ex);
+        return message.Contains("SSL connection could not be established", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("unexpected EOF", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("0 bytes from the transport stream", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("No such host is known", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("Name or service not known", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("connection attempt failed", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("actively refused", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("temporarily unavailable", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("timed out", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static List<CommandItem> CreateSeedCommands()
     {
-        return [];
+        return
+        [
+            new CommandItem(
+                glyph: "设",
+                title: "系统设置",
+                subtitle: "打开 Windows 设置首页。",
+                category: "系统",
+                accentHex: "#FF3B82F6",
+                openTarget: "ms-settings:",
+                keywords: ["系统", "设置", "windows", "preferences"],
+                source: CommandSource.Local,
+                extensionId: "system-settings-home",
+                iconReference: "mdi:settings"),
+            new CommandItem(
+                glyph: "网",
+                title: "网络和 Internet",
+                subtitle: "打开网络设置。",
+                category: "系统",
+                accentHex: "#FF0EA5E9",
+                openTarget: "ms-settings:network",
+                keywords: ["系统", "设置", "网络", "wifi", "代理"],
+                source: CommandSource.Local,
+                extensionId: "system-settings-network",
+                iconReference: "mdi:globe"),
+            new CommandItem(
+                glyph: "蓝",
+                title: "蓝牙和设备",
+                subtitle: "打开蓝牙与设备设置。",
+                category: "系统",
+                accentHex: "#FF8B5CF6",
+                openTarget: "ms-settings:bluetooth",
+                keywords: ["系统", "设置", "蓝牙", "设备", "鼠标", "键盘"],
+                source: CommandSource.Local,
+                extensionId: "system-settings-bluetooth",
+                iconReference: "mdi:settings"),
+            new CommandItem(
+                glyph: "显",
+                title: "显示设置",
+                subtitle: "打开显示、缩放与分辨率设置。",
+                category: "系统",
+                accentHex: "#FF22C55E",
+                openTarget: "ms-settings:display",
+                keywords: ["系统", "设置", "显示", "分辨率", "缩放", "屏幕"],
+                source: CommandSource.Local,
+                extensionId: "system-settings-display",
+                iconReference: "mdi:window"),
+            new CommandItem(
+                glyph: "应",
+                title: "应用和功能",
+                subtitle: "打开已安装应用管理。",
+                category: "系统",
+                accentHex: "#FFF97316",
+                openTarget: "ms-settings:appsfeatures",
+                keywords: ["系统", "设置", "应用", "卸载", "程序"],
+                source: CommandSource.Local,
+                extensionId: "system-settings-appsfeatures",
+                iconReference: "mdi:file"),
+            new CommandItem(
+                glyph: "启",
+                title: "启动应用",
+                subtitle: "打开 Windows 启动项管理。",
+                category: "系统",
+                accentHex: "#FFEAB308",
+                openTarget: "ms-settings:startupapps",
+                keywords: ["系统", "设置", "启动", "开机启动"],
+                source: CommandSource.Local,
+                extensionId: "system-settings-startupapps",
+                iconReference: "mdi:pin"),
+            new CommandItem(
+                glyph: "控",
+                title: "控制面板",
+                subtitle: "打开经典控制面板。",
+                category: "系统",
+                accentHex: "#FF64748B",
+                openTarget: "control.exe",
+                keywords: ["系统", "控制面板", "传统设置"],
+                source: CommandSource.Local,
+                extensionId: "system-control-panel",
+                iconReference: "mdi:settings"),
+            new CommandItem(
+                glyph: "任",
+                title: "任务管理器",
+                subtitle: "打开任务管理器。",
+                category: "系统",
+                accentHex: "#FFEF4444",
+                openTarget: "taskmgr.exe",
+                keywords: ["系统", "任务管理器", "进程", "性能"],
+                source: CommandSource.Local,
+                extensionId: "system-task-manager",
+                iconReference: "mdi:window")
+        ];
+    }
+
+    private static List<CommandItem> CreateInstalledApplicationCommands()
+    {
+        try
+        {
+            var entries = InstalledApplicationCatalog.Load();
+            HostAssets.AppendLog($"Installed applications loaded: count={entries.Count}.");
+            return entries
+                .Select(entry => new CommandItem(
+                    glyph: InferApplicationGlyph(entry.Title),
+                    title: entry.Title,
+                    subtitle: entry.Subtitle,
+                    category: "应用",
+                    accentHex: "#FF4B5563",
+                    openTarget: entry.LaunchTarget,
+                    keywords: entry.Keywords,
+                    source: CommandSource.Application,
+                    extensionId: entry.ExtensionId,
+                    iconReference: entry.IconPath,
+                    launchArguments: entry.Arguments,
+                    workingDirectory: entry.WorkingDirectory))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"InstalledApplicationCatalog.Load failed: {ex.Message}");
+            return [];
+        }
+    }
+
+    private static string InferApplicationGlyph(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return "A";
+        }
+
+        var trimmed = title.Trim();
+        return trimmed[..1].ToUpperInvariant();
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
@@ -2518,6 +3159,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         HostAssets.AppendLog($"PersistJsonExtensionFromDialog: start, editMode={isEditMode}.");
         var command = LocalExtensionCatalog.SaveJsonExtension(json);
+        if (string.Equals(command.Runtime, "csharp", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(command.Runtime, "cs", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(command.Runtime, "c#", StringComparison.OrdinalIgnoreCase))
+        {
+            var prepareResult = Task.Run(() => ScriptExtensionRunner.PreparePortableAssetsAsync(command)).GetAwaiter().GetResult();
+            if (!prepareResult.Success)
+            {
+                HostAssets.AppendLog($"PersistJsonExtensionFromDialog: csharp prebuild skipped -> {prepareResult.Error}");
+            }
+        }
         UpsertLocalExtensionCommand(command);
         ApplyFilter(SearchBox.Text);
         SelectedCommand = _allCommands.FirstOrDefault(x => x.ExtensionId.Equals(command.ExtensionId, StringComparison.OrdinalIgnoreCase));
@@ -2532,27 +3183,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public void ReloadLocalExtensionsFromExternal()
     {
         LocalExtensionCatalog.EnsureSampleExtension();
-        _allCommands.RemoveAll(x => x.Source == CommandSource.LocalExtension);
-        _localExtensionIndex.Clear();
-        foreach (var command in LocalExtensionCatalog.LoadCommands())
-        {
-            UpsertLocalExtensionCommand(command);
-        }
-
-        ApplyFilter(SearchBox.Text);
-        SyncStatus = "已通过外部 Agent API 刷新本地扩展。";
+        ReplaceLocalExtensions(LocalExtensionCatalog.LoadEntries(), "已通过外部 Agent API 刷新本地扩展。");
     }
 
     private void ReloadLocalExtensionsFromWebDav()
     {
-        _allCommands.RemoveAll(x => x.Source == CommandSource.LocalExtension);
-        _localExtensionIndex.Clear();
-        foreach (var command in LocalExtensionCatalog.LoadCommands())
-        {
-            UpsertLocalExtensionCommand(command);
-        }
+        ReplaceLocalExtensions(LocalExtensionCatalog.LoadEntries(), statusText: null);
+    }
 
-        ApplyFilter(SearchBox.Text);
+    public void ReloadLocalExtensionsFromEntries(IReadOnlyList<LocalExtensionCatalogEntry> entries, string? statusText = null)
+    {
+        ReplaceLocalExtensions(entries, statusText);
+    }
+
+    public void ReloadLocalExtensionsFromCommands(IReadOnlyList<CommandItem> commands, string? statusText = null)
+    {
+        ReplaceLocalExtensions(commands, statusText);
     }
 
     private async Task SyncPersonalWebDavAsync(bool showDisabledMessage)
@@ -2725,6 +3371,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _ = PushWebDavConfigToCloudSafeAsync(reason);
     }
 
+    private void QueueCloudQuickPanelConfigSync(string reason)
+    {
+        if (_cloudSyncClient == null)
+        {
+            return;
+        }
+
+        _ = PushQuickPanelConfigToCloudSafeAsync(reason);
+    }
+
     private async Task PushWebDavConfigToCloudSafeAsync(string reason)
     {
         try
@@ -2735,6 +3391,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         catch (Exception ex)
         {
             HostAssets.AppendLog($"Cloud WebDAV config sync skipped: {reason} -> {FormatExceptionMessage(ex)}");
+        }
+    }
+
+    private async Task PushQuickPanelConfigToCloudSafeAsync(string reason)
+    {
+        try
+        {
+            await PushQuickPanelConfigToCloudAsync(reason);
+            HostAssets.AppendLog($"Cloud quick panel config synced: {reason}");
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Cloud quick panel config sync skipped: {reason} -> {FormatExceptionMessage(ex)}");
         }
     }
 
@@ -2761,12 +3430,143 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         });
     }
 
+    private async Task<bool> PullQuickPanelConfigFromCloudAsync()
+    {
+        if (_cloudSyncClient == null)
+        {
+            return false;
+        }
+
+        var snapshot = await _cloudSyncClient.GetUserConfigAsync<CloudQuickPanelConfigSnapshot>(CloudQuickPanelConfigId);
+        if (snapshot == null)
+        {
+            HostAssets.AppendLog("Quick panel cloud pull: no user config found.");
+            if (ShouldSyncLocalQuickPanelConfigToCloud())
+            {
+                await PushQuickPanelConfigToCloudAsync("cloud-refresh-bootstrap");
+            }
+
+            return false;
+        }
+
+        var settings = AppSettingsStore.Load();
+        var incoming = snapshot.ToAppSettings();
+        var changed =
+            !AreStringListsEqual(settings.GlobalFavoriteExtensionIds, incoming.GlobalFavoriteExtensionIds) ||
+            !AreStringListsEqual(settings.ContextFavoriteExtensionIds, incoming.ContextFavoriteExtensionIds) ||
+            !AreNullableStringListsEqual(settings.QuickPanelSlots, incoming.QuickPanelSlots) ||
+            !string.Equals(settings.SelectedQuickPanelGlobalGroupId, incoming.SelectedQuickPanelGlobalGroupId, StringComparison.Ordinal) ||
+            !string.Equals(settings.SelectedQuickPanelContextGroupId, incoming.SelectedQuickPanelContextGroupId, StringComparison.Ordinal) ||
+            !AreQuickPanelGroupsEqual(settings.QuickPanelGlobalGroups, incoming.QuickPanelGlobalGroups) ||
+            !AreQuickPanelGroupsEqual(settings.QuickPanelContextGroups, incoming.QuickPanelContextGroups) ||
+            !AreQuickPanelMouseTriggersEqual(settings.QuickPanelMouseTriggers, incoming.QuickPanelMouseTriggers);
+        if (!changed)
+        {
+            HostAssets.AppendLog("Quick panel cloud pull: no local changes detected.");
+            return false;
+        }
+
+        settings.QuickPanelSlots = incoming.QuickPanelSlots;
+        settings.QuickPanelGlobalGroups = incoming.QuickPanelGlobalGroups;
+        settings.QuickPanelContextGroups = incoming.QuickPanelContextGroups;
+        settings.SelectedQuickPanelGlobalGroupId = incoming.SelectedQuickPanelGlobalGroupId;
+        settings.SelectedQuickPanelContextGroupId = incoming.SelectedQuickPanelContextGroupId;
+        settings.GlobalFavoriteExtensionIds = incoming.GlobalFavoriteExtensionIds;
+        settings.ContextFavoriteExtensionIds = incoming.ContextFavoriteExtensionIds;
+        settings.QuickPanelMouseTriggers = incoming.QuickPanelMouseTriggers;
+        AppSettingsStore.Save(settings);
+        _appSettings = AppSettingsStore.Load();
+        if (!_listenerServicesPaused)
+        {
+            InputHookService.ReloadSettings();
+        }
+
+        _quickPanel?.RefreshSettingsFromStore();
+        HostAssets.AppendLog(
+            $"Quick panel cloud pull applied: globalGroups={settings.QuickPanelGlobalGroups.Count}, contextGroups={settings.QuickPanelContextGroups.Count}, globalFavs={settings.GlobalFavoriteExtensionIds.Count}, contextFavs={settings.ContextFavoriteExtensionIds.Count}");
+        return true;
+    }
+
+    private async Task PushQuickPanelConfigToCloudAsync(string reason)
+    {
+        if (_cloudSyncClient == null || !_cloudSyncClient.HasCredential)
+        {
+            HostAssets.AppendLog($"Quick panel cloud push skipped: {reason}");
+            return;
+        }
+
+        await _cloudSyncClient.EnsureAuthenticatedAsync();
+        var settings = AppSettingsStore.Load();
+        await _cloudSyncClient.UpsertUserConfigAsync(CloudQuickPanelConfigId, CloudQuickPanelConfigSnapshot.FromSettings(settings));
+    }
+
     private static bool ShouldSyncLocalWebDavConfigToCloud()
     {
         var settings = AppSettingsStore.Load();
         return !string.IsNullOrWhiteSpace(settings.WebDavServerUrl) &&
                !string.IsNullOrWhiteSpace(settings.WebDavRootPath) &&
                !string.IsNullOrWhiteSpace(settings.WebDavUsername);
+    }
+
+    private static bool ShouldSyncLocalQuickPanelConfigToCloud()
+    {
+        var settings = AppSettingsStore.Load();
+        return settings.QuickPanelGlobalGroups.Any(group => group.Slots.Any(slot => !string.IsNullOrWhiteSpace(slot))) ||
+               settings.QuickPanelContextGroups.Any(group => group.Slots.Any(slot => !string.IsNullOrWhiteSpace(slot))) ||
+               settings.GlobalFavoriteExtensionIds.Count > 0 ||
+               settings.ContextFavoriteExtensionIds.Count > 0;
+    }
+
+    private static bool AreStringListsEqual(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        return left.Count == right.Count &&
+               !left.Where((item, index) => !string.Equals(item, right[index], StringComparison.Ordinal)).Any();
+    }
+
+    private static bool AreNullableStringListsEqual(IReadOnlyList<string?> left, IReadOnlyList<string?> right)
+    {
+        return left.Count == right.Count &&
+               !left.Where((item, index) => !string.Equals(item, right[index], StringComparison.Ordinal)).Any();
+    }
+
+    private static bool AreQuickPanelGroupsEqual(IReadOnlyList<QuickPanelGroupSettings> left, IReadOnlyList<QuickPanelGroupSettings> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Count; index++)
+        {
+            var l = left[index];
+            var r = right[index];
+            if (!string.Equals(l.Id, r.Id, StringComparison.Ordinal) ||
+                !string.Equals(l.Name, r.Name, StringComparison.Ordinal) ||
+                !string.Equals(l.ContextProcessName, r.ContextProcessName, StringComparison.Ordinal) ||
+                !string.Equals(l.ContextDisplayName, r.ContextDisplayName, StringComparison.Ordinal) ||
+                !AreNullableStringListsEqual(l.Slots, r.Slots))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool AreQuickPanelMouseTriggersEqual(QuickPanelMouseTriggerSettings left, QuickPanelMouseTriggerSettings right)
+    {
+        return left.MiddleButtonDown == right.MiddleButtonDown &&
+               left.X1ButtonDown == right.X1ButtonDown &&
+               left.X2ButtonDown == right.X2ButtonDown &&
+               left.CtrlLeftClick == right.CtrlLeftClick &&
+               left.CtrlRightClick == right.CtrlRightClick &&
+               left.MiddleButtonLongPress == right.MiddleButtonLongPress &&
+               left.RightButtonLongPress == right.RightButtonLongPress &&
+               left.RightButtonDrag == right.RightButtonDrag &&
+               left.HorizontalWheel == right.HorizontalWheel &&
+               left.ExecuteOnButtonRelease == right.ExecuteOnButtonRelease &&
+               left.LongPressMilliseconds == right.LongPressMilliseconds &&
+               left.DragThresholdPixels == right.DragThresholdPixels;
     }
 
     private CommandItem? ShowJsonExtensionEditorAsync(string initialJson, bool isEditMode)
@@ -2860,9 +3660,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             : command;
     }
 
-    public CommandItem? OpenAddExtensionForSlot()
+    public CommandItem? OpenAddExtensionForSlot(Window? owner = null)
     {
-        return ShowJsonExtensionEditorAsync(string.Empty, false);
+        return ShowJsonExtensionEditorForOwner(string.Empty, false, owner ?? this);
     }
 
     public void ShowPanel()
@@ -3014,6 +3814,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (AllowClose)
         {
+            NetworkChange.NetworkAvailabilityChanged -= NetworkChange_NetworkAvailabilityChanged;
+            NetworkChange.NetworkAddressChanged -= NetworkChange_NetworkAddressChanged;
+            _cloudReconnectTimer.Stop();
+
             if (_source != null)
             {
                 UnregisterExtensionHotkeys();
@@ -3353,8 +4157,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             await _cloudSyncClient.EnsureAuthenticatedAsync();
             OnPropertyChanged(nameof(SyncSummaryText));
             SyncStatus = "已登录，可进行云同步。";
-            HostAssets.AppendLog("PromptLoginFromSettingsAsync: authentication succeeded, pulling WebDAV config.");
+            HostAssets.AppendLog("PromptLoginFromSettingsAsync: authentication succeeded, pulling cloud configs.");
             await PullWebDavConfigFromCloudAsync();
+            await PullQuickPanelConfigFromCloudAsync();
             NotifySettingsWindowWebDavConfigChanged();
             
             return true;
@@ -3512,6 +4317,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         QueueCloudWebDavConfigSync("credential-saved");
     }
 
+    public void NotifyQuickPanelSettingsChanged(string reason)
+    {
+        _appSettings = AppSettingsStore.Load();
+        if (!_listenerServicesPaused)
+        {
+            InputHookService.ReloadSettings();
+        }
+
+        QueueCloudQuickPanelConfigSync(reason);
+    }
+
     public bool HasWebDavCredential()
     {
         var credential = WebDavCredentialStore.Load();
@@ -3609,6 +4425,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ApplyFilter(SearchBox.Text);
     }
 
+    private void ReplaceLocalExtensions(IReadOnlyList<LocalExtensionCatalogEntry> entries, string? statusText)
+    {
+        ReplaceLocalExtensions(entries.Select(LocalExtensionCatalog.CreateCommand).ToList(), statusText);
+    }
+
+    private void ReplaceLocalExtensions(IReadOnlyList<CommandItem> commands, string? statusText)
+    {
+        _allCommands.RemoveAll(x => x.Source == CommandSource.LocalExtension);
+        _localExtensionIndex.Clear();
+        foreach (var command in commands)
+        {
+            UpsertLocalExtensionCommand(command);
+        }
+
+        ApplyFilter(SearchBox.Text);
+        if (!string.IsNullOrWhiteSpace(statusText))
+        {
+            SyncStatus = statusText;
+        }
+    }
+
     public IReadOnlyList<CommandItem> GetQuickPanelRecommendedCommands(ForegroundAppContext? context, IEnumerable<string> excludeExtensionIds, int maxCount = 8)
     {
         if (context == null || string.IsNullOrWhiteSpace(context.ProcessName))
@@ -3678,8 +4515,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             var confirm = System.Windows.MessageBox.Show(
                 owner ?? this,
-                $"确认删除扩展“{deletable.Title}”吗？\n这会删除本地扩展目录；如果已启用坚果云/WebDAV，同步器会在后台更新远端副本。",
-                "删除扩展",
+                $"确认将扩展“{deletable.Title}”移入回收站吗？\n如果已启用坚果云/WebDAV，同步器会在后台把这次删除同步到其他设备。",
+                "移入扩展回收站",
                 MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
             if (confirm != MessageBoxResult.Yes)
@@ -3688,21 +4525,107 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
 
             WebDavSyncService.MarkExtensionDeletedLocally(deletable.ExtensionId, deletable.DeclaredVersion);
-            LocalExtensionCatalog.DeleteExtension(deletable.ExtensionId);
+            ExtensionRecycleBinService.MoveToRecycleBin(deletable.ExtensionId);
             RemoveLocalExtensionCommand(deletable.ExtensionId);
             ApplyFilter(SearchBox.Text);
             SelectedCommand = FilteredCommands.FirstOrDefault();
             CommandList.SelectedItem = SelectedCommand;
 
-            LastRunMessage = $"已删除本地扩展：{deletable.Title}";
-            SyncStatus = $"已删除扩展：{deletable.Title}";
+            LastRunMessage = $"已将扩展移入回收站：{deletable.Title}";
+            SyncStatus = $"已将扩展移入回收站：{deletable.Title}";
             QueueBackgroundWebDavSync("extension-delete-settings");
-            return Task.FromResult((true, $"已删除扩展：{deletable.Title}"));
+            return Task.FromResult((true, $"已将扩展移入回收站：{deletable.Title}"));
         }
         catch (Exception ex)
         {
             return Task.FromResult((false, $"删除失败：{FormatExceptionMessage(ex)}"));
         }
+    }
+
+    public IReadOnlyList<RecycledExtensionEntry> GetRecycleBinEntriesForSettings()
+    {
+        return ExtensionRecycleBinService.LoadEntries();
+    }
+
+    public Task<(bool ok, string message)> RestoreExtensionFromRecycleBinAsync(string itemId)
+    {
+        try
+        {
+            var restored = ExtensionRecycleBinService.RestoreFromRecycleBin(itemId);
+            var command = LocalExtensionCatalog.LoadCommands()
+                .FirstOrDefault(item => item.ExtensionId.Equals(restored.ExtensionId, StringComparison.OrdinalIgnoreCase));
+            if (command == null)
+            {
+                throw new InvalidOperationException("恢复后的扩展清单无效。");
+            }
+
+            WebDavSyncService.MarkExtensionRestoredLocally(command.ExtensionId, command.DeclaredVersion);
+            UpsertLocalExtensionCommand(command);
+            ApplyFilter(SearchBox.Text);
+            SelectedCommand = _allCommands.FirstOrDefault(item =>
+                item.ExtensionId.Equals(command.ExtensionId, StringComparison.OrdinalIgnoreCase));
+            CommandList.SelectedItem = SelectedCommand;
+            LastRunMessage = $"已从回收站恢复扩展：{command.Title}";
+            SyncStatus = $"已恢复扩展：{command.Title}";
+            QueueBackgroundWebDavSync("extension-restore-settings");
+            return Task.FromResult((true, $"已恢复扩展：{command.Title}"));
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult((false, $"恢复失败：{FormatExceptionMessage(ex)}"));
+        }
+    }
+
+    public Task<(bool ok, string message)> PurgeExtensionFromRecycleBinAsync(string itemId)
+    {
+        try
+        {
+            var deleted = ExtensionRecycleBinService.DeletePermanently(itemId);
+            WebDavSyncService.MarkExtensionPurgedLocally(deleted.ExtensionId, deleted.Version);
+            RemoveLocalExtensionCommand(deleted.ExtensionId);
+            ApplyFilter(SearchBox.Text);
+            SelectedCommand = FilteredCommands.FirstOrDefault();
+            CommandList.SelectedItem = SelectedCommand;
+            LastRunMessage = $"已彻底删除扩展：{deleted.Title}";
+            SyncStatus = $"已彻底删除扩展：{deleted.Title}";
+            QueueBackgroundWebDavSync("extension-purge-settings");
+            return Task.FromResult((true, $"已彻底删除扩展：{deleted.Title}，会同步到其他设备。"));
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult((false, $"彻底删除失败：{FormatExceptionMessage(ex)}"));
+        }
+    }
+
+    private static Dictionary<string, string> ParseProtocolQuery(string query)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return result;
+        }
+
+        var segments = query.TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var segment in segments)
+        {
+            var pair = segment.Split('=', 2);
+            var key = Uri.UnescapeDataString(pair[0]);
+            var value = pair.Length > 1 ? Uri.UnescapeDataString(pair[1]) : string.Empty;
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                result[key] = value;
+            }
+        }
+
+        return result;
+    }
+
+    private static string? GetProtocolValue(IReadOnlyDictionary<string, string> parameters, string key)
+    {
+        return parameters.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value
+            : null;
     }
 
     public bool TryOpenExtensionDirectory(string extensionId, out string message)
@@ -3862,12 +4785,83 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void AddToQuickPanelMenuItem_Click(object sender, RoutedEventArgs e)
     {
+        AddCurrentCommandToQuickPanel();
+    }
+
+    private void AddCurrentCommandToPinnedSearchScopes()
+    {
+        var sourceCommand = SelectedCommand != null && !IsInternalCommand(SelectedCommand)
+            ? SelectedCommand
+            : _lastActionableCommand;
+        if (sourceCommand == null)
+        {
+            SyncStatus = "没有可固定到顶部的扩展。";
+            return;
+        }
+
+        var command = ResolveRunnableCommand(sourceCommand);
+        if (command.Source == CommandSource.File)
+        {
+            SyncStatus = "文件结果不支持固定为顶部扩展标签。";
+            return;
+        }
+
+        var settings = AppSettingsStore.Load();
+        settings.PinnedSearchScopeCommandIds ??= [];
+        if (settings.PinnedSearchScopeCommandIds.Contains(command.ExtensionId, StringComparer.OrdinalIgnoreCase))
+        {
+            LastRunMessage = $"顶部已固定：{command.Title}";
+            return;
+        }
+
+        settings.PinnedSearchScopeCommandIds.Add(command.ExtensionId);
+        AppSettingsStore.Save(settings);
+        _appSettings = settings;
+        ReloadSearchScopes();
+        SelectedSearchScope = SearchScopes.FirstOrDefault(scope => scope.Key.Equals(SearchScopeTab.CreatePinnedCommandKey(command.ExtensionId), StringComparison.OrdinalIgnoreCase))
+            ?? SelectedSearchScope;
+        LastRunMessage = $"已固定到顶部：{command.Title}";
+        SyncStatus = $"已固定到顶部标签：{command.Title}";
+    }
+
+    private void RemovePinnedSearchScope(SearchScopeTab scope)
+    {
+        if (!scope.IsPinnedCommand || string.IsNullOrWhiteSpace(scope.PinnedCommandId))
+        {
+            return;
+        }
+
+        var settings = AppSettingsStore.Load();
+        settings.PinnedSearchScopeCommandIds ??= [];
+        var removed = settings.PinnedSearchScopeCommandIds.RemoveAll(id => id.Equals(scope.PinnedCommandId, StringComparison.OrdinalIgnoreCase));
+        if (removed == 0)
+        {
+            return;
+        }
+
+        AppSettingsStore.Save(settings);
+        _appSettings = settings;
+        ReloadSearchScopes();
+        SelectedSearchScope = SearchScopes.FirstOrDefault(item => item.Key.Equals(scope.Key, StringComparison.OrdinalIgnoreCase)) == null
+            ? SearchScopes.FirstOrDefault(item => !item.IsPinnedCommand) ?? SearchScopes.FirstOrDefault()
+            : SelectedSearchScope;
+        LastRunMessage = $"已移除顶部标签：{scope.Label}";
+        SyncStatus = $"已移除顶部标签：{scope.Label}";
+    }
+
+    private void AddCurrentCommandToQuickPanel()
+    {
         var sourceCommand = SelectedCommand != null && !IsInternalCommand(SelectedCommand)
             ? SelectedCommand
             : _lastActionableCommand;
         
         if (sourceCommand == null) return;
         var command = ResolveRunnableCommand(sourceCommand);
+        if (command.Source == CommandSource.File)
+        {
+            SyncStatus = "文件结果不能加入鼠标面板。";
+            return;
+        }
 
         var settings = AppSettingsStore.Load();
         var group = settings.QuickPanelGlobalGroups
@@ -3910,6 +4904,32 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private IEnumerable<CommandItem> GetPinnedSearchScopeCommands()
+    {
+        var pinnedIds = _appSettings.PinnedSearchScopeCommandIds ?? [];
+        foreach (var pinnedId in pinnedIds)
+        {
+            var command = _allCommands.FirstOrDefault(item => item.ExtensionId.Equals(pinnedId, StringComparison.OrdinalIgnoreCase));
+            if (command != null && !IsInternalCommand(command))
+            {
+                yield return command;
+            }
+        }
+    }
+
+    private void ReloadSearchScopes()
+    {
+        var currentKey = SelectedSearchScope?.Key ?? SearchScopeAll;
+        SearchScopes.Clear();
+        foreach (var scope in BuildSearchScopes())
+        {
+            SearchScopes.Add(scope);
+        }
+
+        SelectedSearchScope = SearchScopes.FirstOrDefault(scope => scope.Key.Equals(currentKey, StringComparison.OrdinalIgnoreCase))
+            ?? SearchScopes.FirstOrDefault();
+    }
+
     private void CopyExtensionMenuItem_Click(object sender, RoutedEventArgs e)
     {
         var sourceCommand = SelectedCommand != null && !IsInternalCommand(SelectedCommand)
@@ -3920,7 +4940,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        SetQuickPanelClipboard(ResolveRunnableCommand(sourceCommand), isCut: false, sourceSlot: null);
+        var command = ResolveRunnableCommand(sourceCommand);
+        if (command.Source == CommandSource.File)
+        {
+            return;
+        }
+
+        SetQuickPanelClipboard(command, isCut: false, sourceSlot: null);
     }
 
     private void CutExtensionMenuItem_Click(object sender, RoutedEventArgs e)
@@ -3933,7 +4959,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        SetQuickPanelClipboard(ResolveRunnableCommand(sourceCommand), isCut: true, sourceSlot: null);
+        var command = ResolveRunnableCommand(sourceCommand);
+        if (command.Source == CommandSource.File)
+        {
+            return;
+        }
+
+        SetQuickPanelClipboard(command, isCut: true, sourceSlot: null);
     }
 
     private void PasteExtensionMenuItem_Click(object sender, RoutedEventArgs e)
@@ -4009,6 +5041,391 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
+    private async Task ApplyFileSearchResultsAsync(string query, int requestVersion)
+    {
+        foreach (var command in _allCommands)
+        {
+            command.SetQueryPreview(null, null);
+        }
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            if (requestVersion != _fileSearchRequestVersion)
+            {
+                return;
+            }
+
+            FilteredCommands.Clear();
+            SelectedCommand = null;
+            CommandList.SelectedItem = null;
+            OnPropertyChanged(nameof(VisibleCountText));
+            OnPropertyChanged(nameof(FooterHint));
+            return;
+        }
+
+        var response = await Task.Run(() => EverythingSearchService.Search(query, 256));
+        if (requestVersion != _fileSearchRequestVersion ||
+            !string.Equals(SelectedSearchScope?.Key, SearchScopeFile, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(_pendingFileSearchTerm, query, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!response.Success)
+        {
+            if (!string.IsNullOrWhiteSpace(response.ErrorMessage))
+            {
+                SyncStatus = response.ErrorMessage;
+            }
+
+            MaybePromptEverythingManualInitialization(query);
+
+            FilteredCommands.Clear();
+            SelectedCommand = null;
+            CommandList.SelectedItem = null;
+            OnPropertyChanged(nameof(VisibleCountText));
+            OnPropertyChanged(nameof(FooterHint));
+            return;
+        }
+
+        var fileCommands = response.Results
+            .Select(BuildFileCommand)
+            .ToList();
+
+        FilteredCommands.Clear();
+        foreach (var item in fileCommands)
+        {
+            FilteredCommands.Add(item);
+        }
+
+        SelectedCommand = FilteredCommands.FirstOrDefault();
+        CommandList.SelectedItem = SelectedCommand;
+        OnPropertyChanged(nameof(VisibleCountText));
+        OnPropertyChanged(nameof(FooterHint));
+
+        if (fileCommands.Count == 0)
+        {
+            MaybePromptEverythingManualInitialization(query);
+        }
+
+        _ = LoadFileIconsAsync(fileCommands, requestVersion);
+    }
+
+    private void QueueFileSearchResults(string query)
+    {
+        _pendingFileSearchTerm = query;
+        _fileSearchDebounceTimer.Stop();
+        var requestVersion = Interlocked.Increment(ref _fileSearchRequestVersion);
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            _ = ApplyFileSearchResultsAsync(string.Empty, requestVersion);
+            return;
+        }
+
+        _fileSearchDebounceTimer.Start();
+    }
+
+    private async void FileSearchDebounceTimer_Tick(object? sender, EventArgs e)
+    {
+        _fileSearchDebounceTimer.Stop();
+        if (!string.Equals(SelectedSearchScope?.Key, SearchScopeFile, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var requestVersion = _fileSearchRequestVersion;
+        await ApplyFileSearchResultsAsync(_pendingFileSearchTerm, requestVersion);
+    }
+
+    private static CommandItem BuildFileCommand(EverythingSearchResult result)
+    {
+        var subtitle = string.IsNullOrWhiteSpace(result.SizeText)
+            ? result.DirectoryPath
+            : $"{result.DirectoryPath}   ·   {result.SizeText}";
+
+        return new CommandItem(
+            glyph: string.Empty,
+            title: result.Name,
+            subtitle: subtitle,
+            category: result.IsFolder ? "文件夹" : "文件",
+            accentHex: result.IsFolder ? "#FF3B82F6" : "#FF4B5563",
+            openTarget: result.FullPath,
+            keywords: [result.FullPath, result.DirectoryPath, result.Name],
+            source: CommandSource.File,
+            extensionId: $"file::{result.FullPath}");
+    }
+
+    private async Task LoadFileIconsAsync(IReadOnlyList<CommandItem> commands, int requestVersion)
+    {
+        foreach (var command in commands)
+        {
+            if (requestVersion != _fileSearchRequestVersion ||
+                !string.Equals(SelectedSearchScope?.Key, SearchScopeFile, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(command.OpenTarget))
+            {
+                continue;
+            }
+
+            var isFolder = command.Category.Contains("文件夹", StringComparison.OrdinalIgnoreCase);
+            var icon = await Task.Run(() => NativeFileIconService.GetIcon(command.OpenTarget, isFolder));
+            if (icon == null)
+            {
+                continue;
+            }
+
+            if (requestVersion != _fileSearchRequestVersion)
+            {
+                return;
+            }
+
+            await Dispatcher.InvokeAsync(() => command.SetIconSource(icon));
+        }
+    }
+
+    private void MaybePromptEverythingManualInitialization(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return;
+        }
+
+        if (EverythingSearchService.IsDatabaseLoaded())
+        {
+            return;
+        }
+
+        if (!EverythingRuntimeService.HasBundledRuntime())
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastFileSearchManualInitPromptAt < TimeSpan.FromSeconds(10))
+        {
+            return;
+        }
+
+        _lastFileSearchManualInitPromptAt = now;
+        SyncStatus = EverythingRuntimeService.IsProcessRunning()
+            ? "Everything 已启动，但索引尚未完成初始化。"
+            : "Everything 尚未完成初始化，文件搜索暂时不可用。";
+        HostAssets.AppendLog("File search prompt: Everything runtime is not initialized; showing manual initialization hint.");
+        var result = System.Windows.MessageBox.Show(
+            "文件搜索引擎已启动，但当前还没有完成索引初始化。\n\n点击“是”后，燕子会直接打开 Everything，让它弹出原生授权/初始化提示。完成后回到燕子重新搜索即可。",
+            "文件搜索需要初始化",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Information);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        if (EverythingRuntimeService.ShowInteractiveSetup())
+        {
+            SyncStatus = "已打开 Everything 初始化窗口，请按提示完成授权。";
+        }
+        else
+        {
+            SyncStatus = "无法打开 Everything 初始化窗口，请手动从托盘打开一次 Everything。";
+        }
+    }
+
+    private bool TryShowNativeFileContextMenu()
+    {
+        var command = SelectedCommand;
+        if (command?.Source != CommandSource.File || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return false;
+        }
+
+        return ShowFileResultContextMenu();
+    }
+
+    private bool ShowFileResultContextMenu(FrameworkElement? placementTarget = null)
+    {
+        var command = SelectedCommand;
+        if (command?.Source != CommandSource.File || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return false;
+        }
+
+        if (TryFindResource("FileResultContextMenu") is not System.Windows.Controls.ContextMenu menu)
+        {
+            return false;
+        }
+
+        menu.PlacementTarget = placementTarget ?? CommandList;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+        menu.IsOpen = true;
+        return true;
+    }
+
+    private void OpenFileResultMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = SelectedCommand;
+        if (command?.Source != CommandSource.File || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = command.OpenTarget,
+                UseShellExecute = true
+            });
+            LastRunMessage = $"已打开：{command.Title}";
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"打开失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void OpenFileResultDirectoryMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = SelectedCommand;
+        if (command?.Source != CommandSource.File || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(command.OpenTarget))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = command.OpenTarget,
+                    UseShellExecute = true
+                });
+            }
+            else
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{command.OpenTarget}\"",
+                    UseShellExecute = true
+                });
+            }
+
+            LastRunMessage = $"已打开路径：{command.Title}";
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"打开路径失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void CopyFileResultMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        SetFileResultClipboard(isCut: false);
+    }
+
+    private void CopyFileResultFullPathMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = SelectedCommand;
+        if (command?.Source != CommandSource.File || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        try
+        {
+            Forms.Clipboard.SetText(command.OpenTarget, Forms.TextDataFormat.UnicodeText);
+            LastRunMessage = $"已复制完整路径：{command.OpenTarget}";
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"复制完整路径失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void CutFileResultMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        SetFileResultClipboard(isCut: true);
+    }
+
+    private void DeleteFileResultMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = SelectedCommand;
+        if (command?.Source != CommandSource.File || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        var targetPath = command.OpenTarget;
+        var confirm = System.Windows.MessageBox.Show(
+            this,
+            $"确认删除“{command.Title}”吗？",
+            "删除文件",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(targetPath))
+            {
+                FileSystem.DeleteDirectory(targetPath, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
+            }
+            else if (File.Exists(targetPath))
+            {
+                FileSystem.DeleteFile(targetPath, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
+            }
+            else
+            {
+                SyncStatus = "目标不存在，无法删除。";
+                return;
+            }
+
+            LastRunMessage = $"已删除：{command.Title}";
+            ApplyFilter(SearchBox.Text);
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"删除失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void SetFileResultClipboard(bool isCut)
+    {
+        var command = SelectedCommand;
+        if (command?.Source != CommandSource.File || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        try
+        {
+            var files = new StringCollection
+            {
+                command.OpenTarget
+            };
+            var dataObject = new System.Windows.DataObject();
+            dataObject.SetFileDropList(files);
+
+            var dropEffect = isCut ? 2u : 5u;
+            using var stream = new MemoryStream(new byte[] { (byte)dropEffect, 0, 0, 0 });
+            dataObject.SetData("Preferred DropEffect", stream);
+            Forms.Clipboard.SetDataObject(dataObject, true);
+            LastRunMessage = isCut ? $"已剪切：{command.Title}" : $"已复制：{command.Title}";
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"{(isCut ? "剪切" : "复制")}失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
     private bool HandleInternalCommand(CommandItem command)
     {
         switch (command.OpenTarget)
@@ -4057,6 +5474,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (command.Title.Contains(query, StringComparison.OrdinalIgnoreCase))
         {
             return new CommandMatch(true, 220);
+        }
+
+        if (command.ExtensionId.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return new CommandMatch(true, 210);
         }
 
         if (command.Subtitle.Contains(query, StringComparison.OrdinalIgnoreCase))
@@ -4141,6 +5563,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async Task ExecuteScriptCommandAsync(CommandItem runnable, string? input, string launchSource)
     {
+        var executionStopwatch = Stopwatch.StartNew();
+        HostAssets.AppendLog(
+            $"Main execute script start: id={runnable.ExtensionId}, title={runnable.Title}, launchSource={launchSource}, nativeWindow={runnable.UsesNativeWindowUi}, inputLength={(input ?? string.Empty).Length}");
         SyncStatus = $"正在执行脚本：{runnable.Title}";
         var result = await ScriptExtensionRunner.ExecuteAsync(runnable, input, launchSource);
         if (result.Success)
@@ -4148,17 +5573,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             RecordCommandUsage(runnable);
             HostAssets.AppendRecent(runnable.Title);
             HostAssets.AppendLog($"Executed script extension: {runnable.Title} -> {runnable.EntryPoint}");
+            var nativeWindowStarted = runnable.UsesNativeWindowUi &&
+                                      string.Equals(result.Output, "native-window-started", StringComparison.Ordinal);
             var summary = string.IsNullOrWhiteSpace(result.Output)
                 ? "脚本执行完成。"
                 : result.Output.ReplaceLineEndings(" ").Trim();
+            if (nativeWindowStarted)
+            {
+                summary = "原生窗口已启动。";
+            }
+
             if (summary.Length > 180)
             {
                 summary = summary[..180] + "...";
             }
 
             LastRunMessage = $"已执行脚本：{runnable.Title} -> {summary}";
-            SyncStatus = "脚本执行完成。";
-            if (!string.IsNullOrWhiteSpace(result.Output) || !string.IsNullOrWhiteSpace(result.Error))
+            SyncStatus = nativeWindowStarted ? "原生窗口已启动。" : "脚本执行完成。";
+            HostAssets.AppendLog(
+                $"Main execute script success: id={runnable.ExtensionId}, title={runnable.Title}, launchSource={launchSource}, nativeWindowStarted={nativeWindowStarted}, elapsedMs={executionStopwatch.ElapsedMilliseconds}, outputLength={result.Output.Length}, errorLength={result.Error.Length}");
+            if (!nativeWindowStarted &&
+                (!string.IsNullOrWhiteSpace(result.Output) || !string.IsNullOrWhiteSpace(result.Error)))
             {
                 var logWindow = new ExecutionLogWindow(
                     runnable.Title,
@@ -4177,6 +5612,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         HostAssets.AppendLog($"Script extension failed: {runnable.Title} -> {result.Error}");
+        HostAssets.AppendLog(
+            $"Main execute script failed: id={runnable.ExtensionId}, title={runnable.Title}, launchSource={launchSource}, elapsedMs={executionStopwatch.ElapsedMilliseconds}, exitCode={result.ExitCode}");
         LastRunMessage = $"脚本执行失败：{runnable.Title}";
         SyncStatus = $"脚本执行失败：{result.Error}";
         System.Windows.MessageBox.Show(
@@ -4403,12 +5840,14 @@ public sealed class SearchScopeTab : INotifyPropertyChanged
     private bool _isSelected;
     private int _count;
 
-    public SearchScopeTab(string key, string label, string tooltip, bool isSelected = false)
+    public SearchScopeTab(string key, string label, string tooltip, bool isSelected = false, bool isPinnedCommand = false, string? pinnedCommandId = null)
     {
         Key = key;
         Label = label;
         Tooltip = tooltip;
         _isSelected = isSelected;
+        IsPinnedCommand = isPinnedCommand;
+        PinnedCommandId = pinnedCommandId;
     }
 
     public string Key { get; }
@@ -4416,6 +5855,10 @@ public sealed class SearchScopeTab : INotifyPropertyChanged
     public string Label { get; }
 
     public string Tooltip { get; }
+
+    public bool IsPinnedCommand { get; }
+
+    public string? PinnedCommandId { get; }
 
     public string DisplayLabel => Count > 0 ? $"{Label}{Count}" : Label;
 
@@ -4451,6 +5894,26 @@ public sealed class SearchScopeTab : INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public static SearchScopeTab CreatePinnedCommand(string extensionId, string label, string tooltip)
+    {
+        return new SearchScopeTab(CreatePinnedCommandKey(extensionId), label, tooltip, isPinnedCommand: true, pinnedCommandId: extensionId);
+    }
+
+    public static string CreatePinnedCommandKey(string extensionId) => $"pin:{extensionId}";
+
+    public static bool TryParsePinnedCommandScope(string scopeKey, out string extensionId)
+    {
+        const string prefix = "pin:";
+        if (scopeKey.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && scopeKey.Length > prefix.Length)
+        {
+            extensionId = scopeKey[prefix.Length..];
+            return true;
+        }
+
+        extensionId = string.Empty;
+        return false;
+    }
 }
 
 public sealed record HostedPluginViewDefinition(
@@ -4676,10 +6139,99 @@ public sealed class CloudWebDavConfigSnapshot
     }
 }
 
+public sealed class CloudQuickPanelConfigSnapshot
+{
+    [JsonPropertyName("quickPanelSlots")]
+    public List<string?> QuickPanelSlots { get; set; } = Enumerable.Repeat<string?>(null, 28).ToList();
+
+    [JsonPropertyName("quickPanelGlobalGroups")]
+    public List<QuickPanelGroupSettings> QuickPanelGlobalGroups { get; set; } = [];
+
+    [JsonPropertyName("quickPanelContextGroups")]
+    public List<QuickPanelGroupSettings> QuickPanelContextGroups { get; set; } = [];
+
+    [JsonPropertyName("selectedQuickPanelGlobalGroupId")]
+    public string SelectedQuickPanelGlobalGroupId { get; set; } = "global-default";
+
+    [JsonPropertyName("selectedQuickPanelContextGroupId")]
+    public string SelectedQuickPanelContextGroupId { get; set; } = "context-default";
+
+    [JsonPropertyName("globalFavoriteExtensionIds")]
+    public List<string> GlobalFavoriteExtensionIds { get; set; } = [];
+
+    [JsonPropertyName("contextFavoriteExtensionIds")]
+    public List<string> ContextFavoriteExtensionIds { get; set; } = [];
+
+    [JsonPropertyName("quickPanelMouseTriggers")]
+    public QuickPanelMouseTriggerSettings QuickPanelMouseTriggers { get; set; } = new();
+
+    public static CloudQuickPanelConfigSnapshot FromSettings(AppSettings settings)
+    {
+        return new CloudQuickPanelConfigSnapshot
+        {
+            QuickPanelSlots = settings.QuickPanelSlots.ToList(),
+            QuickPanelGlobalGroups = CloneGroups(settings.QuickPanelGlobalGroups),
+            QuickPanelContextGroups = CloneGroups(settings.QuickPanelContextGroups),
+            SelectedQuickPanelGlobalGroupId = settings.SelectedQuickPanelGlobalGroupId,
+            SelectedQuickPanelContextGroupId = settings.SelectedQuickPanelContextGroupId,
+            GlobalFavoriteExtensionIds = settings.GlobalFavoriteExtensionIds.ToList(),
+            ContextFavoriteExtensionIds = settings.ContextFavoriteExtensionIds.ToList(),
+            QuickPanelMouseTriggers = CloneTriggers(settings.QuickPanelMouseTriggers)
+        };
+    }
+
+    public AppSettings ToAppSettings()
+    {
+        return new AppSettings
+        {
+            QuickPanelSlots = QuickPanelSlots.ToList(),
+            QuickPanelGlobalGroups = CloneGroups(QuickPanelGlobalGroups),
+            QuickPanelContextGroups = CloneGroups(QuickPanelContextGroups),
+            SelectedQuickPanelGlobalGroupId = SelectedQuickPanelGlobalGroupId,
+            SelectedQuickPanelContextGroupId = SelectedQuickPanelContextGroupId,
+            GlobalFavoriteExtensionIds = GlobalFavoriteExtensionIds.ToList(),
+            ContextFavoriteExtensionIds = ContextFavoriteExtensionIds.ToList(),
+            QuickPanelMouseTriggers = CloneTriggers(QuickPanelMouseTriggers)
+        };
+    }
+
+    private static List<QuickPanelGroupSettings> CloneGroups(IEnumerable<QuickPanelGroupSettings> groups)
+    {
+        return groups.Select(group => new QuickPanelGroupSettings
+        {
+            Id = group.Id,
+            Name = group.Name,
+            ContextProcessName = group.ContextProcessName,
+            ContextDisplayName = group.ContextDisplayName,
+            Slots = group.Slots.ToList()
+        }).ToList();
+    }
+
+    private static QuickPanelMouseTriggerSettings CloneTriggers(QuickPanelMouseTriggerSettings trigger)
+    {
+        return new QuickPanelMouseTriggerSettings
+        {
+            MiddleButtonDown = trigger.MiddleButtonDown,
+            X1ButtonDown = trigger.X1ButtonDown,
+            X2ButtonDown = trigger.X2ButtonDown,
+            CtrlLeftClick = trigger.CtrlLeftClick,
+            CtrlRightClick = trigger.CtrlRightClick,
+            MiddleButtonLongPress = trigger.MiddleButtonLongPress,
+            RightButtonLongPress = trigger.RightButtonLongPress,
+            RightButtonDrag = trigger.RightButtonDrag,
+            HorizontalWheel = trigger.HorizontalWheel,
+            ExecuteOnButtonRelease = trigger.ExecuteOnButtonRelease,
+            LongPressMilliseconds = trigger.LongPressMilliseconds,
+            DragThresholdPixels = trigger.DragThresholdPixels
+        };
+    }
+}
+
 public sealed class CommandItem : INotifyPropertyChanged
 {
     private string? _queryPreviewSubtitle;
     private string? _queryPreviewActionLabel;
+    private ImageSource? _iconSource;
 
     public CommandItem(
         string glyph,
@@ -4699,12 +6251,16 @@ public sealed class CommandItem : INotifyPropertyChanged
         string? globalShortcut = null,
         string? hotkeyBehavior = null,
         string? runtime = null,
+        string? uiMode = null,
         string? entryPoint = null,
         IEnumerable<string>? permissions = null,
         string? entryMode = null,
         string? inlineScriptSource = null,
         string? iconReference = null,
-        ExtensionStartupDefinition? startup = null)
+        ExtensionStartupDefinition? startup = null,
+        string? launchArguments = null,
+        string? workingDirectory = null,
+        ImageSource? iconSourceOverride = null)
     {
         Glyph = glyph;
         Title = title;
@@ -4725,14 +6281,17 @@ public sealed class CommandItem : INotifyPropertyChanged
         GlobalShortcut = globalShortcut;
         HotkeyBehavior = hotkeyBehavior;
         Runtime = runtime;
+        UiMode = uiMode;
         EntryPoint = entryPoint;
         Permissions = permissions?.ToArray() ?? [];
         EntryMode = entryMode;
         InlineScriptSource = inlineScriptSource;
         IconReference = iconReference;
-        IconSource = ExtensionIconLibrary.ResolveImageSource(iconReference, extensionDirectoryPath);
+        _iconSource = iconSourceOverride ?? ExtensionIconLibrary.ResolveImageSource(iconReference, extensionDirectoryPath);
         VectorIcon = ExtensionIconLibrary.ResolveVectorIcon(iconReference);
         Startup = startup;
+        LaunchArguments = launchArguments;
+        WorkingDirectory = workingDirectory;
     }
 
     public string Glyph { get; }
@@ -4741,7 +6300,7 @@ public sealed class CommandItem : INotifyPropertyChanged
 
     public string? IconReference { get; }
 
-    public ImageSource? IconSource { get; }
+    public ImageSource? IconSource => _iconSource;
 
     public Geometry? VectorIcon { get; }
 
@@ -4785,6 +6344,8 @@ public sealed class CommandItem : INotifyPropertyChanged
 
     public string? Runtime { get; }
 
+    public string? UiMode { get; }
+
     public string? EntryPoint { get; }
 
     public IReadOnlyList<string> Permissions { get; }
@@ -4795,6 +6356,10 @@ public sealed class CommandItem : INotifyPropertyChanged
 
     public string? InlineScriptSource { get; }
 
+    public string? LaunchArguments { get; }
+
+    public string? WorkingDirectory { get; }
+
     public bool SupportsQueryArgument => QueryPrefixes.Count > 0 && (!string.IsNullOrWhiteSpace(QueryTargetTemplate) || HasScriptEntry || HasHostedView);
 
     public bool HasHostedView => HostedView != null;
@@ -4804,6 +6369,10 @@ public sealed class CommandItem : INotifyPropertyChanged
         (string.Equals(EntryMode, "inline", StringComparison.OrdinalIgnoreCase)
             ? !string.IsNullOrWhiteSpace(InlineScriptSource)
             : !string.IsNullOrWhiteSpace(EntryPoint));
+
+    public bool UsesNativeWindowUi =>
+        string.Equals(UiMode, "native-window", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(UiMode, "external-window", StringComparison.OrdinalIgnoreCase);
 
     public bool HasGlobalShortcut => !string.IsNullOrWhiteSpace(GlobalShortcut);
 
@@ -4825,13 +6394,31 @@ public sealed class CommandItem : INotifyPropertyChanged
         ? "云端"
         : Source == CommandSource.WebSearch
             ? "网页"
+        : Source == CommandSource.Application
+            ? "应用"
+        : Source == CommandSource.File
+            ? Category.Contains("文件夹", StringComparison.OrdinalIgnoreCase) ? "文件夹" : "文件"
         : HasHostedView
             ? "插件界面"
-            : HasScriptEntry
+            : UsesNativeWindowUi
+                ? "原生窗口"
+                : HasScriptEntry
                 ? "脚本"
                 : Category;
 
-    public string DisplayActionLabel => string.IsNullOrWhiteSpace(_queryPreviewActionLabel) ? ItemKindLabel : _queryPreviewActionLabel;
+    public string DisplayTypeLabel => Source == CommandSource.Application
+        ? "应用"
+        : Source == CommandSource.File
+            ? "文件"
+        : Source == CommandSource.WebSearch
+            ? "网页"
+        : Category.Contains("系统", StringComparison.OrdinalIgnoreCase)
+            ? "系统"
+            : "扩展";
+
+    public bool HasDisplayTypeLabel => !string.IsNullOrWhiteSpace(DisplayTypeLabel);
+
+    public string DisplayActionLabel => string.IsNullOrWhiteSpace(_queryPreviewActionLabel) ? DisplayTypeLabel : _queryPreviewActionLabel;
 
     public string CloudSummary =>
         ExistsInCloud
@@ -4845,6 +6432,8 @@ public sealed class CommandItem : INotifyPropertyChanged
         CommandSource.Cloud => "云端",
         CommandSource.LocalExtension => "本地扩展",
         CommandSource.WebSearch => "网页搜索",
+        CommandSource.Application => "应用",
+        CommandSource.File => "Everything 文件",
         _ => "本地"
     };
     private string ArchiveSummary => HasArchive ? "已包含扩展包。" : "当前还没有扩展包。";
@@ -4898,6 +6487,19 @@ public sealed class CommandItem : INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayActionLabel)));
     }
 
+    public void SetIconSource(ImageSource? iconSource)
+    {
+        if (ReferenceEquals(_iconSource, iconSource))
+        {
+            return;
+        }
+
+        _iconSource = iconSource;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IconSource)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasImageIcon)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UseGlyphIcon)));
+    }
+
     private void NotifyCloudChanged()
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CloudVersion)));
@@ -4915,5 +6517,7 @@ public enum CommandSource
     Local,
     LocalExtension,
     Cloud,
-    WebSearch
+    WebSearch,
+    Application,
+    File
 }

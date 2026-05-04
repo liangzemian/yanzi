@@ -67,6 +67,8 @@ public static class AppSettingsStore
         {
             group.Id = string.IsNullOrWhiteSpace(group.Id) ? Guid.NewGuid().ToString("N") : group.Id;
             group.Name = string.IsNullOrWhiteSpace(group.Name) ? "未命名" : group.Name.Trim();
+            group.ContextProcessName = group.ContextProcessName?.Trim();
+            group.ContextDisplayName = group.ContextDisplayName?.Trim();
             group.Slots ??= [];
             while (group.Slots.Count < 12)
             {
@@ -143,6 +145,8 @@ public sealed record AppSettings
 
     public List<string> DisabledExtensionIds { get; set; } = new();
 
+    public List<string> PinnedSearchScopeCommandIds { get; set; } = new();
+
     public bool EnableAgentApi { get; set; } = true;
 
     public int AgentApiPort { get; set; } = 53919;
@@ -160,6 +164,14 @@ public sealed record AppSettings
     public string WebDavUsername { get; set; } = string.Empty;
 
     public bool PreferManualExtensionEditor { get; set; } = false;
+
+    public double? SettingsWindowLeft { get; set; }
+
+    public double? SettingsWindowTop { get; set; }
+
+    public double? SettingsWindowWidth { get; set; }
+
+    public double? SettingsWindowHeight { get; set; }
 }
 
 public sealed class QuickPanelGroupSettings
@@ -167,6 +179,10 @@ public sealed class QuickPanelGroupSettings
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     public string Name { get; set; } = "未命名";
+
+    public string? ContextProcessName { get; set; }
+
+    public string? ContextDisplayName { get; set; }
 
     public List<string?> Slots { get; set; } = Enumerable.Repeat<string?>(null, 12).ToList();
 }

@@ -485,6 +485,17 @@ pre {
   margin-bottom: 2rem;
 }
 
+.download-password {
+  margin-top: 0.85rem;
+  color: var(--text-soft);
+  font-size: 0.95rem;
+}
+
+.download-password strong {
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+
 .release-link {
   display: inline-flex;
   margin-top: 1rem;

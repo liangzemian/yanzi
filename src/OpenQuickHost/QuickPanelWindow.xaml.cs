@@ -35,6 +35,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
     private QuickPanelGroupItem? _selectedContextGroup;
     private bool _isShowingGlobalFavorites;
     private bool _isShowingContextFavorites;
+    private DateTime _suppressAutoHideUntilUtc = DateTime.MinValue;
 
     public QuickPanelWindow(MainWindow mainWindow)
     {
@@ -217,7 +218,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             GlobalGroups.Add(item);
         }
 
-        foreach (var group in _settings.QuickPanelContextGroups)
+        foreach (var group in GetVisibleContextGroups())
         {
             var item = new QuickPanelGroupItem(group.Id, group.Name);
             _allContextGroups.Add(item);
@@ -254,7 +255,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
 
     private void SaveSlots(bool isContextual)
     {
-        var group = isContextual ? GetSelectedContextGroupSettings() : GetSelectedGlobalGroupSettings();
+        var group = isContextual ? EnsureContextGroupForCurrentApp() : GetSelectedGlobalGroupSettings();
         if (group == null)
         {
             return;
@@ -276,7 +277,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         {
             _settings.SelectedQuickPanelGlobalGroupId = group.Id;
         }
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings(isContextual ? "quickpanel-save-context-slots" : "quickpanel-save-global-slots");
     }
 
     private QuickPanelGroupSettings? GetSelectedGlobalGroupSettings()
@@ -288,7 +289,8 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
     private QuickPanelGroupSettings? GetSelectedContextGroupSettings()
     {
         var selectedGroupId = SelectedContextGroup?.Id ?? _settings.SelectedQuickPanelContextGroupId;
-        return _settings.QuickPanelContextGroups.FirstOrDefault(group => string.Equals(group.Id, selectedGroupId, StringComparison.OrdinalIgnoreCase));
+        return GetVisibleContextGroups().FirstOrDefault(group => string.Equals(group.Id, selectedGroupId, StringComparison.OrdinalIgnoreCase))
+            ?? GetVisibleContextGroups().FirstOrDefault();
     }
 
     private void RestoreSlotCollections()
@@ -329,7 +331,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         };
         _settings.QuickPanelGlobalGroups.Add(group);
         _settings.SelectedQuickPanelGlobalGroupId = group.Id;
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings("quickpanel-add-global-group");
         LoadSlots();
     }
 
@@ -346,11 +348,13 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
 
         var group = new QuickPanelGroupSettings
         {
-            Name = dialog.ValueText
+            Name = dialog.ValueText,
+            ContextProcessName = NormalizeProcessName(_foregroundAppContext?.ProcessName),
+            ContextDisplayName = _foregroundAppContext?.ProcessName
         };
         _settings.QuickPanelContextGroups.Add(group);
         _settings.SelectedQuickPanelContextGroupId = group.Id;
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings("quickpanel-add-context-group");
         LoadSlots();
     }
 
@@ -363,7 +367,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
 
         _isShowingGlobalFavorites = false;
         _settings.SelectedQuickPanelGlobalGroupId = group.Id;
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings("quickpanel-select-global-group");
         OnPropertyChanged(nameof(PanelTitle));
         LoadSlots();
     }
@@ -377,7 +381,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
 
         _isShowingContextFavorites = false;
         _settings.SelectedQuickPanelContextGroupId = group.Id;
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings("quickpanel-select-context-group");
         LoadSlots();
     }
 
@@ -404,7 +408,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         }
 
         group.Name = dialog.ValueText;
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings("quickpanel-rename-global-group");
         LoadSlots();
     }
 
@@ -431,7 +435,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         }
 
         group.Name = dialog.ValueText;
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings("quickpanel-rename-context-group");
         LoadSlots();
     }
 
@@ -456,7 +460,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
 
         _settings.QuickPanelGlobalGroups.RemoveAll(group => string.Equals(group.Id, groupItem.Id, StringComparison.OrdinalIgnoreCase));
         _settings.SelectedQuickPanelGlobalGroupId = _settings.QuickPanelGlobalGroups[0].Id;
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings("quickpanel-delete-global-group");
         LoadSlots();
     }
 
@@ -481,15 +485,18 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
 
         _settings.QuickPanelContextGroups.RemoveAll(group => string.Equals(group.Id, groupItem.Id, StringComparison.OrdinalIgnoreCase));
         _settings.SelectedQuickPanelContextGroupId = _settings.QuickPanelContextGroups[0].Id;
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings("quickpanel-delete-context-group");
         LoadSlots();
     }
 
     private void PinAutoHideButton_Click(object sender, RoutedEventArgs e)
     {
         _isPinned = !_isPinned;
+        _suppressAutoHideUntilUtc = DateTime.UtcNow.AddMilliseconds(350);
         OnPropertyChanged(nameof(PinButtonBrush));
         OnPropertyChanged(nameof(PinButtonTooltip));
+        Activate();
+        BringToFront();
     }
 
     private void SlotButton_Click(object sender, RoutedEventArgs e)
@@ -502,20 +509,26 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             }
             else if (!vm.IsContextual)
             {
-                var newCommand = _mainWindow.OpenAddExtensionForSlot();
+                _suppressAutoHideUntilUtc = DateTime.UtcNow.AddSeconds(2);
+                var newCommand = _mainWindow.OpenAddExtensionForSlot(this);
                 if (newCommand != null)
                 {
                     vm.SetCommand(newCommand, false);
                     SaveSlots(isContextual: false);
+                    LoadSlots();
+                    BringToFront();
                 }
             }
             else
             {
-                var newCommand = _mainWindow.OpenAddExtensionForSlot();
+                _suppressAutoHideUntilUtc = DateTime.UtcNow.AddSeconds(2);
+                var newCommand = _mainWindow.OpenAddExtensionForSlot(this);
                 if (newCommand != null)
                 {
                     vm.SetCommand(newCommand, false, isContextual: true);
                     SaveSlots(isContextual: true);
+                    LoadSlots();
+                    BringToFront();
                 }
             }
         }
@@ -733,7 +746,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             else
                 favorites.Add(id);
 
-            AppSettingsStore.Save(_settings);
+            SaveQuickPanelSettings(vm.IsContextual ? "quickpanel-toggle-context-favorite" : "quickpanel-toggle-global-favorite");
             vm.SetFavorite(favorites.Contains(id));
         }
     }
@@ -801,7 +814,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(PanelTitle));
         }
 
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings(isContextual ? "quickpanel-cycle-context-group" : "quickpanel-cycle-global-group");
         LoadSlots();
     }
 
@@ -816,6 +829,16 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
     private void Window_Deactivated(object sender, EventArgs e)
     {
         if (_isPinned)
+        {
+            return;
+        }
+
+        if (DateTime.UtcNow <= _suppressAutoHideUntilUtc)
+        {
+            return;
+        }
+
+        if (OwnedWindows.OfType<Window>().Any(static window => window.IsVisible))
         {
             return;
         }
@@ -877,6 +900,72 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         LoadSlots();
     }
 
+    public void RefreshSettingsFromStore()
+    {
+        _settings = AppSettingsStore.Load();
+        LoadSlots();
+    }
+
+    private IReadOnlyList<QuickPanelGroupSettings> GetVisibleContextGroups()
+    {
+        var normalizedProcessName = NormalizeProcessName(_foregroundAppContext?.ProcessName);
+        if (string.IsNullOrWhiteSpace(normalizedProcessName))
+        {
+            return [];
+        }
+
+        return _settings.QuickPanelContextGroups
+            .Where(group => string.Equals(NormalizeProcessName(group.ContextProcessName), normalizedProcessName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private QuickPanelGroupSettings? EnsureContextGroupForCurrentApp()
+    {
+        var current = GetSelectedContextGroupSettings();
+        if (current != null)
+        {
+            return current;
+        }
+
+        var normalizedProcessName = NormalizeProcessName(_foregroundAppContext?.ProcessName);
+        if (string.IsNullOrWhiteSpace(normalizedProcessName))
+        {
+            return null;
+        }
+
+        var existingUnbound = _settings.QuickPanelContextGroups.FirstOrDefault(group =>
+            string.IsNullOrWhiteSpace(group.ContextProcessName) &&
+            group.Slots.Any(slot => !string.IsNullOrWhiteSpace(slot)));
+        if (existingUnbound != null)
+        {
+            existingUnbound.ContextProcessName = normalizedProcessName;
+            existingUnbound.ContextDisplayName = _foregroundAppContext?.ProcessName;
+            _settings.SelectedQuickPanelContextGroupId = existingUnbound.Id;
+            SaveQuickPanelSettings("quickpanel-bind-existing-context-group");
+            LoadGroups();
+            return existingUnbound;
+        }
+
+        var autoGroup = new QuickPanelGroupSettings
+        {
+            Name = _foregroundAppContext?.ProcessName ?? "专属",
+            ContextProcessName = normalizedProcessName,
+            ContextDisplayName = _foregroundAppContext?.ProcessName
+        };
+        _settings.QuickPanelContextGroups.Add(autoGroup);
+        _settings.SelectedQuickPanelContextGroupId = autoGroup.Id;
+        SaveQuickPanelSettings("quickpanel-auto-create-context-group");
+        LoadGroups();
+        return autoGroup;
+    }
+
+    private static string NormalizeProcessName(string? processName)
+    {
+        return string.IsNullOrWhiteSpace(processName)
+            ? string.Empty
+            : processName.Trim().ToLowerInvariant();
+    }
+
     private QuickPanelSlotReference? BuildSlotReference(SlotViewModel vm)
     {
         var group = vm.IsContextual ? GetSelectedContextGroupSettings() : GetSelectedGlobalGroupSettings();
@@ -894,7 +983,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             return false;
         }
 
-        var targetGroup = targetSlot.IsContextual ? GetSelectedContextGroupSettings() : GetSelectedGlobalGroupSettings();
+        var targetGroup = targetSlot.IsContextual ? EnsureContextGroupForCurrentApp() : GetSelectedGlobalGroupSettings();
         if (targetGroup == null)
         {
             message = "当前鼠标面板分组不可用。";
@@ -934,7 +1023,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
                     sourceGroup.Slots[clipboard.SourceSlot.Index] = targetExisting;
                 }
 
-                AppSettingsStore.Save(_settings);
+                SaveQuickPanelSettings("quickpanel-move-slot");
                 _mainWindow.ClearQuickPanelClipboard();
                 LoadSlots();
                 message = string.IsNullOrWhiteSpace(targetExisting)
@@ -945,7 +1034,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         }
 
         targetGroup.Slots[targetSlot.Index] = clipboard.ExtensionId;
-        AppSettingsStore.Save(_settings);
+        SaveQuickPanelSettings("quickpanel-paste-slot");
         LoadSlots();
         message = string.IsNullOrWhiteSpace(targetSlot.Command?.ExtensionId)
             ? $"已粘贴到第 {targetSlot.Index + 1} 个槽位：{clipboard.Title}"
@@ -986,6 +1075,12 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         var handle = new WindowInteropHelper(this).EnsureHandle();
         var source = HwndSource.FromHwnd(handle);
         return source?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+    }
+
+    private void SaveQuickPanelSettings(string reason)
+    {
+        AppSettingsStore.Save(_settings);
+        _mainWindow.NotifyQuickPanelSettingsChanged(reason);
     }
 
     private void PollReleaseTarget()
@@ -1205,7 +1300,7 @@ public class SlotViewModel : INotifyPropertyChanged
     public bool IsContextual => _isContextual;
     public bool CanEdit => _command?.Source == CommandSource.LocalExtension;
     public bool CanOpenDirectory => CanEdit && !string.IsNullOrWhiteSpace(_command?.ExtensionDirectoryPath);
-    public bool CanRemoveFromFixedSlots => _command != null && !_isContextual;
+    public bool CanRemoveFromFixedSlots => _command != null;
     public string FavoriteLabel => _isFavorite ? "取消收藏" : "收藏";
     public string Title => _command?.Title ?? string.Empty;
     public ImageSource? Icon => _command?.IconSource;

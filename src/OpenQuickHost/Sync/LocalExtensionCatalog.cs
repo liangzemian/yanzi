@@ -60,14 +60,14 @@ public static class LocalExtensionCatalog
         EnsureSampleManifest(Path.Combine(extensionDirectory, "manifest.json"), manifest, existing => existing);
     }
 
-    public static IReadOnlyList<CommandItem> LoadCommands()
+    public static IReadOnlyList<LocalExtensionCatalogEntry> LoadEntries()
     {
         if (!Directory.Exists(CatalogRootPath))
         {
             return [];
         }
 
-        var commands = new List<CommandItem>();
+        var entries = new List<LocalExtensionCatalogEntry>();
         foreach (var manifestPath in Directory.EnumerateFiles(CatalogRootPath, "manifest.json", SearchOption.AllDirectories))
         {
             try
@@ -84,30 +84,7 @@ public static class LocalExtensionCatalog
                     continue;
                 }
 
-                commands.Add(new CommandItem(
-                    glyph: GetDefaultGlyph(manifest, "E"),
-                    title: manifest.Name,
-                    subtitle: manifest.Description ?? $"来自本地扩展目录：{Path.GetDirectoryName(manifestPath)}",
-                    category: manifest.Category ?? "扩展",
-                    accentHex: "#FF38BDF8",
-                    openTarget: manifest.OpenTarget,
-                    keywords: manifest.Keywords ?? [],
-                    source: CommandSource.LocalExtension,
-                    extensionId: manifest.Id,
-                    declaredVersion: manifest.Version ?? "0.1.0",
-                    extensionDirectoryPath: Path.GetDirectoryName(manifestPath),
-                    hostedView: manifest.HostedViewXaml?.ToDefinition() ?? manifest.HostedViewV2?.ToDefinition() ?? manifest.HostedView?.ToDefinition(),
-                    globalShortcut: manifest.GlobalShortcut,
-                    hotkeyBehavior: manifest.HotkeyBehavior,
-                    runtime: manifest.Runtime,
-                    entryPoint: manifest.Entry,
-                    permissions: manifest.Permissions ?? [],
-                    entryMode: manifest.EntryMode,
-                    inlineScriptSource: manifest.Script?.Source,
-                    iconReference: manifest.Icon,
-                    queryPrefixes: manifest.QueryPrefixes,
-                    queryTargetTemplate: manifest.QueryTargetTemplate,
-                    startup: manifest.Startup?.ToDefinition()));
+                entries.Add(new LocalExtensionCatalogEntry(manifestPath, manifest));
             }
             catch
             {
@@ -115,7 +92,45 @@ public static class LocalExtensionCatalog
             }
         }
 
-        return commands;
+        return entries;
+    }
+
+    public static IReadOnlyList<CommandItem> LoadCommands()
+    {
+        return LoadEntries()
+            .Select(CreateCommand)
+            .ToList();
+    }
+
+    public static CommandItem CreateCommand(LocalExtensionCatalogEntry entry)
+    {
+        var manifestPath = entry.ManifestPath;
+        var manifest = entry.Manifest;
+        return new CommandItem(
+            glyph: GetDefaultGlyph(manifest, "E"),
+            title: manifest.Name,
+            subtitle: manifest.Description ?? $"来自本地扩展目录：{Path.GetDirectoryName(manifestPath)}",
+            category: manifest.Category ?? "扩展",
+            accentHex: "#FF38BDF8",
+            openTarget: manifest.OpenTarget,
+            keywords: manifest.Keywords ?? [],
+            source: CommandSource.LocalExtension,
+            extensionId: manifest.Id,
+            declaredVersion: manifest.Version ?? "0.1.0",
+            extensionDirectoryPath: Path.GetDirectoryName(manifestPath),
+            hostedView: manifest.HostedViewXaml?.ToDefinition() ?? manifest.HostedViewV2?.ToDefinition() ?? manifest.HostedView?.ToDefinition(),
+            globalShortcut: manifest.GlobalShortcut,
+            hotkeyBehavior: manifest.HotkeyBehavior,
+            runtime: manifest.Runtime,
+            uiMode: manifest.UiMode,
+            entryPoint: manifest.Entry,
+            permissions: manifest.Permissions ?? [],
+            entryMode: manifest.EntryMode,
+            inlineScriptSource: manifest.Script?.Source,
+            iconReference: manifest.Icon,
+            queryPrefixes: manifest.QueryPrefixes,
+            queryTargetTemplate: manifest.QueryTargetTemplate,
+            startup: manifest.Startup?.ToDefinition());
     }
 
     private static void EnsureSampleNotesExtension()
@@ -577,6 +592,8 @@ public static class YanziAction
 
         var extensionDirectory = Path.Combine(CatalogRootPath, manifest.Id);
         Directory.CreateDirectory(extensionDirectory);
+        manifest = NormalizeManifestForPersistence(manifest, extensionDirectory);
+        ExtensionIconLibrary.InvalidateImageCache(manifest.Icon, extensionDirectory);
         var manifestPath = Path.Combine(extensionDirectory, "manifest.json");
         File.WriteAllText(
             manifestPath,
@@ -598,6 +615,7 @@ public static class YanziAction
             globalShortcut: manifest.GlobalShortcut,
             hotkeyBehavior: manifest.HotkeyBehavior,
             runtime: manifest.Runtime,
+            uiMode: manifest.UiMode,
             entryPoint: manifest.Entry,
             permissions: manifest.Permissions ?? [],
             entryMode: manifest.EntryMode,
@@ -742,6 +760,69 @@ public static class YanziAction
         return manifest;
     }
 
+    private static LocalExtensionManifest NormalizeManifestForPersistence(LocalExtensionManifest manifest, string extensionDirectory)
+    {
+        var iconReference = manifest.Icon?.Trim();
+        if (string.IsNullOrWhiteSpace(iconReference) || ExtensionIconLibrary.IsBuiltInReference(iconReference))
+        {
+            return manifest;
+        }
+
+        if (Uri.TryCreate(iconReference, UriKind.Absolute, out var absoluteUri))
+        {
+            if (string.Equals(absoluteUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(absoluteUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            {
+                return manifest;
+            }
+
+            if (absoluteUri.IsFile && File.Exists(absoluteUri.LocalPath))
+            {
+                return manifest with { Icon = CopyIconIntoExtensionDirectory(absoluteUri.LocalPath, extensionDirectory) };
+            }
+
+            return manifest;
+        }
+
+        if (Path.IsPathRooted(iconReference) && File.Exists(iconReference))
+        {
+            return manifest with { Icon = CopyIconIntoExtensionDirectory(iconReference, extensionDirectory) };
+        }
+
+        var localRelativePath = Path.GetFullPath(Path.Combine(extensionDirectory, iconReference));
+        if (File.Exists(localRelativePath))
+        {
+            return manifest with { Icon = NormalizeRelativePath(Path.GetRelativePath(extensionDirectory, localRelativePath)) };
+        }
+
+        return manifest;
+    }
+
+    private static string CopyIconIntoExtensionDirectory(string sourcePath, string extensionDirectory)
+    {
+        var fullSourcePath = Path.GetFullPath(sourcePath);
+        var fullExtensionDirectory = Path.GetFullPath(extensionDirectory);
+
+        if (fullSourcePath.StartsWith(fullExtensionDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            return NormalizeRelativePath(Path.GetRelativePath(fullExtensionDirectory, fullSourcePath));
+        }
+
+        var extension = Path.GetExtension(fullSourcePath);
+        var targetFileName = string.IsNullOrWhiteSpace(extension)
+            ? "icon"
+            : "icon" + extension.ToLowerInvariant();
+        var targetPath = Path.Combine(fullExtensionDirectory, targetFileName);
+        File.Copy(fullSourcePath, targetPath, overwrite: true);
+        return NormalizeRelativePath(targetFileName);
+    }
+
+    private static string NormalizeRelativePath(string value)
+    {
+        return value.Replace(Path.DirectorySeparatorChar, '/')
+            .Replace(Path.AltDirectorySeparatorChar, '/');
+    }
+
     private static bool IsSupportedInlineRuntime(string? runtime)
     {
         return string.Equals(runtime, "powershell", StringComparison.OrdinalIgnoreCase) ||
@@ -870,6 +951,8 @@ public sealed record LocalExtensionManifest
 
     public string? Runtime { get; init; }
 
+    public string? UiMode { get; init; }
+
     public string? EntryMode { get; init; }
 
     public string? Entry { get; init; }
@@ -880,6 +963,8 @@ public sealed record LocalExtensionManifest
 
     public LocalExtensionStartupManifest? Startup { get; init; }
 }
+
+public sealed record LocalExtensionCatalogEntry(string ManifestPath, LocalExtensionManifest Manifest);
 
 public sealed record LocalExtensionStartupManifest
 {

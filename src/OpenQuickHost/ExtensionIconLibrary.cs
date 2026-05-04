@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
@@ -32,7 +33,8 @@ internal static class ExtensionIconLibrary
         ["settings"] = "M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M10,22C9.75,22 9.54,21.82 9.5,21.58L9.13,18.93C8.5,18.68 7.96,18.34 7.44,17.94L4.95,18.95C4.73,19.03 4.46,18.95 4.34,18.73L2.34,15.27C2.21,15.05 2.27,14.78 2.46,14.63L4.57,12.97L4.5,12L4.57,11L2.46,9.37C2.27,9.22 2.21,8.95 2.34,8.73L4.34,5.27C4.46,5.05 4.73,4.96 4.95,5.05L7.44,6.05C7.96,5.66 8.5,5.32 9.13,5.07L9.5,2.42C9.54,2.18 9.75,2 10,2H14C14.25,2 14.46,2.18 14.5,2.42L14.87,5.07C15.5,5.32 16.04,5.66 16.56,6.05L19.05,5.05C19.27,4.96 19.54,5.05 19.66,5.27L21.66,8.73C21.79,8.95 21.73,9.22 21.54,9.37L19.43,11L19.5,12L19.43,13L21.54,14.63C21.73,14.78 21.79,15.05 21.66,15.27L19.66,18.73C19.54,18.95 19.27,19.04 19.05,18.95L16.56,17.95C16.04,18.34 15.5,18.68 14.87,18.93L14.5,21.58C14.46,21.82 14.25,22 14,22H10Z",
         ["star"] = "M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z",
         ["link"] = "M10.59,13.41L9.17,12L13.41,7.76L14.83,9.17L10.59,13.41M13.41,16.24L9.17,20.5L7.76,19.08L12,14.83L13.41,16.24M16.24,13.41L20.5,9.17L19.08,7.76L14.83,12L16.24,13.41M7.76,16.24L3.5,12L4.92,10.59L9.17,14.83L7.76,16.24Z",
-        ["pin"] = "M14,3L21,10L18,11L15,18L13,18L13,12L8,17L7,16L12,11L6,11L6,9L13,8L14,3Z"
+        ["pin"] = "M14,3L21,10L18,11L15,18L13,18L13,12L8,17L7,16L12,11L6,11L6,9L13,8L14,3Z",
+        ["plus"] = "M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"
     };
 
     private static readonly IReadOnlyDictionary<string, string> AppIcons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -83,7 +85,8 @@ internal static class ExtensionIconLibrary
             CreateOption("app:selection", "选中内容"),
             CreateOption("mdi:star", "收藏"),
             CreateOption("mdi:link", "链接"),
-            CreateOption("mdi:pin", "固定")
+            CreateOption("mdi:pin", "固定"),
+            CreateOption("mdi:plus", "新增")
         ];
     }
 
@@ -124,6 +127,19 @@ internal static class ExtensionIconLibrary
 
         try
         {
+            var localPath = resolvedPath.StartsWith("file://", StringComparison.OrdinalIgnoreCase)
+                ? new Uri(resolvedPath, UriKind.Absolute).LocalPath
+                : null;
+            if (!string.IsNullOrWhiteSpace(localPath) && CanExtractAssociatedIcon(localPath))
+            {
+                var extracted = TryExtractAssociatedIcon(localPath);
+                if (extracted != null)
+                {
+                    ImageCache[resolvedPath] = extracted;
+                    return extracted;
+                }
+            }
+
             var bitmap = new BitmapImage();
             bitmap.BeginInit();
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
@@ -142,6 +158,52 @@ internal static class ExtensionIconLibrary
             ImageCache[resolvedPath] = null;
             return null;
         }
+    }
+
+    public static void InvalidateImageCache(string? iconReference, string? extensionDirectoryPath)
+    {
+        var resolvedPath = ResolveImagePath(iconReference, extensionDirectoryPath);
+        if (string.IsNullOrWhiteSpace(resolvedPath))
+        {
+            return;
+        }
+
+        ImageCache.Remove(resolvedPath);
+    }
+
+    public static string? ResolveLocalIconFilePath(string? iconReference, string? extensionDirectoryPath)
+    {
+        var trimmed = iconReference?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) || IsBuiltInReference(trimmed))
+        {
+            return null;
+        }
+
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absoluteUri))
+        {
+            if (absoluteUri.IsFile && File.Exists(absoluteUri.LocalPath))
+            {
+                return Path.GetFullPath(absoluteUri.LocalPath);
+            }
+
+            return null;
+        }
+
+        if (Path.IsPathRooted(trimmed) && File.Exists(trimmed))
+        {
+            return Path.GetFullPath(trimmed);
+        }
+
+        if (!string.IsNullOrWhiteSpace(extensionDirectoryPath))
+        {
+            var combined = Path.GetFullPath(Path.Combine(extensionDirectoryPath, trimmed));
+            if (File.Exists(combined))
+            {
+                return combined;
+            }
+        }
+
+        return null;
     }
 
     public static bool IsBuiltInReference(string? iconReference) => TryResolveVectorKey(iconReference, out _);
@@ -240,6 +302,48 @@ internal static class ExtensionIconLibrary
         return null;
     }
 
+    private static bool CanExtractAssociatedIcon(string localPath)
+    {
+        var extension = Path.GetExtension(localPath);
+        return string.Equals(extension, ".exe", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(extension, ".lnk", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(extension, ".ico", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(extension, ".appref-ms", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static ImageSource? TryExtractAssociatedIcon(string localPath)
+    {
+        System.Drawing.Icon? icon = null;
+
+        try
+        {
+            icon = System.Drawing.Icon.ExtractAssociatedIcon(localPath);
+            if (icon == null)
+            {
+                return null;
+            }
+
+            var bitmap = Imaging.CreateBitmapSourceFromHIcon(
+                icon.Handle,
+                System.Windows.Int32Rect.Empty,
+                BitmapSizeOptions.FromWidthAndHeight(32, 32));
+            if (bitmap.CanFreeze)
+            {
+                bitmap.Freeze();
+            }
+
+            return bitmap;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            icon?.Dispose();
+        }
+    }
+
     private static string ResolveCachedRemoteImage(Uri uri)
     {
         var cacheDirectory = Path.Combine(HostAssets.RootPath, "icon-cache");
@@ -305,6 +409,7 @@ internal static class ExtensionIconLibrary
                string.Equals(library, "mdi", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(library, "app", StringComparison.OrdinalIgnoreCase);
     }
+
 }
 
 internal sealed record ExtensionIconOption(string Reference, string Label, Geometry? Geometry);

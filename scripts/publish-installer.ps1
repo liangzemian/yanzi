@@ -31,14 +31,14 @@ dotnet publish $project `
     -p:InformationalVersion=$Version `
     -p:FileVersion="$Version.0" `
     -p:AssemblyVersion="$Version.0" `
-    -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:EnableCompressionInSingleFile=true `
+    -p:PublishSingleFile=false `
+    -p:DebugType=None `
+    -p:DebugSymbols=false `
     -p:CETCompat=false `
     -o $publishDir
 
-Write-Host "Published portable executable:"
-Write-Host "  $publishDir\Yanzi.exe"
+Write-Host "Published installer payload:"
+Write-Host "  $publishDir"
 
 if ($SkipInstaller) {
     return

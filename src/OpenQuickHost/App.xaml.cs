@@ -10,9 +10,11 @@ namespace OpenQuickHost;
 
 public partial class App : WpfApplication
 {
+    private const string SingleInstanceAppId = "Yanzi.OpenQuickHost";
     private Forms.NotifyIcon? _notifyIcon;
     private SettingsWindow? _settingsWindow;
     private LocalAgentApiServer? _agentApiServer;
+    private SingleInstanceService? _singleInstanceService;
     private bool _listenerServicesPaused;
 
     protected override void OnStartup(WpfStartupEventArgs e)
@@ -24,11 +26,19 @@ public partial class App : WpfApplication
         SyncConfigLoader.EnsureExampleFile();
         var settings = AppSettingsStore.Load();
         StartupRegistrationService.Apply(settings.LaunchAtStartup);
+        EverythingRuntimeService.EnsureStartedInBackground();
+        _singleInstanceService = new SingleInstanceService(SingleInstanceAppId);
+        if (!_singleInstanceService.TryAcquirePrimaryInstance())
+        {
+            _ = ForwardToPrimaryInstanceAndExitAsync(e.Args);
+            return;
+        }
 
         ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
 
         var window = new MainWindow();
         MainWindow = window;
+        TryRegisterUriProtocol();
         _notifyIcon = BuildNotifyIcon(window);
         HostAssets.AppendLog($"App startup: version={AppVersionInfo.Version}, build={AppVersionInfo.BuildStamp}, baseDir={AppDomain.CurrentDomain.BaseDirectory}");
         window.Show();
@@ -42,6 +52,8 @@ public partial class App : WpfApplication
         }
 
         StartLocalAgentApi(window, settings);
+        _singleInstanceService.StartServer(message => HandleSecondaryLaunchMessageAsync(window, message));
+        _ = HandleLaunchArgumentsAsync(window, e.Args);
     }
 
     private static bool ShouldStartHidden(string[] args)
@@ -50,6 +62,42 @@ public partial class App : WpfApplication
             string.Equals(arg, "--tray", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(arg, "/tray", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(arg, "-tray", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void TryRegisterUriProtocol()
+    {
+        try
+        {
+            var executablePath = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(executablePath))
+            {
+                UriProtocolRegistrationService.EnsureRegistered(executablePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Protocol registration skipped: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleLaunchArgumentsAsync(MainWindow window, string[] args)
+    {
+        var protocolArgument = args.FirstOrDefault(static arg =>
+            arg.StartsWith("yanzi://", StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(protocolArgument))
+        {
+            return;
+        }
+
+        try
+        {
+            window.ShowPanel();
+            await window.HandleProtocolLaunchAsync(protocolArgument);
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Protocol launch failed: {ex}");
+        }
     }
 
     protected override void OnExit(WpfExitEventArgs e)
@@ -70,12 +118,55 @@ public partial class App : WpfApplication
             _agentApiServer = null;
         }
 
+        if (_singleInstanceService != null)
+        {
+            _singleInstanceService.Dispose();
+            _singleInstanceService = null;
+        }
+
         base.OnExit(e);
+    }
+
+    private async Task ForwardToPrimaryInstanceAndExitAsync(string[] args)
+    {
+        try
+        {
+            if (_singleInstanceService != null)
+            {
+                var protocolArgument = args.FirstOrDefault(static arg =>
+                    arg.StartsWith("yanzi://", StringComparison.OrdinalIgnoreCase));
+                var message = string.IsNullOrWhiteSpace(protocolArgument)
+                    ? "__show__"
+                    : protocolArgument;
+                await _singleInstanceService.SendToPrimaryInstanceAsync(message);
+            }
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Forward to primary instance failed: {ex.Message}");
+        }
+        finally
+        {
+            Shutdown();
+        }
+    }
+
+    private static async Task HandleSecondaryLaunchMessageAsync(MainWindow window, string message)
+    {
+        await window.Dispatcher.InvokeAsync(async () =>
+        {
+            window.ShowPanel();
+            if (!string.Equals(message, "__show__", StringComparison.Ordinal))
+            {
+                await window.HandleProtocolLaunchAsync(message);
+            }
+        }).Task.Unwrap();
     }
 
     private void App_DispatcherUnhandledException(object sender, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
     {
         HostAssets.AppendLog($"DispatcherUnhandledException: {e.Exception}");
+        e.Handled = true;
     }
 
     private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
@@ -141,6 +232,26 @@ public partial class App : WpfApplication
         };
 
         return notifyIcon;
+    }
+
+    public void ShowDesktopNotification(string title, string message, Forms.ToolTipIcon icon = Forms.ToolTipIcon.Info)
+    {
+        if (_notifyIcon == null)
+        {
+            return;
+        }
+
+        try
+        {
+            _notifyIcon.BalloonTipTitle = title;
+            _notifyIcon.BalloonTipText = message;
+            _notifyIcon.BalloonTipIcon = icon;
+            _notifyIcon.ShowBalloonTip(4000);
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"ShowDesktopNotification failed: {ex.Message}");
+        }
     }
 
     // 托盘菜单事件处理器

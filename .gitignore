@@ -4,10 +4,12 @@ obj/
 **/obj/
 dist/
 .artifacts/
+artifacts/
 .wrangler/
 cloudflare/.wrangler/
 cloudflare/node_modules/
 website/downloads/*.zip
+build-verify*/
 
 *.user
 *.suo

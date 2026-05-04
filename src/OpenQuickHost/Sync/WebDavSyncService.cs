@@ -218,6 +218,8 @@ public sealed class WebDavSyncService
             await SaveRemoteIndexAsync(mergedIndex, cancellationToken);
         }
 
+        await CleanupPurgedRemotePackagesAsync(mergedIndex, cancellationToken);
+
         SaveLocalIndex(ClearLocalPendingFlags(mergedIndex));
         await SyncSearchMemoryAsync(cancellationToken);
         return new WebDavSyncResult(uploaded, pulled, SyncRootDisplay);
@@ -291,6 +293,61 @@ public sealed class WebDavSyncService
 
         existing.Version = string.IsNullOrWhiteSpace(version) ? existing.Version : version!;
         existing.Deleted = true;
+        existing.Purged = false;
+        existing.LocalDeletionPending = true;
+        existing.UpdatedAtUtc = DateTimeOffset.UtcNow.ToString("O");
+        SaveLocalIndex(index);
+    }
+
+    public static void MarkExtensionRestoredLocally(string extensionId, string? version = null)
+    {
+        if (string.IsNullOrWhiteSpace(extensionId))
+        {
+            return;
+        }
+
+        var index = LoadLocalIndex();
+        var existing = index.Items.FirstOrDefault(item =>
+            item.ExtensionId.Equals(extensionId, StringComparison.OrdinalIgnoreCase));
+        if (existing == null)
+        {
+            existing = new WebDavSyncEntry
+            {
+                ExtensionId = extensionId
+            };
+            index.Items.Add(existing);
+        }
+
+        existing.Version = string.IsNullOrWhiteSpace(version) ? existing.Version : version!;
+        existing.Deleted = false;
+        existing.Purged = false;
+        existing.LocalDeletionPending = false;
+        existing.UpdatedAtUtc = DateTimeOffset.UtcNow.ToString("O");
+        SaveLocalIndex(index);
+    }
+
+    public static void MarkExtensionPurgedLocally(string extensionId, string? version = null)
+    {
+        if (string.IsNullOrWhiteSpace(extensionId))
+        {
+            return;
+        }
+
+        var index = LoadLocalIndex();
+        var existing = index.Items.FirstOrDefault(item =>
+            item.ExtensionId.Equals(extensionId, StringComparison.OrdinalIgnoreCase));
+        if (existing == null)
+        {
+            existing = new WebDavSyncEntry
+            {
+                ExtensionId = extensionId
+            };
+            index.Items.Add(existing);
+        }
+
+        existing.Version = string.IsNullOrWhiteSpace(version) ? existing.Version : version!;
+        existing.Deleted = true;
+        existing.Purged = true;
         existing.LocalDeletionPending = true;
         existing.UpdatedAtUtc = DateTimeOffset.UtcNow.ToString("O");
         SaveLocalIndex(index);
@@ -362,6 +419,7 @@ public sealed class WebDavSyncService
                 PackagePath = stateEntry.PackagePath,
                 UpdatedAtUtc = stateEntry.Deleted ? stateEntry.UpdatedAtUtc : DateTimeOffset.UtcNow.ToString("O"),
                 Deleted = true,
+                Purged = stateEntry.Purged,
                 LocalDeletionPending = stateEntry.LocalDeletionPending
             });
         }
@@ -382,6 +440,7 @@ public sealed class WebDavSyncService
                 PackagePath = item.PackagePath,
                 UpdatedAtUtc = item.UpdatedAtUtc,
                 Deleted = item.Deleted,
+                Purged = item.Purged,
                 LocalDeletionPending = false
             }).ToList()
         };
@@ -406,7 +465,7 @@ public sealed class WebDavSyncService
             : entry.PackageHash.Length <= 12
                 ? entry.PackageHash
                 : entry.PackageHash[..12];
-        return $"deleted={entry.Deleted},pendingDelete={entry.LocalDeletionPending},updated={entry.UpdatedAtUtc},hash={hash},path={entry.PackagePath}";
+        return $"deleted={entry.Deleted},purged={entry.Purged},pendingDelete={entry.LocalDeletionPending},updated={entry.UpdatedAtUtc},hash={hash},path={entry.PackagePath}";
     }
 
     private async Task<WebDavSyncIndex> LoadRemoteIndexAsync(CancellationToken cancellationToken)
@@ -439,7 +498,8 @@ public sealed class WebDavSyncService
                 PackageHash = item.PackageHash,
                 PackagePath = item.PackagePath,
                 UpdatedAtUtc = item.UpdatedAtUtc,
-                Deleted = item.Deleted
+                Deleted = item.Deleted,
+                Purged = item.Purged
             }).ToList()
         };
         var json = JsonSerializer.Serialize(remoteIndex, JsonOptions);
@@ -449,6 +509,14 @@ public sealed class WebDavSyncService
         if (!response.IsSuccessStatusCode)
         {
             await ThrowWebDavFailureAsync(request, response, cancellationToken);
+        }
+    }
+
+    private async Task CleanupPurgedRemotePackagesAsync(WebDavSyncIndex index, CancellationToken cancellationToken)
+    {
+        foreach (var item in index.Items.Where(entry => entry.Purged))
+        {
+            await DeleteRemotePackageTreeAsync(item.ExtensionId, cancellationToken);
         }
     }
 
@@ -480,6 +548,23 @@ public sealed class WebDavSyncService
     private async Task<bool> ApplyRemoteEntryAsync(WebDavSyncEntry entry, CancellationToken cancellationToken)
     {
         var localDirectory = Path.Combine(HostAssets.ExtensionsPath, entry.ExtensionId);
+        if (entry.Purged)
+        {
+            var changed = false;
+            if (Directory.Exists(localDirectory))
+            {
+                Directory.Delete(localDirectory, recursive: true);
+                changed = true;
+            }
+
+            if (ExtensionRecycleBinService.PurgeAllByExtensionId(entry.ExtensionId) > 0)
+            {
+                changed = true;
+            }
+
+            return changed;
+        }
+
         if (entry.Deleted)
         {
             if (Directory.Exists(localDirectory))
@@ -615,6 +700,31 @@ public sealed class WebDavSyncService
                response.StatusCode == HttpStatusCode.OK;
     }
 
+    private async Task DeleteRemotePackageTreeAsync(string extensionId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(extensionId))
+        {
+            return;
+        }
+
+        var relativePath = $"packages/{extensionId}";
+        using var request = CreateRequest(HttpMethod.Delete, relativePath);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound)
+        {
+            HostAssets.AppendLog($"WebDAV purged remote package tree: id={extensionId}, path={relativePath}, status={(int)response.StatusCode}");
+            return;
+        }
+
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            HostAssets.AppendLog($"WebDAV remote package tree missing parent or already removed: id={extensionId}, path={relativePath}");
+            return;
+        }
+
+        await ThrowWebDavFailureAsync(request, response, cancellationToken);
+    }
+
     private HttpRequestMessage CreateRequest(HttpMethod method, string relativePath)
     {
         return new HttpRequestMessage(method, BuildRelativeUri(relativePath));
@@ -663,6 +773,11 @@ public sealed class WebDavSyncService
             return left.Deleted ? 1 : -1;
         }
 
+        if (left.Purged != right.Purged)
+        {
+            return left.Purged ? 1 : -1;
+        }
+
         return string.Compare(left.PackageHash, right.PackageHash, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -673,7 +788,8 @@ public sealed class WebDavSyncService
                string.Equals(left.PackageHash, right.PackageHash, StringComparison.OrdinalIgnoreCase) &&
                string.Equals(left.PackagePath, right.PackagePath, StringComparison.OrdinalIgnoreCase) &&
                string.Equals(left.UpdatedAtUtc, right.UpdatedAtUtc, StringComparison.Ordinal) &&
-               left.Deleted == right.Deleted;
+               left.Deleted == right.Deleted &&
+               left.Purged == right.Purged;
     }
 
     private static bool IndexesEquivalent(WebDavSyncIndex left, WebDavSyncIndex right)
@@ -865,6 +981,8 @@ public sealed class WebDavSyncEntry
     public string UpdatedAtUtc { get; set; } = string.Empty;
 
     public bool Deleted { get; set; }
+
+    public bool Purged { get; set; }
 
     public bool LocalDeletionPending { get; set; }
 }

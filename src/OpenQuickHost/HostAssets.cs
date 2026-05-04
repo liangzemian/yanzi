@@ -5,6 +5,7 @@ namespace OpenQuickHost;
 public static class HostAssets
 {
     private const string DevWorkspacePath = @"F:\Desktop\kaifa\OpenQuickHost";
+    private const long MaxLogFileBytes = 8L * 1024 * 1024;
 
     public static string InstallRootPath => AppDomain.CurrentDomain.BaseDirectory;
 
@@ -16,6 +17,10 @@ public static class HostAssets
             "OpenQuickHost");
 
     public static string ExtensionsPath => ResolveDataDirectoryPath("Extensions");
+
+    public static string ExtensionRecycleBinPath => ResolveDataDirectoryPath("ExtensionRecycleBin");
+
+    public static string ExtensionRecycleBinIndexPath => Path.Combine(ExtensionRecycleBinPath, "index.json");
 
     public static string DocsPath => ResolveDataDirectoryPath("docs");
 
@@ -39,10 +44,17 @@ public static class HostAssets
 
     public static string SearchMemoryPath => ResolveDataFilePath("search-memory.json");
 
+    public static string EverythingRuntimeDataPath => ResolveDataDirectoryPath("EverythingRuntime");
+
+    public static string EverythingRuntimeConfigPath => Path.Combine(EverythingRuntimeDataPath, "Everything-Yanzi.ini");
+
+    public static string EverythingRuntimeDatabasePath => Path.Combine(EverythingRuntimeDataPath, "Everything-Yanzi.db");
+
     public static void EnsureCreated()
     {
         Directory.CreateDirectory(RootPath);
         Directory.CreateDirectory(ExtensionsPath);
+        Directory.CreateDirectory(ExtensionRecycleBinPath);
         Directory.CreateDirectory(DocsPath);
         Directory.CreateDirectory(LogsPath);
         Directory.CreateDirectory(SkillsPath);
@@ -103,6 +115,7 @@ public static class HostAssets
     public static void AppendLog(string message)
     {
         EnsureCreated();
+        RotateFileIfTooLarge(HostLogPath, MaxLogFileBytes);
         File.AppendAllText(
             HostLogPath,
             $"{Environment.NewLine}[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
@@ -116,9 +129,67 @@ public static class HostAssets
         }
 
         EnsureCreated();
+        RotateFileIfTooLarge(DevDebugLogPath, MaxLogFileBytes);
         File.AppendAllText(
             DevDebugLogPath,
             $"{Environment.NewLine}[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
+    }
+
+    public static IReadOnlyList<string> ReadHostLogTailLines(int maxBytes, int maxLines)
+    {
+        return ReadTailLines(HostLogPath, maxBytes, maxLines);
+    }
+
+    private static IReadOnlyList<string> ReadTailLines(string path, int maxBytes, int maxLines)
+    {
+        if (!File.Exists(path))
+        {
+            return [];
+        }
+
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        if (stream.Length <= 0)
+        {
+            return [];
+        }
+
+        var bytesToRead = (int)Math.Min(stream.Length, maxBytes);
+        stream.Seek(-bytesToRead, SeekOrigin.End);
+        using var reader = new StreamReader(stream);
+        if (bytesToRead < stream.Length)
+        {
+            _ = reader.ReadLine();
+        }
+
+        var content = reader.ReadToEnd();
+        return content
+            .Split([Environment.NewLine, "\n"], StringSplitOptions.RemoveEmptyEntries)
+            .TakeLast(maxLines)
+            .ToArray();
+    }
+
+    private static void RotateFileIfTooLarge(string path, long maxBytes)
+    {
+        try
+        {
+            var fileInfo = new FileInfo(path);
+            if (!fileInfo.Exists || fileInfo.Length <= maxBytes)
+            {
+                return;
+            }
+
+            var archivePath = path + ".1";
+            if (File.Exists(archivePath))
+            {
+                File.Delete(archivePath);
+            }
+
+            File.Move(path, archivePath);
+        }
+        catch
+        {
+            // Logging must never block normal app execution.
+        }
     }
 
     private static void EnsureFile(string path, string content)

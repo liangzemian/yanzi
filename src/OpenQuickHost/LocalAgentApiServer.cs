@@ -94,6 +94,12 @@ public sealed class LocalAgentApiServer : IDisposable
 
         try
         {
+            var path = request.Url?.AbsolutePath?.TrimEnd('/') ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                path = "/";
+            }
+
             if (request.HttpMethod == "OPTIONS")
             {
                 response.StatusCode = 204;
@@ -101,16 +107,31 @@ public sealed class LocalAgentApiServer : IDisposable
                 return;
             }
 
+            if (request.HttpMethod == "GET" && path == "/v1/store/extensions/status")
+            {
+                var ids = ParseIds(GetQueryString(request, "ids"));
+                var commands = LocalExtensionCatalog.LoadCommands()
+                    .Where(command => ids.Count == 0 || ids.Contains(command.ExtensionId))
+                    .Select(command => new
+                    {
+                        extensionId = command.ExtensionId,
+                        installed = true,
+                        version = command.DeclaredVersion,
+                        title = command.Title
+                    })
+                    .ToList();
+                await WriteJsonAsync(response, 200, new
+                {
+                    ok = true,
+                    items = commands
+                });
+                return;
+            }
+
             if (!IsAuthorized(request))
             {
                 await WriteJsonAsync(response, 401, new { error = "unauthorized" });
                 return;
-            }
-
-            var path = request.Url?.AbsolutePath?.TrimEnd('/') ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                path = "/";
             }
 
             if (request.HttpMethod == "GET" && path == "/health")
@@ -370,6 +391,20 @@ public sealed class LocalAgentApiServer : IDisposable
     private static string? GetQueryString(HttpListenerRequest request, string key)
     {
         return request.QueryString[key];
+    }
+
+    private static HashSet<string> ParseIds(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return value
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(Uri.UnescapeDataString)
+            .Where(static item => !string.IsNullOrWhiteSpace(item))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     private static async Task WriteJsonAsync(HttpListenerResponse response, int statusCode, object payload)

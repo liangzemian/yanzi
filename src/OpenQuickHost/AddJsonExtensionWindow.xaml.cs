@@ -213,9 +213,9 @@ public partial class AddJsonExtensionWindow : Window
             useManualJson: true);
     }
 
-    private void ManualCopyTestFailureButton_Click(object sender, RoutedEventArgs e)
+    private async void ManualCopyTestFailureButton_Click(object sender, RoutedEventArgs e)
     {
-        CopyTestFailureToClipboard(
+        await CopyTestFailureToClipboardAsync(
             ManualCopyTestFailureButton,
             ManualJsonInputBox.Text,
             ManualTestSummaryText.Text,
@@ -239,6 +239,8 @@ public partial class AddJsonExtensionWindow : Window
             "clipboard" => CreateClipboardTemplateJson(),
             "selection" => CreateSelectionContextTemplateJson(),
             "csharp" => CreateCSharpContextTemplateJson(),
+            "native" => CreateNativeWindowTemplateJson(),
+            "native-note" => CreateNativeNoteTemplateJson(),
             "timestamp" => CreateTimestampTemplateJson(),
             "translate" => CreateTranslateWorkbenchTemplateJson(),
             _ => CreateDesktopTemplateJson()
@@ -369,7 +371,7 @@ public partial class AddJsonExtensionWindow : Window
                 return;
             }
 
-            CopyTextToClipboard(_aiGuidePrompt);
+            await Task.Run(() => CopyTextToClipboard(_aiGuidePrompt));
             _aiPromptCopied = true;
             ErrorText.Visibility = Visibility.Collapsed;
             CopyAiGuidePromptButton.Content = "已复制，去问 AI";
@@ -399,8 +401,8 @@ public partial class AddJsonExtensionWindow : Window
         try
         {
             ErrorText.Visibility = Visibility.Collapsed;
-            var prompt = TryBuildManualCopyPrompt();
-            CopyTextToClipboard(prompt);
+            var prompt = await Task.Run(TryBuildManualCopyPrompt);
+            await Task.Run(() => CopyTextToClipboard(prompt));
 
             ManualCopyPromptButton.Content = "已复制";
             ManualCopyPromptButton.Background = GreenBrush;
@@ -622,7 +624,7 @@ public partial class AddJsonExtensionWindow : Window
         try
         {
             ErrorText.Visibility = Visibility.Collapsed;
-            var normalizedJson = ExtractJsonPayload(GetCurrentJsonText());
+            var normalizedJson = ResolveJsonForSave();
             _ = JsonSerializer.Deserialize<LocalExtensionManifest>(normalizedJson, CreateJsonOptions())
                 ?? throw new InvalidOperationException("JSON 解析失败。");
 
@@ -890,6 +892,24 @@ public partial class AddJsonExtensionWindow : Window
         }
 
         return _manualMode ? ManualJsonInputBox.Text : AiJsonInputBox.Text;
+    }
+
+    private string ResolveJsonForSave()
+    {
+        try
+        {
+            var manifestJson = JsonSerializer.Serialize(BuildManifestFromForm(), CreateJsonOptions());
+            if (!string.Equals(ManualJsonInputBox.Text, manifestJson, StringComparison.Ordinal))
+            {
+                ManualJsonInputBox.Text = manifestJson;
+            }
+
+            return ExtractJsonPayload(manifestJson);
+        }
+        catch
+        {
+            return ExtractJsonPayload(GetCurrentJsonText());
+        }
     }
 
     private void SyncJsonEditors(bool fromManual)
@@ -1187,10 +1207,13 @@ public partial class AddJsonExtensionWindow : Window
 
             var tempDirectory = Path.Combine(Path.GetTempPath(), "yanzi-extension-test", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDirectory);
+            var retainTempDirectory = false;
             try
             {
                 var command = BuildTestCommand(manifest, tempDirectory);
-                var result = await ScriptExtensionRunner.ExecuteAsync(command, "测试输入", "extension-editor-test");
+                var result = await Task.Run(
+                    () => ScriptExtensionRunner.ExecuteAsync(command, "测试输入", "extension-editor-test"),
+                    CancellationToken.None);
                 logBuilder.AppendLine($"执行结果：{(result.Success ? "成功" : "失败")}");
                 logBuilder.AppendLine($"退出码：{result.ExitCode}");
                 logBuilder.AppendLine();
@@ -1208,14 +1231,30 @@ public partial class AddJsonExtensionWindow : Window
                     logBuilder.AppendLine(hostLogTail);
                 }
 
+                var nativeWindowStarted = manifest.UiMode != null &&
+                                          string.Equals(manifest.UiMode, "native-window", StringComparison.OrdinalIgnoreCase) &&
+                                          string.Equals(result.Output, "native-window-started", StringComparison.Ordinal);
+                retainTempDirectory = nativeWindowStarted;
+                if (retainTempDirectory)
+                {
+                    HostAssets.AppendLog($"AddJson native-window test retained temp directory: {tempDirectory}");
+                }
+
                 return new TestExecutionResult(
                     result.Success,
-                    result.Success ? "测试通过，脚本已经成功执行。" : "测试未通过，请根据下方日志检查脚本。",
+                    result.Success
+                        ? (nativeWindowStarted
+                            ? "测试通过，原生窗口已启动，编辑器不会等待窗口关闭。"
+                            : "测试通过，脚本已经成功执行。")
+                        : "测试未通过，请根据下方日志检查脚本。",
                     logBuilder.ToString());
             }
             finally
             {
-                TryDeleteDirectory(tempDirectory);
+                if (!retainTempDirectory)
+                {
+                    TryDeleteDirectory(tempDirectory);
+                }
             }
         }
 
@@ -1280,6 +1319,7 @@ public partial class AddJsonExtensionWindow : Window
             copyFailureButton.BorderBrush = BorderStrongBrush;
             summaryText.Text = "正在执行测试，请稍等。";
             logTextBox.Text = string.Empty;
+            await Dispatcher.Yield(DispatcherPriority.Background);
 
             var result = await RunExtensionTestAsync(useManualJson);
             _testCompleted = true;
@@ -1308,7 +1348,7 @@ public partial class AddJsonExtensionWindow : Window
         }
     }
 
-    private void CopyTestFailureToClipboard(
+    private async Task CopyTestFailureToClipboardAsync(
         System.Windows.Controls.Button button,
         string json,
         string summary,
@@ -1316,8 +1356,8 @@ public partial class AddJsonExtensionWindow : Window
     {
         try
         {
-            var prompt = BuildTestFailurePrompt(json, summary, log);
-            CopyTextToClipboard(prompt);
+            var prompt = await Task.Run(() => BuildTestFailurePrompt(json, summary, log));
+            await Task.Run(() => CopyTextToClipboard(prompt));
             button.Content = "已复制";
             button.Background = GreenBrush;
             button.BorderBrush = GreenBrush;
@@ -1351,6 +1391,7 @@ public partial class AddJsonExtensionWindow : Window
             globalShortcut: manifest.GlobalShortcut,
             hotkeyBehavior: manifest.HotkeyBehavior,
             runtime: manifest.Runtime,
+            uiMode: manifest.UiMode,
             entryPoint: manifest.Entry,
             permissions: manifest.Permissions ?? [],
             entryMode: manifest.EntryMode,
@@ -1367,8 +1408,8 @@ public partial class AddJsonExtensionWindow : Window
                 return string.Empty;
             }
 
-            var lines = File.ReadAllLines(HostAssets.HostLogPath);
-            return string.Join(Environment.NewLine, lines.TakeLast(12));
+            var lines = HostAssets.ReadHostLogTailLines(128 * 1024, 12);
+            return string.Join(Environment.NewLine, lines);
         }
         catch
         {
@@ -1423,11 +1464,15 @@ public partial class AddJsonExtensionWindow : Window
         builder.AppendLine("- queryPrefixes：前缀数组，例如 [\"百度\", \"baidu\"]；搜索扩展会把后面的内容替换进 {query}，脚本 / 工作区扩展会把后面的内容传给 context.InputText");
         builder.AppendLine("- queryTargetTemplate：搜索模板，必须包含 {query}");
         builder.AppendLine("- runtime：脚本运行时，例如 \"csharp\" 或 \"powershell\"");
+        builder.AppendLine("- uiMode：可选；如果希望 C# 扩展自己弹原生窗口而不是寄生在宿主界面中，可写 \"native-window\"");
         builder.AppendLine("- entryMode：如果是内联脚本请写 \"inline\"");
         builder.AppendLine("- entry：如果是外部脚本文件，写入口文件名");
         builder.AppendLine("- permissions：权限数组，例如 [\"clipboard\", \"network\"]");
         builder.AppendLine("- 扩展脚本现在支持 context.Storage 本地/云端存储 helper：ReadTextAsync、WriteTextAsync、ReadJsonAsync<T>、WriteJsonAsync<T>");
         builder.AppendLine("- context.Storage 默认支持 scope = local、cloud、both；local 写入本地扩展数据目录，cloud / both 会通过宿主 API 写入坚果云 / WebDAV");
+        builder.AppendLine("- context.Storage.ReadTextAsync 的可用写法是：await context.Storage.ReadTextAsync(\"note.txt\", scope: \"both\")；不要传 defaultValue 参数");
+        builder.AppendLine("- context.Storage.WriteTextAsync 的可用写法是：await context.Storage.WriteTextAsync(\"note.txt\", content, scope: \"both\")");
+        builder.AppendLine("- 如果需要默认值，请自己写：var text = await context.Storage.ReadTextAsync(\"note.txt\", scope: \"both\") ?? string.Empty; 或用 try/catch，不要发明 defaultValue 参数");
         builder.AppendLine("- script.source：内联脚本源码");
         builder.AppendLine("- hostedViewXaml：如果要让宿主直接加载自定义 XAML 界面，请输出 hostedViewXaml");
         builder.AppendLine("- hostedViewXaml.xaml：填写可直接解析的 WPF XAML 字符串，根元素建议用 Grid、UserControl 或 Window");
@@ -1447,6 +1492,9 @@ public partial class AddJsonExtensionWindow : Window
         builder.AppendLine("- 组件的 bind 字段用于绑定到 state 路径");
         builder.AppendLine("- button.actions：当前支持 setState、runScript、loadStorage、saveStorage");
         builder.AppendLine("- 如果只是旧版简单双栏工作区，也可以输出 hostedView，但新方案优先用 hostedViewXaml 或 hostedViewV2");
+        builder.AppendLine("- 如果不想寄生在宿主界面中，而是希望扩展自己弹原生 WPF 窗口，可使用 C# 扩展并设置 uiMode = native-window；这类扩展仍然需要用 YanziActionContext 读取输入、状态和存储");
+        builder.AppendLine("- native-window 扩展中的 WPF 窗口代码必须在 STA 线程中创建和显示；如果手动 new Window / TextBox / Button，必须显式创建 STA 线程再 ShowDialog，不要直接在 RunAsync 当前线程里 new Window");
+        builder.AppendLine("- 如果需求是笔记、便签、编辑器、独立小应用，并且不寄生在宿主界面中，请优先参考模板 5.1 的原生笔记窗口，不要自己改写窗口启动结构");
         builder.AppendLine("- 不要输出 x:Class，也不要假设宿主会自动解析你自定义的事件处理函数");
         builder.AppendLine();
         builder.AppendLine("四、请优先参考这些模板思路");
@@ -1543,6 +1591,43 @@ public partial class AddJsonExtensionWindow : Window
         builder.AppendLine("  }");
         builder.AppendLine("}");
         builder.AppendLine();
+        builder.AppendLine("模板 5：原生窗口扩展（uiMode = native-window）");
+        builder.AppendLine("{");
+        builder.AppendLine("  \"id\": \"native-window-demo\",");
+        builder.AppendLine("  \"name\": \"原生窗口示例\",");
+        builder.AppendLine("  \"version\": \"0.1.0\",");
+        builder.AppendLine("  \"category\": \"效率工具\",");
+        builder.AppendLine("  \"description\": \"在独立 WPF 窗口中显示输入内容。\",");
+        builder.AppendLine("  \"keywords\": [\"native\", \"window\", \"wpf\"],");
+        builder.AppendLine("  \"icon\": \"mdi:application-outline\",");
+        builder.AppendLine("  \"runtime\": \"csharp\",");
+        builder.AppendLine("  \"uiMode\": \"native-window\",");
+        builder.AppendLine("  \"entryMode\": \"inline\",");
+        builder.AppendLine("  \"permissions\": [\"context.read\"],");
+        builder.AppendLine("  \"script\": {");
+        builder.AppendLine("    \"source\": \"using System;\\nusing System.Threading;\\nusing System.Threading.Tasks;\\nusing System.Windows;\\nusing System.Windows.Controls;\\nusing OpenQuickHost.CSharpRuntime;\\n\\npublic static class YanziAction\\n{\\n    public static Task<string> RunAsync(YanziActionContext context)\\n    {\\n        var input = context.InputText ?? string.Empty;\\n        Exception? error = null;\\n\\n        var thread = new Thread(() =>\\n        {\\n            try\\n            {\\n                var textBlock = new TextBlock\\n                {\\n                    Text = string.IsNullOrWhiteSpace(input) ? \\\"这是一个独立原生窗口示例。\\\" : \\\"输入内容：\\\" + input,\\n                    Margin = new Thickness(24),\\n                    TextWrapping = TextWrapping.Wrap,\\n                    FontSize = 16\\n                };\\n\\n                var closeButton = new Button\\n                {\\n                    Content = \\\"关闭\\\",\\n                    Width = 88,\\n                    Height = 32,\\n                    Margin = new Thickness(24, 0, 24, 24),\\n                    HorizontalAlignment = HorizontalAlignment.Right\\n                };\\n\\n                var panel = new DockPanel();\\n                DockPanel.SetDock(closeButton, Dock.Bottom);\\n                panel.Children.Add(closeButton);\\n                panel.Children.Add(textBlock);\\n\\n                var window = new Window\\n                {\\n                    Title = \\\"原生窗口示例\\\",\\n                    Width = 520,\\n                    Height = 320,\\n                    MinWidth = 420,\\n                    MinHeight = 240,\\n                    Content = panel,\\n                    WindowStartupLocation = WindowStartupLocation.CenterScreen\\n                };\\n\\n                closeButton.Click += (_, _) => window.Close();\\n                window.ShowDialog();\\n            }\\n            catch (Exception ex)\\n            {\\n                error = ex;\\n            }\\n        });\\n\\n        thread.SetApartmentState(ApartmentState.STA);\\n        thread.IsBackground = false;\\n        thread.Start();\\n        thread.Join();\\n\\n        if (error != null)\\n        {\\n            throw error;\\n        }\\n\\n        return Task.FromResult(\\\"窗口已关闭\\\");\\n    }\\n}\"");
+        builder.AppendLine("  }");
+        builder.AppendLine("}");
+        builder.AppendLine();
+        builder.AppendLine("模板 5.1：原生笔记窗口（带存储）");
+        builder.AppendLine("注意：这类扩展必须直接沿用下面的 STA 线程结构和 storage 调用方式；不要改成在 RunAsync 当前线程里直接 new Window，也不要给 ReadTextAsync 传 defaultValue。");
+        builder.AppendLine("{");
+        builder.AppendLine("  \"id\": \"note-native-app\",");
+        builder.AppendLine("  \"name\": \"独立笔记\",");
+        builder.AppendLine("  \"version\": \"0.1.0\",");
+        builder.AppendLine("  \"category\": \"效率工具\",");
+        builder.AppendLine("  \"description\": \"在独立窗口中创建和保存笔记。\",");
+        builder.AppendLine("  \"keywords\": [\"笔记\", \"便签\", \"native\"],");
+        builder.AppendLine("  \"icon\": \"mdi:notebook-edit-outline\",");
+        builder.AppendLine("  \"runtime\": \"csharp\",");
+        builder.AppendLine("  \"uiMode\": \"native-window\",");
+        builder.AppendLine("  \"entryMode\": \"inline\",");
+        builder.AppendLine("  \"permissions\": [\"context.read\", \"storage\"],");
+        builder.AppendLine("  \"script\": {");
+        builder.AppendLine("    \"source\": \"using System;\\nusing System.Threading;\\nusing System.Threading.Tasks;\\nusing System.Windows;\\nusing System.Windows.Controls;\\nusing System.Windows.Media;\\nusing OpenQuickHost.CSharpRuntime;\\n\\npublic static class YanziAction\\n{\\n    public static async Task<string> RunAsync(YanziActionContext context)\\n    {\\n        var storage = context.Storage;\\n        string noteContent;\\n        try\\n        {\\n            noteContent = await storage.ReadTextAsync(\\\"note.txt\\\", scope: \\\"both\\\") ?? string.Empty;\\n        }\\n        catch\\n        {\\n            noteContent = string.Empty;\\n        }\\n\\n        Exception? error = null;\\n        var thread = new Thread(() =>\\n        {\\n            try\\n            {\\n                var window = new Window\\n                {\\n                    Title = \\\"独立笔记\\\",\\n                    Width = 600,\\n                    Height = 500,\\n                    MinWidth = 400,\\n                    MinHeight = 300,\\n                    Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),\\n                    WindowStartupLocation = WindowStartupLocation.CenterScreen\\n                };\\n\\n                var textBox = new TextBox\\n                {\\n                    Text = noteContent,\\n                    AcceptsReturn = true,\\n                    TextWrapping = TextWrapping.Wrap,\\n                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,\\n                    Background = new SolidColorBrush(Color.FromRgb(20, 20, 20)),\\n                    Foreground = Brushes.White,\\n                    FontSize = 14,\\n                    Padding = new Thickness(12),\\n                    Margin = new Thickness(10),\\n                    MinHeight = 360\\n                };\\n\\n                var saveButton = new Button\\n                {\\n                    Content = \\\"保存笔记\\\",\\n                    Margin = new Thickness(10, 0, 10, 10),\\n                    Height = 32,\\n                    Background = new SolidColorBrush(Color.FromRgb(60, 60, 80)),\\n                    Foreground = Brushes.White,\\n                    BorderThickness = new Thickness(0)\\n                };\\n\\n                var statusText = new TextBlock\\n                {\\n                    Text = \\\"就绪\\\",\\n                    Margin = new Thickness(10),\\n                    Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 150)),\\n                    FontSize = 12\\n                };\\n\\n                saveButton.Click += async (_, _) =>\\n                {\\n                    await storage.WriteTextAsync(\\\"note.txt\\\", textBox.Text, scope: \\\"both\\\");\\n                    statusText.Text = \\\"已保存到本地和云端\\\";\\n                };\\n\\n                var panel = new StackPanel();\\n                panel.Children.Add(textBox);\\n                panel.Children.Add(saveButton);\\n                panel.Children.Add(statusText);\\n                window.Content = panel;\\n                window.ShowDialog();\\n            }\\n            catch (Exception ex)\\n            {\\n                error = ex;\\n            }\\n        });\\n\\n        thread.SetApartmentState(ApartmentState.STA);\\n        thread.IsBackground = false;\\n        thread.Start();\\n        thread.Join();\\n\\n        if (error != null)\\n        {\\n            throw error;\\n        }\\n\\n        return \\\"笔记窗口已关闭\\\";\\n    }\\n}\"");
+        builder.AppendLine("  }");
+        builder.AppendLine("}");
+        builder.AppendLine();
         builder.AppendLine();
         builder.AppendLine("五、最终要求");
         builder.AppendLine("请结合我的需求，只返回一个包含最终 JSON 的 ```json 代码块，不要返回多个方案，不要附加说明。");
@@ -1580,8 +1665,13 @@ public partial class AddJsonExtensionWindow : Window
         builder.AppendLine("11. oqh:HostedViewBridge.Action 当前支持 close、setState、runScript、loadStorage、saveStorage；setState 支持 value、valueFrom、append、separator");
         builder.AppendLine("12. 如需在窗口打开时自动加载本地或坚果云数据，可在根元素上使用 oqh:HostedViewBridge.LoadedAction");
         builder.AppendLine("13. 脚本扩展可使用 context.Storage.ReadTextAsync / WriteTextAsync / ReadJsonAsync / WriteJsonAsync，scope 支持 local、cloud、both");
+        builder.AppendLine("13.1 context.Storage.ReadTextAsync 的可用写法是 await context.Storage.ReadTextAsync(\"note.txt\", scope: \"both\")；没有 defaultValue 参数");
+        builder.AppendLine("13.2 如果需要默认值，请在脚本里用 ?? string.Empty 或 try/catch 处理，不要自行添加不存在的参数");
         builder.AppendLine("14. 视图脚本读状态优先用 context.State，更新状态优先用 await context.SetStateAsync(...)；兼容写法 context.ViewState / await context.UpdateView() 也支持");
         builder.AppendLine("15. 如果只是简单表单或双栏工作区，也可以使用 hostedViewV2，但自定义界面优先用 hostedViewXaml");
+        builder.AppendLine("16. 如果是原生窗口扩展，可使用 uiMode = native-window，并在 C# 脚本里直接创建 WPF Window / TextBox / Button 等界面元素；不要同时再输出 hostedViewXaml");
+        builder.AppendLine("16.1 原生窗口扩展中的 WPF 窗口创建和 ShowDialog 必须运行在 STA 线程；如果手动创建 Window，请显式 new Thread(...)、SetApartmentState(ApartmentState.STA) 再启动");
+        builder.AppendLine("16.2 如果当前 JSON 是笔记、便签、编辑器这类独立原生窗口，请优先保留 native-window 模板里的线程骨架，只改业务逻辑和控件内容，不要改窗口启动方式");
         builder.AppendLine();
         builder.AppendLine("三、字段和能力提醒");
         builder.AppendLine("- id：扩展唯一标识，只能英文小写、数字、短横线");
@@ -1873,6 +1963,235 @@ public static class YanziAction
             Environment.NewLine +
             "输入:" + Environment.NewLine +
             input);
+    }
+}
+"""
+            }
+        };
+
+        return JsonSerializer.Serialize(manifest, CreateJsonOptions());
+    }
+
+    private static string CreateNativeWindowTemplateJson()
+    {
+        var manifest = new LocalExtensionManifest
+        {
+            Id = $"native-window-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}",
+            Name = "原生窗口示例",
+            Version = "0.1.0",
+            Category = "效率工具",
+            Description = "在独立原生窗口中显示输入内容。",
+            Keywords = ["native", "window", "wpf", "窗口"],
+            Runtime = "csharp",
+            UiMode = "native-window",
+            EntryMode = "inline",
+            Permissions = ["context.read"],
+            Icon = "mdi:application-outline",
+            QueryPrefixes = ["窗口", "window"],
+            Script = new LocalExtensionInlineScriptManifest
+            {
+                Source =
+"""
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using OpenQuickHost.CSharpRuntime;
+
+public static class YanziAction
+{
+    public static Task<string> RunAsync(YanziActionContext context)
+    {
+        var input = context.InputText ?? string.Empty;
+        Exception? error = null;
+
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var textBlock = new TextBlock
+                {
+                    Text = string.IsNullOrWhiteSpace(input) ? "这是一个独立原生窗口示例。" : "输入内容：" + input,
+                    Margin = new Thickness(24),
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 16
+                };
+
+                var closeButton = new Button
+                {
+                    Content = "关闭",
+                    Width = 88,
+                    Height = 32,
+                    Margin = new Thickness(24, 0, 24, 24),
+                    HorizontalAlignment = HorizontalAlignment.Right
+                };
+
+                var panel = new DockPanel();
+                DockPanel.SetDock(closeButton, Dock.Bottom);
+                panel.Children.Add(closeButton);
+                panel.Children.Add(textBlock);
+
+                var window = new Window
+                {
+                    Title = "原生窗口示例",
+                    Width = 520,
+                    Height = 320,
+                    MinWidth = 420,
+                    MinHeight = 240,
+                    Content = panel,
+                    WindowStartupLocation = WindowStartupLocation.CenterScreen
+                };
+
+                closeButton.Click += (_, _) => window.Close();
+                window.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = false;
+        thread.Start();
+        thread.Join();
+
+        if (error != null)
+        {
+            throw error;
+        }
+
+        return Task.FromResult("窗口已关闭");
+    }
+}
+"""
+            }
+        };
+
+        return JsonSerializer.Serialize(manifest, CreateJsonOptions());
+    }
+
+    private static string CreateNativeNoteTemplateJson()
+    {
+        var manifest = new LocalExtensionManifest
+        {
+            Id = $"native-note-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}",
+            Name = "独立笔记",
+            Version = "0.1.0",
+            Category = "效率工具",
+            Description = "在独立窗口中创建和保存笔记。",
+            Keywords = ["笔记", "便签", "native", "编辑器"],
+            Runtime = "csharp",
+            UiMode = "native-window",
+            EntryMode = "inline",
+            Permissions = ["context.read", "storage"],
+            Icon = "mdi:notebook-edit-outline",
+            Script = new LocalExtensionInlineScriptManifest
+            {
+                Source =
+"""
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using OpenQuickHost.CSharpRuntime;
+
+public static class YanziAction
+{
+    public static async Task<string> RunAsync(YanziActionContext context)
+    {
+        var storage = context.Storage;
+        string noteContent;
+        try
+        {
+            noteContent = await storage.ReadTextAsync("note.txt", scope: "both") ?? string.Empty;
+        }
+        catch
+        {
+            noteContent = string.Empty;
+        }
+
+        Exception? error = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new Window
+                {
+                    Title = "独立笔记",
+                    Width = 600,
+                    Height = 500,
+                    MinWidth = 400,
+                    MinHeight = 300,
+                    Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
+                    WindowStartupLocation = WindowStartupLocation.CenterScreen
+                };
+
+                var textBox = new TextBox
+                {
+                    Text = noteContent,
+                    AcceptsReturn = true,
+                    TextWrapping = TextWrapping.Wrap,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    Background = new SolidColorBrush(Color.FromRgb(20, 20, 20)),
+                    Foreground = Brushes.White,
+                    FontSize = 14,
+                    Padding = new Thickness(12),
+                    Margin = new Thickness(10),
+                    MinHeight = 360
+                };
+
+                var saveButton = new Button
+                {
+                    Content = "保存笔记",
+                    Margin = new Thickness(10, 0, 10, 10),
+                    Height = 32,
+                    Background = new SolidColorBrush(Color.FromRgb(60, 60, 80)),
+                    Foreground = Brushes.White,
+                    BorderThickness = new Thickness(0)
+                };
+
+                var statusText = new TextBlock
+                {
+                    Text = "就绪",
+                    Margin = new Thickness(10),
+                    Foreground = new SolidColorBrush(Color.FromRgb(150, 150, 150)),
+                    FontSize = 12
+                };
+
+                saveButton.Click += async (_, _) =>
+                {
+                    await storage.WriteTextAsync("note.txt", textBox.Text, scope: "both");
+                    statusText.Text = "已保存到本地和云端";
+                };
+
+                var panel = new StackPanel();
+                panel.Children.Add(textBox);
+                panel.Children.Add(saveButton);
+                panel.Children.Add(statusText);
+                window.Content = panel;
+                window.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                error = ex;
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.IsBackground = false;
+        thread.Start();
+        thread.Join();
+
+        if (error != null)
+        {
+            throw error;
+        }
+
+        return "笔记窗口已关闭";
     }
 }
 """

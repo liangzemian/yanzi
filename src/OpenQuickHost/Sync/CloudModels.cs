@@ -47,6 +47,18 @@ public sealed class ExtensionListResponse
     public IReadOnlyList<CloudExtensionRecord> Items { get; init; } = [];
 }
 
+public sealed class UploadIconResponse
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; init; }
+
+    [JsonPropertyName("extensionId")]
+    public string ExtensionId { get; init; } = string.Empty;
+
+    [JsonPropertyName("icon_url")]
+    public string IconUrl { get; init; } = string.Empty;
+}
+
 public sealed class CloudExtensionRecord
 {
     [JsonPropertyName("extension_id")]
@@ -66,6 +78,18 @@ public sealed class CloudExtensionRecord
 
     [JsonPropertyName("archive_sha256")]
     public string? ArchiveSha256 { get; init; }
+
+    [JsonPropertyName("publisher_user_id")]
+    public string PublisherUserId { get; init; } = string.Empty;
+
+    [JsonPropertyName("publisher_username")]
+    public string PublisherUsername { get; init; } = string.Empty;
+
+    [JsonPropertyName("published_at")]
+    public string PublishedAt { get; init; } = string.Empty;
+
+    [JsonPropertyName("is_published")]
+    public int IsPublished { get; init; } = 1;
 
     [JsonPropertyName("updated_at")]
     public string UpdatedAt { get; init; } = string.Empty;

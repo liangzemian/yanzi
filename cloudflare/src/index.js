@@ -1,6 +1,35 @@
 const TOKEN_TTL_SECONDS = 60 * 60 * 12;
 const PASSWORD_ITERATIONS = 100000;
 const VERIFICATION_CODE_TTL_MINUTES = 10;
+const PUBLIC_SITE_ORIGIN = "https://yanzi.luoluoluo.cc.cd";
+const PUBLIC_STORE_EXTENSIONS = [
+  {
+    extension_id: "open-yanzi-homepage",
+    display_name: "打开燕子官网",
+    latest_version: "1.0.0",
+    description: "一键打开燕子官网首页。",
+    category: "测试扩展",
+    keywords: ["yanzi", "官网", "测试", "open-yanzi-homepage"],
+    icon: `${PUBLIC_SITE_ORIGIN}/assets/logo-white-transparent.png`,
+    package_path: "/downloads/open-yanzi-homepage.zip"
+  },
+  {
+    extension_id: "open-yanzi-github",
+    display_name: "打开燕子 GitHub",
+    latest_version: "1.0.0",
+    description: "一键打开燕子 GitHub 仓库。",
+    category: "测试扩展",
+    keywords: ["yanzi", "github", "测试", "open-yanzi-github"],
+    icon: "https://github.githubassets.com/favicons/favicon.png",
+    package_path: "/downloads/open-yanzi-github.zip"
+  }
+];
+const PUBLIC_STORE_EXTENSION_MAP = new Map(
+  PUBLIC_STORE_EXTENSIONS.map((item) => [item.extension_id, item])
+);
+const PUBLIC_STORE_EXTENSION_IDS_SQL = PUBLIC_STORE_EXTENSIONS
+  .map((item) => `'${item.extension_id.replace(/'/g, "''")}'`)
+  .join(", ");
 
 export default {
   async fetch(request, env) {
@@ -369,26 +398,252 @@ async function handleRequest(request, env) {
   }
 
   if (url.pathname === "/v1/extensions" && request.method === "GET") {
-    const rows = await env.DB.prepare(
+    const search = String(url.searchParams.get("q") || "").trim().toLowerCase();
+    const requestedPage = Number.parseInt(String(url.searchParams.get("page") || "1"), 10);
+    const requestedPageSize = Number.parseInt(String(url.searchParams.get("pageSize") || "24"), 10);
+    const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const pageSize = Number.isFinite(requestedPageSize)
+      ? Math.max(1, Math.min(requestedPageSize, 60))
+      : 24;
+    const publicExtensionRows = await env.DB.prepare(
       `select
         extension_id,
         display_name,
         latest_version,
         manifest_json,
+        icon_key,
         archive_key,
         archive_sha256,
-        updated_at
+        publisher_user_id,
+        publisher_username,
+        published_at,
+        is_published,
+        updated_at,
+        (
+          select count(*)
+          from user_extensions ue
+          where ue.extension_id = extensions.extension_id
+            and ue.enabled = 1
+        ) as install_count
       from extensions
-      order by updated_at desc`
-    ).all();
+      where extension_id in (${PUBLIC_STORE_EXTENSIONS.map(() => "?").join(", ")})`
+    )
+      .bind(...PUBLIC_STORE_EXTENSIONS.map((item) => item.extension_id))
+      .all();
+    const publicRowMap = new Map(
+      (publicExtensionRows.results ?? []).map((row) => [row.extension_id, row])
+    );
+    const publicItems = PUBLIC_STORE_EXTENSIONS
+      .map((definition) => serializeExtensionListItem(url, publicRowMap.get(definition.extension_id) || null, definition))
+      .filter((item) => matchesStoreSearch(item, search));
+    const publicCount = publicItems.length;
+    const start = (page - 1) * pageSize;
 
-    return json({ items: rows.results ?? [] });
+    const dynamicWhere = search
+      ? `where is_published = 1
+           and extension_id not in (${PUBLIC_STORE_EXTENSION_IDS_SQL})
+           and extension_id not in ('yanzi-webdav-settings', 'yanzi-quickpanel-settings')
+           and lower(ifnull(manifest_json, '')) not like '%"category":"系统配置"%'
+           and (
+             lower(extension_id) like ?
+             or lower(display_name) like ?
+             or lower(ifnull(manifest_json, '')) like ?
+           )`
+      : `where is_published = 1
+           and extension_id not in (${PUBLIC_STORE_EXTENSION_IDS_SQL})
+           and extension_id not in ('yanzi-webdav-settings', 'yanzi-quickpanel-settings')
+           and lower(ifnull(manifest_json, '')) not like '%"category":"系统配置"%'`;
+    const dynamicBindings = search
+      ? [`%${search}%`, `%${search}%`, `%${search}%`]
+      : [];
+    const dynamicCountQuery = await env.DB.prepare(
+      `select count(*) as total
+       from extensions
+       ${dynamicWhere}`
+    )
+      .bind(...dynamicBindings)
+      .first();
+    const dynamicTotal = Number(dynamicCountQuery?.total || 0);
+    const total = publicCount + dynamicTotal;
+    const totalPages = Math.max(1, Math.ceil(Math.max(total, 1) / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const safeStart = (safePage - 1) * pageSize;
+
+    const publicSlice = publicItems.slice(safeStart, safeStart + pageSize);
+    const remainingSlots = pageSize - publicSlice.length;
+    const dynamicOffset = Math.max(0, safeStart - publicCount);
+    let dynamicItems = [];
+
+    if (remainingSlots > 0)
+    {
+      const rows = await env.DB.prepare(
+        `select
+          extension_id,
+          display_name,
+          latest_version,
+          manifest_json,
+          icon_key,
+          archive_key,
+          archive_sha256,
+          publisher_user_id,
+          publisher_username,
+          published_at,
+          is_published,
+          updated_at,
+          (
+            select count(*)
+            from user_extensions ue
+            where ue.extension_id = extensions.extension_id
+              and ue.enabled = 1
+          ) as install_count
+        from extensions
+        ${dynamicWhere}
+        order by updated_at desc
+        limit ?
+        offset ?`
+      )
+        .bind(...dynamicBindings, remainingSlots, dynamicOffset)
+        .all();
+
+      dynamicItems = (rows.results ?? [])
+        .filter((row) => !PUBLIC_STORE_EXTENSION_MAP.has(row.extension_id))
+        .map((row) => serializeExtensionListItem(url, row));
+    }
+
+    const pagedItems = [...publicSlice, ...dynamicItems];
+
+    return json({
+      items: pagedItems,
+      page: safePage,
+      page_size: pageSize,
+      total,
+      total_pages: totalPages,
+      has_more: safePage < totalPages
+    });
   }
 
   const extensionMatch = url.pathname.match(/^\/v1\/extensions\/([^/]+)$/);
-  if (extensionMatch && request.method === "PUT") {
-    await requireAuth(request, env);
+  if (extensionMatch) {
     const extensionId = decodeURIComponent(extensionMatch[1]);
+
+    if (request.method === "GET") {
+      const publicDefinition = PUBLIC_STORE_EXTENSION_MAP.get(extensionId);
+      if (publicDefinition) {
+        const row = await env.DB.prepare(
+          `select
+            extension_id,
+            display_name,
+            latest_version,
+            manifest_json,
+            icon_key,
+            archive_key,
+            archive_sha256,
+            publisher_user_id,
+            publisher_username,
+            published_at,
+            is_published,
+            updated_at,
+            (
+              select count(*)
+              from user_extensions ue
+              where ue.extension_id = extensions.extension_id
+                and ue.enabled = 1
+            ) as install_count
+          from extensions
+          where extension_id = ?`
+        )
+          .bind(extensionId)
+          .first();
+
+        return json(serializeStoreExtensionRecord(url, row, publicDefinition));
+      }
+
+      const row = await env.DB.prepare(
+        `select
+          extension_id,
+          display_name,
+          latest_version,
+          manifest_json,
+          icon_key,
+          archive_key,
+          archive_sha256,
+          publisher_user_id,
+          publisher_username,
+          published_at,
+          is_published,
+          updated_at,
+          (
+            select count(*)
+            from user_extensions ue
+            where ue.extension_id = extensions.extension_id
+              and ue.enabled = 1
+          ) as install_count
+        from extensions
+        where extension_id = ?`
+      )
+        .bind(extensionId)
+        .first();
+
+      if (!row) {
+        return json({ error: "not_found", message: "Extension not found" }, 404);
+      }
+
+      if (!isStoreVisibleExtension(row)) {
+        return json({ error: "not_found", message: "Extension not found" }, 404);
+      }
+
+      return json(serializeExtensionRecord(url, row));
+    }
+
+    if (request.method !== "PUT" && request.method !== "DELETE") {
+      return json({ error: "method_not_allowed", message: "Method not allowed" }, 405);
+    }
+
+    if (request.method === "DELETE") {
+      const auth = await requireAuth(request, env);
+      const existing = await env.DB.prepare(
+        `select publisher_user_id
+         from extensions
+         where extension_id = ?`
+      )
+        .bind(extensionId)
+        .first();
+
+      if (!existing) {
+        return json({ error: "not_found", message: "Extension not found" }, 404);
+      }
+
+      if (!existing.publisher_user_id ||
+          String(existing.publisher_user_id) !== auth.userId) {
+        throw new HttpError(403, "forbidden", "Only the original publisher can unpublish this extension");
+      }
+
+      await env.DB.prepare(
+        `update extensions
+         set is_published = 0,
+             updated_at = ?
+         where extension_id = ?`
+      )
+        .bind(isoNow(), extensionId)
+        .run();
+
+      return json({ ok: true, extensionId });
+    }
+
+    const auth = await requireAuth(request, env);
+    const existing = await env.DB.prepare(
+      `select publisher_user_id
+       from extensions
+       where extension_id = ?`
+    )
+      .bind(extensionId)
+      .first();
+
+    if (existing?.publisher_user_id &&
+        String(existing.publisher_user_id) !== auth.userId) {
+      throw new HttpError(403, "forbidden", "Only the original publisher can update this extension");
+    }
+
     const payload = await readJson(request);
     const now = isoNow();
     const manifest = payload.manifest ?? payload;
@@ -403,12 +658,20 @@ async function handleRequest(request, env) {
         display_name,
         latest_version,
         manifest_json,
+        publisher_user_id,
+        publisher_username,
+        published_at,
+        is_published,
         updated_at
-      ) values (?, ?, ?, ?, ?)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(extension_id) do update set
         display_name = excluded.display_name,
         latest_version = excluded.latest_version,
         manifest_json = excluded.manifest_json,
+        publisher_user_id = coalesce(extensions.publisher_user_id, excluded.publisher_user_id),
+        publisher_username = excluded.publisher_username,
+        published_at = coalesce(extensions.published_at, excluded.published_at),
+        is_published = 1,
         updated_at = excluded.updated_at`
     )
       .bind(
@@ -416,6 +679,10 @@ async function handleRequest(request, env) {
         displayName,
         latestVersion,
         JSON.stringify(manifest),
+        auth.userId,
+        auth.username,
+        now,
+        1,
         now
       )
       .run();
@@ -427,10 +694,118 @@ async function handleRequest(request, env) {
     });
   }
 
+  const iconUploadMatch = url.pathname.match(/^\/v1\/extensions\/([^/]+)\/icon$/);
+  if (iconUploadMatch && request.method === "PUT") {
+    const auth = await requireAuth(request, env);
+    const extensionId = decodeURIComponent(iconUploadMatch[1]);
+    const existing = await env.DB.prepare(
+      `select publisher_user_id
+       from extensions
+       where extension_id = ?`
+    )
+      .bind(extensionId)
+      .first();
+
+    if (existing?.publisher_user_id &&
+        String(existing.publisher_user_id) !== auth.userId) {
+      throw new HttpError(403, "forbidden", "Only the original publisher can upload this extension icon");
+    }
+
+    const version = (url.searchParams.get("version") || "0.0.0").slice(0, 50);
+    const filename = String(url.searchParams.get("filename") || "icon.png").slice(0, 200);
+    const bytes = await request.arrayBuffer();
+    if (!bytes || bytes.byteLength === 0) {
+      throw new HttpError(400, "invalid_icon", "Icon payload is empty");
+    }
+
+    const contentType = request.headers.get("content-type") || "application/octet-stream";
+    const extension = resolveIconExtension(filename, contentType);
+    const iconKey = `extension-icons/${extensionId}/${version}${extension}`;
+
+    await env.PACKAGES.put(iconKey, bytes, {
+      httpMetadata: {
+        contentType
+      },
+      customMetadata: {
+        extensionId,
+        version
+      }
+    });
+
+    await env.DB.prepare(
+      `insert into extensions (
+        extension_id,
+        display_name,
+        latest_version,
+        icon_key,
+        publisher_user_id,
+        publisher_username,
+        published_at,
+        is_published,
+        updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      on conflict(extension_id) do update set
+        latest_version = excluded.latest_version,
+        icon_key = excluded.icon_key,
+        publisher_user_id = coalesce(extensions.publisher_user_id, excluded.publisher_user_id),
+        publisher_username = excluded.publisher_username,
+        published_at = coalesce(extensions.published_at, excluded.published_at),
+        is_published = 1,
+        updated_at = excluded.updated_at`
+    )
+      .bind(extensionId, extensionId, version, iconKey, auth.userId, auth.username, isoNow(), 1, isoNow())
+      .run();
+
+    return json({
+      ok: true,
+      extensionId,
+      icon_url: buildExtensionIconUrl(url, extensionId, Date.now())
+    });
+  }
+
+  const iconDownloadMatch = url.pathname.match(/^\/v1\/extensions\/([^/]+)\/icon$/);
+  if (iconDownloadMatch && request.method === "GET") {
+    const extensionId = decodeURIComponent(iconDownloadMatch[1]);
+    const row = await env.DB.prepare(
+      `select icon_key
+       from extensions
+       where extension_id = ?`
+    )
+      .bind(extensionId)
+      .first();
+
+    if (!row?.icon_key) {
+      return json({ error: "not_found", message: "Icon not found" }, 404);
+    }
+
+    const object = await env.PACKAGES.get(row.icon_key);
+    if (!object) {
+      return json({ error: "not_found", message: "Stored icon is missing" }, 404);
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("cache-control", "public, max-age=3600");
+    return withCors(new Response(object.body, { headers }));
+  }
+
   const archiveUploadMatch = url.pathname.match(/^\/v1\/extensions\/([^/]+)\/archive$/);
   if (archiveUploadMatch && request.method === "PUT") {
-    await requireAuth(request, env);
+    const auth = await requireAuth(request, env);
     const extensionId = decodeURIComponent(archiveUploadMatch[1]);
+    const existing = await env.DB.prepare(
+      `select publisher_user_id
+       from extensions
+       where extension_id = ?`
+    )
+      .bind(extensionId)
+      .first();
+
+    if (existing?.publisher_user_id &&
+        String(existing.publisher_user_id) !== auth.userId) {
+      throw new HttpError(403, "forbidden", "Only the original publisher can upload this extension archive");
+    }
+
     const version = (url.searchParams.get("version") || "0.0.0").slice(0, 50);
     const bytes = await request.arrayBuffer();
     const sha256 = await digestHex(bytes);
@@ -454,15 +829,23 @@ async function handleRequest(request, env) {
         latest_version,
         archive_key,
         archive_sha256,
+        publisher_user_id,
+        publisher_username,
+        published_at,
+        is_published,
         updated_at
-      ) values (?, ?, ?, ?, ?, ?)
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       on conflict(extension_id) do update set
         latest_version = excluded.latest_version,
         archive_key = excluded.archive_key,
         archive_sha256 = excluded.archive_sha256,
+        publisher_user_id = coalesce(extensions.publisher_user_id, excluded.publisher_user_id),
+        publisher_username = excluded.publisher_username,
+        published_at = coalesce(extensions.published_at, excluded.published_at),
+        is_published = 1,
         updated_at = excluded.updated_at`
     )
-      .bind(extensionId, extensionId, version, archiveKey, sha256, isoNow())
+      .bind(extensionId, extensionId, version, archiveKey, sha256, auth.userId, auth.username, isoNow(), 1, isoNow())
       .run();
 
     return json({
@@ -788,6 +1171,219 @@ async function sendAuthEmail(env, email, subject, html) {
     const body = await response.text();
     throw new HttpError(502, "email_delivery_failed", `Verification email failed: ${body}`);
   }
+}
+
+function serializeExtensionRecord(url, row) {
+  const manifest = parseManifestJson(row.manifest_json);
+  return {
+    extension_id: row.extension_id,
+    display_name: row.display_name,
+    latest_version: row.latest_version,
+    manifest_json: row.manifest_json,
+    archive_key: row.archive_key,
+    archive_sha256: row.archive_sha256,
+    icon_key: row.icon_key || "",
+    publisher_user_id: row.publisher_user_id || "",
+    publisher_username: row.publisher_username || "",
+    published_at: row.published_at || "",
+    is_published: Number(row.is_published ?? 1),
+    updated_at: row.updated_at,
+    install_count: Number(row.install_count || 0),
+    description: manifest.description || "",
+    category: manifest.category || "扩展",
+    icon: resolveStoreIcon(url, row, manifest.icon || "", row.extension_id),
+    keywords: Array.isArray(manifest.keywords) ? manifest.keywords : [],
+    manifest,
+    archive_download_url: row.archive_key
+      ? `${url.origin}/v1/extensions/${encodeURIComponent(row.extension_id)}/archive`
+      : null,
+    install_protocol_url: row.archive_key
+      ? buildInstallProtocolUrl(
+          row.extension_id,
+          `${url.origin}/v1/extensions/${encodeURIComponent(row.extension_id)}/archive`
+        )
+      : null
+  };
+}
+
+function serializeExtensionListItem(url, row, publicDefinition = null) {
+  if (publicDefinition) {
+    const full = serializeStoreExtensionRecord(url, row, publicDefinition);
+    return {
+      extension_id: full.extension_id,
+      display_name: full.display_name,
+      latest_version: full.latest_version,
+      publisher_user_id: full.publisher_user_id,
+      publisher_username: full.publisher_username,
+      published_at: full.published_at,
+      is_published: full.is_published,
+      install_count: full.install_count,
+      description: full.description,
+      category: full.category,
+      icon: full.icon,
+      keywords: full.keywords
+    };
+  }
+
+  const full = serializeExtensionRecord(url, row);
+  return {
+    extension_id: full.extension_id,
+    display_name: full.display_name,
+    latest_version: full.latest_version,
+    publisher_user_id: full.publisher_user_id,
+    publisher_username: full.publisher_username,
+    published_at: full.published_at,
+    is_published: full.is_published,
+    install_count: full.install_count,
+    description: full.description,
+    category: full.category,
+    icon: full.icon,
+    keywords: full.keywords
+  };
+}
+
+function matchesStoreSearch(item, search) {
+  if (!search) {
+    return true;
+  }
+
+  const haystacks = [
+    item.extension_id,
+    item.display_name,
+    item.latest_version,
+    item.description,
+    item.category,
+    ...(item.keywords || [])
+  ];
+  return haystacks.some((value) =>
+    String(value || "").toLowerCase().includes(search)
+  );
+}
+
+function serializeStoreExtensionRecord(url, row, definition) {
+  const rowManifest = row ? parseManifestJson(row.manifest_json) : {};
+  const manifest = {
+    id: definition.extension_id,
+    name: definition.display_name,
+    version: row?.latest_version || definition.latest_version,
+    description: definition.description,
+    category: definition.category,
+    keywords: definition.keywords,
+    ...(rowManifest && typeof rowManifest === "object" ? rowManifest : {})
+  };
+  const archiveUrl = `${PUBLIC_SITE_ORIGIN}${definition.package_path}`;
+
+  return {
+    extension_id: definition.extension_id,
+    display_name: definition.display_name,
+    latest_version: row?.latest_version || definition.latest_version,
+    manifest_json: JSON.stringify(manifest),
+    archive_key: row?.archive_key || definition.package_path,
+    archive_sha256: row?.archive_sha256 || null,
+    icon_key: row?.icon_key || "",
+    publisher_user_id: row?.publisher_user_id || "",
+    publisher_username: row?.publisher_username || "燕子团队",
+    published_at: row?.published_at || "",
+    is_published: Number(row?.is_published ?? 1),
+    updated_at: row?.updated_at || null,
+    install_count: Number(row?.install_count || 0),
+    description: definition.description,
+    category: definition.category,
+    icon: resolveStoreIcon(url, row, definition.icon || rowManifest.icon || "", definition.extension_id),
+    keywords: definition.keywords,
+    manifest,
+    archive_download_url: archiveUrl,
+    install_protocol_url: buildInstallProtocolUrl(definition.extension_id, archiveUrl)
+  };
+}
+
+function resolveStoreIcon(url, row, manifestIcon, extensionId) {
+  if (row?.icon_key) {
+    return buildExtensionIconUrl(url, extensionId, row.updated_at || row.published_at || "");
+  }
+
+  return manifestIcon || "";
+}
+
+function isStoreVisibleExtension(row) {
+  const manifest = parseManifestJson(row?.manifest_json);
+  const extensionId = String(row?.extension_id || "").trim().toLowerCase();
+  const category = String(manifest.category || "").trim().toLowerCase();
+
+  if (!extensionId) {
+    return false;
+  }
+
+  if (extensionId === "yanzi-webdav-settings") {
+    return false;
+  }
+
+  if (category === "系统配置") {
+    return false;
+  }
+
+  if (Number(row?.is_published ?? 1) === 0) {
+    return false;
+  }
+
+  return true;
+}
+
+function parseManifestJson(value) {
+  try {
+    const parsed = JSON.parse(String(value || "{}"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildInstallProtocolUrl(extensionId, archiveUrl) {
+  return `yanzi://install?extensionId=${encodeURIComponent(extensionId)}&source=${encodeURIComponent(archiveUrl)}`;
+}
+
+function buildExtensionIconUrl(url, extensionId, cacheBust = "") {
+  const iconUrl = new URL(`/v1/extensions/${encodeURIComponent(extensionId)}/icon`, url.origin);
+  if (cacheBust) {
+    iconUrl.searchParams.set("v", String(cacheBust));
+  }
+
+  return iconUrl.toString();
+}
+
+function resolveIconExtension(filename, contentType) {
+  const lowerFilename = String(filename || "").toLowerCase();
+  const lowerType = String(contentType || "").toLowerCase();
+
+  if (lowerFilename.endsWith(".png") || lowerType.includes("image/png")) {
+    return ".png";
+  }
+
+  if (lowerFilename.endsWith(".jpg") || lowerFilename.endsWith(".jpeg") || lowerType.includes("image/jpeg")) {
+    return ".jpg";
+  }
+
+  if (lowerFilename.endsWith(".gif") || lowerType.includes("image/gif")) {
+    return ".gif";
+  }
+
+  if (lowerFilename.endsWith(".webp") || lowerType.includes("image/webp")) {
+    return ".webp";
+  }
+
+  if (lowerFilename.endsWith(".bmp") || lowerType.includes("image/bmp")) {
+    return ".bmp";
+  }
+
+  if (lowerFilename.endsWith(".ico") || lowerType.includes("image/x-icon") || lowerType.includes("image/vnd.microsoft.icon")) {
+    return ".ico";
+  }
+
+  if (lowerFilename.endsWith(".svg") || lowerType.includes("image/svg+xml")) {
+    return ".svg";
+  }
+
+  return ".img";
 }
 
 async function ensureUser(env, userId) {

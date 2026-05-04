@@ -185,6 +185,8 @@
                                 <Button Content="模拟粘贴" Style="{StaticResource ChipButtonStyle}" Click="ManualTemplateButton_Click" Tag="clipboard" />
                                 <Button Content="选中内容" Style="{StaticResource ChipButtonStyle}" Click="ManualTemplateButton_Click" Tag="selection" />
                                 <Button Content="C# 脚本" Style="{StaticResource ChipButtonStyle}" Click="ManualTemplateButton_Click" Tag="csharp" />
+                                <Button Content="原生窗口" Style="{StaticResource ChipButtonStyle}" Click="ManualTemplateButton_Click" Tag="native" />
+                                <Button Content="原生笔记" Style="{StaticResource ChipButtonStyle}" Click="ManualTemplateButton_Click" Tag="native-note" />
                                 <Button Content="时间格式" Style="{StaticResource ChipButtonStyle}" Click="ManualTemplateButton_Click" Tag="timestamp" />
                                 <Button Content="翻译工作区" Style="{StaticResource ChipButtonStyle}" Click="ManualTemplateButton_Click" Tag="translate" />
                             </WrapPanel>

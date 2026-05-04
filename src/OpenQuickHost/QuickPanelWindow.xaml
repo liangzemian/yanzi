@@ -438,6 +438,13 @@
                                                           Visibility="{Binding CanEdit, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                                 <MenuItem Header="打开扩展目录" Click="OpenExtensionDirectory_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanOpenDirectory, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                <Separator Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                <MenuItem Header="移除扩展" Click="RemoveExtension_Click" CommandParameter="{Binding}"
+                                                          Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19V4M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z" Fill="#EF4444" Stretch="Uniform" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                             </ContextMenu>
                                         </Button.ContextMenu>
                                         <StackPanel Margin="0,6" HorizontalAlignment="Center">
