@@ -40,6 +40,44 @@ public sealed class AuthMeResponse
     public string Username { get; init; } = string.Empty;
 
     public string? Email { get; init; }
+
+    public bool IsAdmin { get; init; }
+}
+
+public sealed class AppUpdateInfoResponse
+{
+    [JsonPropertyName("channel")]
+    public string Channel { get; init; } = string.Empty;
+
+    [JsonPropertyName("version")]
+    public string Version { get; init; } = string.Empty;
+
+    [JsonPropertyName("title")]
+    public string Title { get; init; } = string.Empty;
+
+    [JsonPropertyName("notes")]
+    public string Notes { get; init; } = string.Empty;
+
+    [JsonPropertyName("download_url")]
+    public string DownloadUrl { get; init; } = string.Empty;
+
+    [JsonPropertyName("file_name")]
+    public string FileName { get; init; } = string.Empty;
+
+    [JsonPropertyName("download_code")]
+    public string DownloadCode { get; init; } = string.Empty;
+
+    [JsonPropertyName("provider")]
+    public string Provider { get; init; } = string.Empty;
+
+    [JsonPropertyName("sha256")]
+    public string Sha256 { get; init; } = string.Empty;
+
+    [JsonPropertyName("published_at")]
+    public string PublishedAt { get; init; } = string.Empty;
+
+    [JsonPropertyName("updated_at")]
+    public string UpdatedAt { get; init; } = string.Empty;
 }
 
 public sealed class ExtensionListResponse

@@ -49,7 +49,13 @@ public static class AppSettingsStore
             {
                 Id = "global-default",
                 Name = "默认",
-                Slots = settings.QuickPanelSlots.Take(12).ToList()
+                Slots = settings.QuickPanelSlots.Take(12).ToList(),
+                SlotItems = settings.QuickPanelSlots
+                    .Take(12)
+                    .Select(static slot => string.IsNullOrWhiteSpace(slot)
+                        ? null
+                        : new QuickPanelSlotItem { ExtensionId = slot })
+                    .ToList()
             });
         }
 
@@ -70,6 +76,7 @@ public static class AppSettingsStore
             group.ContextProcessName = group.ContextProcessName?.Trim();
             group.ContextDisplayName = group.ContextDisplayName?.Trim();
             group.Slots ??= [];
+            group.SlotItems ??= [];
             while (group.Slots.Count < 12)
             {
                 group.Slots.Add(null);
@@ -78,11 +85,50 @@ public static class AppSettingsStore
             {
                 group.Slots = group.Slots.Take(12).ToList();
             }
+
+            if (group.SlotItems.Count == 0)
+            {
+                group.SlotItems = group.Slots
+                    .Take(12)
+                    .Select(static slot => string.IsNullOrWhiteSpace(slot)
+                        ? null
+                        : new QuickPanelSlotItem { ExtensionId = slot })
+                    .ToList();
+            }
+
+            while (group.SlotItems.Count < 12)
+            {
+                group.SlotItems.Add(null);
+            }
+
+            if (group.SlotItems.Count > 12)
+            {
+                group.SlotItems = group.SlotItems.Take(12).ToList();
+            }
+
+            for (var index = 0; index < group.SlotItems.Count; index++)
+            {
+                group.SlotItems[index] = NormalizeSlotItem(group.SlotItems[index]);
+            }
+
+            group.Slots = ProjectLegacySlots(group.SlotItems);
         }
 
         settings.GlobalFavoriteExtensionIds ??= settings.FavoriteExtensionIds?.ToList() ?? [];
         settings.ContextFavoriteExtensionIds ??= [];
         settings.DisabledExtensionIds ??= [];
+        settings.RecentlyAddedExtensionIds ??= [];
+        settings.UnreadNewExtensionIds ??= [];
+        settings.RecentlyAddedExtensionIds = settings.RecentlyAddedExtensionIds
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(50)
+            .ToList();
+        settings.UnreadNewExtensionIds = settings.UnreadNewExtensionIds
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(50)
+            .ToList();
 
         if (string.IsNullOrWhiteSpace(settings.SelectedQuickPanelGlobalGroupId) ||
             settings.QuickPanelGlobalGroups.All(group => !string.Equals(group.Id, settings.SelectedQuickPanelGlobalGroupId, StringComparison.OrdinalIgnoreCase)))
@@ -103,6 +149,43 @@ public static class AppSettingsStore
         }
 
         return settings;
+    }
+
+    private static QuickPanelSlotItem? NormalizeSlotItem(QuickPanelSlotItem? item)
+    {
+        if (item == null)
+        {
+            return null;
+        }
+
+        item.ItemType = string.IsNullOrWhiteSpace(item.ItemType) ? "extension" : item.ItemType.Trim().ToLowerInvariant();
+        if (item.IsFolder)
+        {
+            item.FolderName = string.IsNullOrWhiteSpace(item.FolderName) ? "新分组" : item.FolderName.Trim();
+            item.FolderExtensionIds ??= [];
+            item.FolderExtensionIds = item.FolderExtensionIds
+                .Where(static id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            return item.FolderExtensionIds.Count == 0 ? null : item;
+        }
+
+        item.ExtensionId = string.IsNullOrWhiteSpace(item.ExtensionId) ? null : item.ExtensionId.Trim();
+        return string.IsNullOrWhiteSpace(item.ExtensionId) ? null : item;
+    }
+
+    private static List<string?> ProjectLegacySlots(IReadOnlyList<QuickPanelSlotItem?> slotItems)
+    {
+        var result = slotItems
+            .Take(12)
+            .Select(static item => item != null && !item.IsFolder ? item.ExtensionId : null)
+            .ToList();
+        while (result.Count < 12)
+        {
+            result.Add(null);
+        }
+
+        return result;
     }
 
     private static bool HasWebDavConfigValues(string? serverUrl, string? rootPath, string? username)
@@ -147,6 +230,10 @@ public sealed record AppSettings
 
     public List<string> PinnedSearchScopeCommandIds { get; set; } = new();
 
+    public List<string> RecentlyAddedExtensionIds { get; set; } = new();
+
+    public List<string> UnreadNewExtensionIds { get; set; } = new();
+
     public bool EnableAgentApi { get; set; } = true;
 
     public int AgentApiPort { get; set; } = 53919;
@@ -185,6 +272,21 @@ public sealed class QuickPanelGroupSettings
     public string? ContextDisplayName { get; set; }
 
     public List<string?> Slots { get; set; } = Enumerable.Repeat<string?>(null, 12).ToList();
+
+    public List<QuickPanelSlotItem?> SlotItems { get; set; } = Enumerable.Repeat<QuickPanelSlotItem?>(null, 12).ToList();
+}
+
+public sealed class QuickPanelSlotItem
+{
+    public string ItemType { get; set; } = "extension";
+
+    public string? ExtensionId { get; set; }
+
+    public string? FolderName { get; set; }
+
+    public List<string> FolderExtensionIds { get; set; } = [];
+
+    public bool IsFolder => string.Equals(ItemType, "folder", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed record QuickPanelMouseTriggerSettings

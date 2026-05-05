@@ -81,6 +81,20 @@
             <MenuItem Header="删除"
                       Click="DeleteFileResultMenuItem_Click" />
         </ContextMenu>
+
+        <ContextMenu x:Key="GenericResultContextMenu">
+            <MenuItem Header="执行默认动作"
+                      Click="OpenGenericResultMenuItem_Click" />
+            <MenuItem Header="查看详情"
+                      Click="ShowGenericResultDetailsMenuItem_Click" />
+            <Separator />
+            <MenuItem Header="复制标题"
+                      Click="CopyGenericResultTitleMenuItem_Click" />
+            <MenuItem Header="复制内容"
+                      Click="CopyGenericResultContentMenuItem_Click" />
+            <MenuItem Header="复制目标"
+                      Click="CopyGenericResultTargetMenuItem_Click" />
+        </ContextMenu>
     </Window.Resources>
 
     <Border Margin="15"
@@ -101,70 +115,226 @@
             </Grid.RowDefinitions>
 
             <!-- 1. Search Bar -->
-            <Grid x:Name="SearchBarGrid"
-                  Grid.Row="0"
-                  Margin="20,15,20,10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+            <StackPanel Grid.Row="0"
+                        Margin="20,15,20,10"
+                        AllowDrop="True"
+                        PreviewDragEnter="SearchBox_DragEnter"
+                        PreviewDragOver="SearchBox_DragOver"
+                        PreviewDrop="SearchBox_Drop">
+                <Grid x:Name="SearchBarGrid"
+                      AllowDrop="True"
+                      PreviewDragEnter="SearchBox_DragEnter"
+                      PreviewDragOver="SearchBox_DragOver"
+                      PreviewDrop="SearchBox_Drop">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
 
-                <!-- Search Icon -->
-                <TextBlock VerticalAlignment="Center"
-                           FontSize="20"
-                           Foreground="#FFAAAAAA"
-                           Text="⌕" 
-                           Margin="5,0,15,0"/>
+                    <!-- Search Icon -->
+                    <TextBlock VerticalAlignment="Center"
+                               FontSize="20"
+                               Foreground="#FFAAAAAA"
+                               Text="⌕" 
+                               Margin="5,0,15,0"/>
 
-                <TextBox x:Name="SearchBox"
-                         Grid.Column="1"
-                         FontSize="20"
-                         Foreground="White"
-                         Background="Transparent"
-                         BorderThickness="0"
-                         CaretBrush="#FF3B82F6"
-                         VerticalAlignment="Center"
-                         Padding="0,5"
-                         TextChanged="SearchBox_TextChanged"
-                         PreviewKeyDown="SearchBox_PreviewKeyDown" />
-                
-                <!-- Search Box Placeholder -->
-                <TextBlock Grid.Column="1"
-                           IsHitTestVisible="False"
-                           Text="搜索应用、扩展、系统项，或输入 @应用 / @系统 ..."
-                           VerticalAlignment="Center"
-                           Foreground="#FF555555"
-                           FontSize="20"
-                           Margin="2,0,0,0">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Setter Property="Visibility" Value="Collapsed"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
-                <Button Grid.Column="2"
-                        Width="32"
-                        Height="32"
+                    <Grid Grid.Column="1">
+                        <TextBlock IsHitTestVisible="False"
+                                   VerticalAlignment="Center"
+                                   FontSize="20"
+                                   Foreground="#FF5F6368"
+                                   Visibility="{Binding SearchInlineCompletionVisibility}"
+                                   Text="{Binding SearchInlineCompletionSuffix}">
+                            <TextBlock.RenderTransform>
+                                <TranslateTransform X="{Binding SearchInlineCompletionPrefixWidth}" />
+                            </TextBlock.RenderTransform>
+                        </TextBlock>
+                        <TextBox x:Name="SearchBox"
+                                 AllowDrop="True"
+                                 FontSize="20"
+                                 Foreground="White"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 CaretBrush="#FF3B82F6"
+                                 VerticalAlignment="Center"
+                                 Padding="0,5"
+                                 TextChanged="SearchBox_TextChanged"
+                                 PreviewKeyDown="SearchBox_PreviewKeyDown"
+                                 PreviewDragEnter="SearchBox_DragEnter"
+                                 PreviewDragOver="SearchBox_DragOver"
+                                 PreviewDrop="SearchBox_Drop"
+                                 DragEnter="SearchBox_DragEnter"
+                                 DragOver="SearchBox_DragOver"
+                                 Drop="SearchBox_Drop" />
+                    
+                        <!-- Search Box Placeholder -->
+                        <TextBlock IsHitTestVisible="False"
+                                   Text="搜索应用、扩展、系统项，或输入 @应用 / @系统 ..."
+                                   VerticalAlignment="Center"
+                                   Foreground="#FF555555"
+                                   FontSize="20"
+                                   Margin="2,0,0,0">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Grid>
+                    <Button Grid.Column="2"
+                            Width="32"
+                            Height="32"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ToolTip="{Binding PinButtonTooltip}"
+                            Click="PinAutoHideButton_Click"
+                            Style="{StaticResource QuickMenuButtonStyle}">
+                        <Path Data="M14,3L21,10L18,11L15,18L13,18L13,12L8,17L7,16L12,11L6,11L6,9L13,8L14,3Z"
+                              Fill="{Binding PinButtonBrush}"
+                              Height="14"
+                              Width="14"
+                              Stretch="Uniform"
+                              HorizontalAlignment="Center"
+                              VerticalAlignment="Center"/>
+                    </Button>
+                </Grid>
+
+                <Border Margin="0,10,0,0"
+                        Padding="0"
                         Background="Transparent"
-                        BorderThickness="0"
-                        ToolTip="{Binding PinButtonTooltip}"
-                        Click="PinAutoHideButton_Click"
-                        Style="{StaticResource QuickMenuButtonStyle}">
-                    <Path Data="M14,3L21,10L18,11L15,18L13,18L13,12L8,17L7,16L12,11L6,11L6,9L13,8L14,3Z"
-                          Fill="{Binding PinButtonBrush}"
-                          Height="14"
-                          Width="14"
-                          Stretch="Uniform"
-                          HorizontalAlignment="Center"
-                          VerticalAlignment="Center"/>
-                </Button>
-            </Grid>
+                        Visibility="{Binding AttachedFilesVisibility}">
+                    <ItemsControl ItemsSource="{Binding AttachedFiles}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Vertical" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type local:AttachedFileItem}">
+                                <Border x:Name="AttachedFileCard"
+                                        Margin="0,0,0,8"
+                                        Padding="10,8"
+                                        Background="#FF222222"
+                                        BorderBrush="#223B82F6"
+                                        BorderThickness="1"
+                                        CornerRadius="10">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="0"
+                                                Width="18"
+                                                Height="18"
+                                                Margin="0,0,7,0"
+                                                VerticalAlignment="Center"
+                                                Background="#E53B3B"
+                                                BorderBrush="#FFFCA5A5"
+                                                BorderThickness="1"
+                                                Foreground="White"
+                                                Cursor="Hand"
+                                                Tag="{Binding}"
+                                                ToolTip="移除附件"
+                                                Click="RemoveAttachedFileButton_Click">
+                                            <Button.Style>
+                                                <Style TargetType="Button">
+                                                    <Setter Property="Opacity" Value="0" />
+                                                    <Setter Property="IsHitTestVisible" Value="False" />
+                                                    <Setter Property="Template">
+                                                        <Setter.Value>
+                                                            <ControlTemplate TargetType="Button">
+                                                                <Border Background="{TemplateBinding Background}"
+                                                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                                                        CornerRadius="11">
+                                                                    <ContentPresenter HorizontalAlignment="Center"
+                                                                                      VerticalAlignment="Center" />
+                                                                </Border>
+                                                            </ControlTemplate>
+                                                        </Setter.Value>
+                                                    </Setter>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsMouseOver, ElementName=AttachedFileCard}" Value="True">
+                                                            <Setter Property="Opacity" Value="1" />
+                                                            <Setter Property="IsHitTestVisible" Value="True" />
+                                                        </DataTrigger>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter Property="Background" Value="#F87171" />
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <TextBlock Text="×"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Button>
+                                        <Border Grid.Column="1"
+                                                Width="34"
+                                                Height="34"
+                                                CornerRadius="8"
+                                                Background="#FF2B2F36"
+                                                VerticalAlignment="Center">
+                                            <Grid>
+                                                <Image Source="{Binding IconSource}"
+                                                       Stretch="Uniform"
+                                                       Margin="6"
+                                                       Visibility="{Binding HasIcon, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                <TextBlock Text="F"
+                                                           Foreground="White"
+                                                           FontSize="14"
+                                                           FontWeight="SemiBold"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasIcon}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Grid>
+                                        </Border>
+                                        <StackPanel Grid.Column="2" Margin="10,0,10,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayName}"
+                                                       Foreground="White"
+                                                       FontSize="13"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding FullPath}"
+                                                       Foreground="#FF8E8E8E"
+                                                       FontSize="11"
+                                                       Margin="0,3,0,0"
+                                                       TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <Button Grid.Column="3"
+                                                Tag="{Binding}"
+                                                Content="复制路径"
+                                                Padding="10,5"
+                                                FontSize="11"
+                                                Foreground="#FFE5E7EB"
+                                                Click="CopyAttachedFilePathButton_Click"
+                                                Style="{StaticResource QuickMenuButtonStyle}" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Border>
+            </StackPanel>
 
             <Popup x:Name="SearchScopePopup"
                    PlacementTarget="{Binding ElementName=SearchBarGrid}"
@@ -309,6 +479,9 @@
                          SelectedItem="{Binding SelectedCommand, Mode=TwoWay}"
                          ContextMenuOpening="CommandList_ContextMenuOpening"
                          MouseDoubleClick="CommandList_MouseDoubleClick"
+                         PreviewMouseLeftButtonDown="CommandList_PreviewMouseLeftButtonDown"
+                         PreviewMouseLeftButtonUp="CommandList_PreviewMouseLeftButtonUp"
+                         PreviewMouseMove="CommandList_PreviewMouseMove"
                          PreviewMouseRightButtonDown="CommandList_PreviewMouseRightButtonDown"
                          PreviewMouseRightButtonUp="CommandList_PreviewMouseRightButtonUp"
                          PreviewKeyDown="CommandList_PreviewKeyDown"
@@ -399,6 +572,8 @@
                             <Setter Property="Margin" Value="4,2,4,2" />
                             <Setter Property="Padding" Value="0" />
                             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <EventSetter Event="PreviewMouseLeftButtonDown" Handler="CommandListItem_PreviewMouseLeftButtonDown" />
+                            <EventSetter Event="MouseMove" Handler="CommandListItem_MouseMove" />
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
@@ -459,6 +634,16 @@
                                                VerticalAlignment="Center"
                                                FontWeight="Bold"
                                                Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        <Border Width="9"
+                                                Height="9"
+                                                CornerRadius="4.5"
+                                                Background="#FFFF5A7A"
+                                                BorderBrush="#CCFFFFFF"
+                                                BorderThickness="1"
+                                                HorizontalAlignment="Right"
+                                                VerticalAlignment="Top"
+                                                Margin="0,1,1,0"
+                                                Visibility="{Binding HasNewBadge, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                     </Grid>
                                 </Border>
 

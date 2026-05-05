@@ -220,7 +220,28 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
-                    <TextBlock Text="{Binding PanelTitle}" Foreground="White" FontSize="14" FontWeight="Bold" VerticalAlignment="Center" ToolTip="{Binding GlobalHintText}"/>
+                    <Button Width="28"
+                            Height="28"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ToolTip="{Binding EditButtonTooltip}"
+                            Click="EditModeButton_Click"
+                            Style="{StaticResource SidebarButtonStyle}">
+                        <Viewbox Width="14" Height="14">
+                            <Canvas Width="24" Height="24">
+                                <Path Data="M3,17.25V21H6.75L17.81,9.94L14.06,6.19L3,17.25M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04Z"
+                                      Fill="{Binding IsEditMode, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#FFF59E0B|#FFFFFFFF'}"/>
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding EditModeHintText}"
+                               Foreground="White"
+                               FontSize="13"
+                               FontWeight="SemiBold"
+                               VerticalAlignment="Center"
+                               Margin="10,0,0,0"
+                               TextTrimming="CharacterEllipsis"/>
 
                     <Button Grid.Column="2"
                             Width="28"
@@ -289,9 +310,15 @@
                                     <Button Style="{StaticResource SlotButtonStyle}"
                                             Margin="2"
                                             Click="SlotButton_Click"
+                                            PreviewMouseLeftButtonDown="SlotButton_PreviewMouseLeftButtonDown"
+                                            PreviewMouseMove="SlotButton_PreviewMouseMove"
                                             MouseEnter="SlotButton_MouseEnter"
                                             MouseLeave="SlotButton_MouseLeave"
                                             MouseMove="SlotButton_MouseMove"
+                                            DragOver="SlotButton_DragOver"
+                                            DragLeave="SlotButton_DragLeave"
+                                            Drop="SlotButton_Drop"
+                                            AllowDrop="True"
                                             Tag="{Binding}">
                                         <Button.ContextMenu>
                                             <ContextMenu>
@@ -302,14 +329,40 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="复制扩展" Click="CopySlotExtension_Click" CommandParameter="{Binding}"
-                                                          Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                          Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M16,1H4C2.89,1 2,1.89 2,3V17H4V3H16M19,5H8C6.89,5 6,5.89 6,7V21C6,22.11 6.89,23 8,23H19C20.11,23 21,22.11 21,21V7C21,5.89 20.11,5 19,5Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <MenuItem Header="剪切扩展" Click="CutSlotExtension_Click" CommandParameter="{Binding}"
-                                                          Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                <MenuItem Header="粘贴扩展" Click="PasteSlotExtension_Click" CommandParameter="{Binding}" />
+                                                          Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M9.64,7.64C11.19,6.09 13.7,6.09 15.24,7.64L16.66,9.05L18.07,7.64L16.66,6.22C14.34,3.91 10.55,3.91 8.22,6.22C6.23,8.21 5.95,11.32 7.38,13.62L4,17V15H2V21H8V19H6L8.79,16.21L12.38,19.79C10.08,21.23 6.96,20.95 4.97,18.96L3.56,17.54L2.14,18.96L3.56,20.37C6.67,23.49 11.72,23.49 14.83,20.37L16.24,18.96L20.5,23.22L21.91,21.81L17.66,17.56L19.07,16.15C22.18,13.03 22.18,7.98 19.07,4.86L17.66,3.45L16.24,4.86L17.66,6.27C19.98,8.59 19.98,12.38 17.66,14.7L16.24,16.12L9.64,9.52C8.48,8.36 8.48,6.48 9.64,5.31" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="粘贴扩展" Click="PasteSlotExtension_Click" CommandParameter="{Binding}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M19,20H5V4H7V2H17V6H19M19,8H5C3.89,8 3,8.89 3,10V20A2,2 0 0,0 5,22H19A2,2 0 0,0 21,20V10C21,8.89 20.11,8 19,8Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <MenuItem Header="编辑扩展" Click="EditExtension_Click" CommandParameter="{Binding}"
-                                                          Visibility="{Binding CanEdit, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                          Visibility="{Binding CanEdit, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M14.06,9L15,9.94L5.92,19H5V18.08L14.06,9M17.66,3C17.41,3 17.15,3.1 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18.17,3.09 17.92,3 17.66,3M14.06,6.19L3,17.25V21H6.75L17.81,9.94L14.06,6.19Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="发布到商店" Click="PublishExtension_Click" CommandParameter="{Binding}"
+                                                          Visibility="{Binding CanPublish, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M12,2L14.39,8.26L21,9L16,13.74L17.18,20.5L12,17.27L6.82,20.5L8,13.74L3,9L9.61,8.26L12,2M11,11V15H13V11H16L12,7L8,11H11Z" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <MenuItem Header="打开扩展目录" Click="OpenExtensionDirectory_Click" CommandParameter="{Binding}"
-                                                          Visibility="{Binding CanOpenDirectory, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                          Visibility="{Binding CanOpenDirectory, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M10,4L12,6H20A2,2 0 0,1 22,8V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4H10Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <Separator Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                 <MenuItem Header="移除扩展" Click="RemoveExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -378,10 +431,23 @@
                                                         <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="18" FontWeight="SemiBold"
                                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                                                    Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                        <Border Width="9" Height="9" CornerRadius="4.5" Background="#FFFF5A7A"
+                                                                BorderBrush="#CCFFFFFF" BorderThickness="1"
+                                                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,1,1,0"
+                                                                Visibility="{Binding HasNewBadge, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                         <!-- Favorite indicator -->
                                                         <Border Width="10" Height="10" CornerRadius="5" Background="#FFFBBF24"
-                                                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,3,0"
+                                                                HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3,3,0,0"
                                                                 Visibility="{Binding IsFavorite, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                        <Border MinWidth="16" Height="16" Padding="4,0"
+                                                                CornerRadius="8"
+                                                                Background="#FF1D4ED8"
+                                                                HorizontalAlignment="Right"
+                                                                VerticalAlignment="Bottom"
+                                                                Margin="0,0,2,2"
+                                                                Visibility="{Binding HasFolderBadge, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                            <TextBlock Text="{Binding FolderBadgeText}" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
                                                     </Grid>
                                                 </Grid>
                                             </Border>
@@ -417,9 +483,15 @@
                                     <Button Style="{StaticResource SlotButtonStyle}"
                                             Margin="2"
                                             Click="SlotButton_Click"
+                                            PreviewMouseLeftButtonDown="SlotButton_PreviewMouseLeftButtonDown"
+                                            PreviewMouseMove="SlotButton_PreviewMouseMove"
                                             MouseEnter="SlotButton_MouseEnter"
                                             MouseLeave="SlotButton_MouseLeave"
                                             MouseMove="SlotButton_MouseMove"
+                                            DragOver="SlotButton_DragOver"
+                                            DragLeave="SlotButton_DragLeave"
+                                            Drop="SlotButton_Drop"
+                                            AllowDrop="True"
                                             Tag="{Binding}">
                                         <Button.ContextMenu>
                                             <ContextMenu>
@@ -430,14 +502,40 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="复制扩展" Click="CopySlotExtension_Click" CommandParameter="{Binding}"
-                                                          Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                          Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M16,1H4C2.89,1 2,1.89 2,3V17H4V3H16M19,5H8C6.89,5 6,5.89 6,7V21C6,22.11 6.89,23 8,23H19C20.11,23 21,22.11 21,21V7C21,5.89 20.11,5 19,5Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <MenuItem Header="剪切扩展" Click="CutSlotExtension_Click" CommandParameter="{Binding}"
-                                                          Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                <MenuItem Header="粘贴扩展" Click="PasteSlotExtension_Click" CommandParameter="{Binding}" />
+                                                          Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M9.64,7.64C11.19,6.09 13.7,6.09 15.24,7.64L16.66,9.05L18.07,7.64L16.66,6.22C14.34,3.91 10.55,3.91 8.22,6.22C6.23,8.21 5.95,11.32 7.38,13.62L4,17V15H2V21H8V19H6L8.79,16.21L12.38,19.79C10.08,21.23 6.96,20.95 4.97,18.96L3.56,17.54L2.14,18.96L3.56,20.37C6.67,23.49 11.72,23.49 14.83,20.37L16.24,18.96L20.5,23.22L21.91,21.81L17.66,17.56L19.07,16.15C22.18,13.03 22.18,7.98 19.07,4.86L17.66,3.45L16.24,4.86L17.66,6.27C19.98,8.59 19.98,12.38 17.66,14.7L16.24,16.12L9.64,9.52C8.48,8.36 8.48,6.48 9.64,5.31" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="粘贴扩展" Click="PasteSlotExtension_Click" CommandParameter="{Binding}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M19,20H5V4H7V2H17V6H19M19,8H5C3.89,8 3,8.89 3,10V20A2,2 0 0,0 5,22H19A2,2 0 0,0 21,20V10C21,8.89 20.11,8 19,8Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <MenuItem Header="编辑扩展" Click="EditExtension_Click" CommandParameter="{Binding}"
-                                                          Visibility="{Binding CanEdit, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                          Visibility="{Binding CanEdit, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M14.06,9L15,9.94L5.92,19H5V18.08L14.06,9M17.66,3C17.41,3 17.15,3.1 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18.17,3.09 17.92,3 17.66,3M14.06,6.19L3,17.25V21H6.75L17.81,9.94L14.06,6.19Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="发布到商店" Click="PublishExtension_Click" CommandParameter="{Binding}"
+                                                          Visibility="{Binding CanPublish, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M12,2L14.39,8.26L21,9L16,13.74L17.18,20.5L12,17.27L6.82,20.5L8,13.74L3,9L9.61,8.26L12,2M11,11V15H13V11H16L12,7L8,11H11Z" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <MenuItem Header="打开扩展目录" Click="OpenExtensionDirectory_Click" CommandParameter="{Binding}"
-                                                          Visibility="{Binding CanOpenDirectory, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                          Visibility="{Binding CanOpenDirectory, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="M10,4L12,6H20A2,2 0 0,1 22,8V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4H10Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <Separator Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                 <MenuItem Header="移除扩展" Click="RemoveExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -504,9 +602,22 @@
                                                         <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="18" FontWeight="SemiBold"
                                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                                                    Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                        <Border Width="9" Height="9" CornerRadius="4.5" Background="#FFFF5A7A"
+                                                                BorderBrush="#CCFFFFFF" BorderThickness="1"
+                                                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,1,1,0"
+                                                                Visibility="{Binding HasNewBadge, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                         <Border Width="10" Height="10" CornerRadius="5" Background="#FFFBBF24"
-                                                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,3,0"
+                                                                HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3,3,0,0"
                                                                 Visibility="{Binding IsFavorite, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                        <Border MinWidth="16" Height="16" Padding="4,0"
+                                                                CornerRadius="8"
+                                                                Background="#FF1D4ED8"
+                                                                HorizontalAlignment="Right"
+                                                                VerticalAlignment="Bottom"
+                                                                Margin="0,0,2,2"
+                                                                Visibility="{Binding HasFolderBadge, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                            <TextBlock Text="{Binding FolderBadgeText}" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                        </Border>
                                                     </Grid>
                                                 </Grid>
                                             </Border>
@@ -520,6 +631,73 @@
                     </ItemsControl>
                 </StackPanel>
             </Grid>
+
+            <Border Grid.Column="1"
+                    Grid.RowSpan="4"
+                    Margin="10"
+                    Background="#F21A1A1A"
+                    CornerRadius="18"
+                    BorderBrush="#FF2A2A2A"
+                    BorderThickness="1"
+                    Visibility="{Binding IsFolderExpanded, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid Margin="14">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                        <Button Width="70"
+                                Height="30"
+                                Click="FolderBackButton_Click"
+                                Style="{StaticResource SecondaryBtn}"
+                                Content="返回" />
+                        <TextBlock Text="{Binding ActiveFolderTitle}"
+                                   Margin="12,0,0,0"
+                                   Foreground="White"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center" />
+                    </DockPanel>
+                    <ItemsControl Grid.Row="1" ItemsSource="{Binding ActiveFolderSlots}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <UniformGrid Columns="4"/>
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Style="{StaticResource SlotButtonStyle}" Margin="2" Click="SlotButton_Click" Tag="{Binding}">
+                                    <StackPanel Margin="0,6" HorizontalAlignment="Center">
+                                        <Border Width="44" Height="44" CornerRadius="10" Background="{Binding Command.AccentBrush, FallbackValue='#FF1E1E1E'}" ClipToBounds="True" HorizontalAlignment="Center" Margin="0,0,0,5">
+                                            <Grid>
+                                                <Image Source="{Binding Icon}" Stretch="UniformToFill" Margin="2"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                <Viewbox Width="22" Height="22"
+                                                         HorizontalAlignment="Center"
+                                                         VerticalAlignment="Center"
+                                                         Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <Canvas Width="24" Height="24">
+                                                        <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
+                                                    </Canvas>
+                                                </Viewbox>
+                                                <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="18" FontWeight="SemiBold"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                           Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                <Border Width="9" Height="9" CornerRadius="4.5" Background="#FFFF5A7A"
+                                                        BorderBrush="#CCFFFFFF" BorderThickness="1"
+                                                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,1,1,0"
+                                                        Visibility="{Binding HasNewBadge, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                            </Grid>
+                                        </Border>
+                                        <TextBlock Text="{Binding Title}" Foreground="White" FontSize="10" TextAlignment="Center" Width="56" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Grid>
+            </Border>
         </Grid>
     </Border>
 </Window>

@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,15 +8,19 @@
   <meta name="description" content="燕子是一款完全免费、开源的 Windows 效率启动器，可替代 Quicker，支持鼠标右键呼出面板、AI 一键生成扩展工具，源码公开，随心自定义。">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
+    rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
+
 <body>
   <div class="noise"></div>
   <header class="site-header">
     <div class="brand">
       <a href="/" style="display: flex; align-items: center;">
-        <img src="/assets/logo-white-transparent.png" width="36" height="36" alt="燕子启动器 Logo" class="brand-logo" style="border-radius: 8px; filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.3));" />
+        <img src="/assets/logo-white-transparent.png" width="36" height="36" alt="燕子启动器 Logo" class="brand-logo"
+          style="border-radius: 8px; filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.3));" />
       </a>
       <a href="/" style="text-decoration: none; color: inherit; font-weight: 600;">
         燕子启动器
@@ -41,10 +46,12 @@
           燕子启动器完全免费，源码全部公开，随时自己改。鼠标一划、面板弹出，常用功能一键搞定。还能让 AI 帮你生成专属工具，不会编程也没关系。
         </p>
         <div class="hero-actions">
-          <a class="button primary" href="https://wwbnh.lanzout.com/b0pnkaj6j">免费下载（蓝奏云）</a>
+          <a class="button primary js-update-download-link" href="https://wwbnh.lanzout.com/b0pnkaj6j"
+            data-default-label="免费下载（蓝奏云）">免费下载（蓝奏云）</a>
           <a class="button secondary" href="https://github.com/luoluoluo22/yanzi">查看源码（GitHub）</a>
         </div>
-        <p class="download-password">蓝奏云提取密码：<strong>62yn</strong></p>
+        <p class="download-password js-update-password-wrap">蓝奏云提取密码：<strong class="js-update-password">62yn</strong>
+        </p>
         <div class="hero-meta">
           <span>完全免费</span>
           <span>源码公开</span>
@@ -52,7 +59,7 @@
           <span>AI 一键生成</span>
         </div>
       </div>
-        <div class="hero-panel">
+      <div class="hero-panel">
         <div class="mock-image-container hero-mock perspective-container">
           <div class="tilt-wrapper tilt-effect">
             <img src="/assets/readme-cover-16x9.png" alt="燕子启动器宣传封面" class="app-screenshot" />
@@ -71,28 +78,48 @@
       <div class="feature-grid">
         <article class="card">
           <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="1" x2="12" y2="23" />
+              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+            </svg>
           </div>
           <h3>永久免费，无任何付费墙</h3>
           <p>燕子所有功能全部免费，没有会员、没有高级版、没有功能限制。用多久都不花钱，以后也不会突然收费。</p>
         </article>
         <article class="card">
           <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path
+                d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
+            </svg>
           </div>
           <h3>源码公开，放心用不怕跑路</h3>
           <p>代码全部放在 GitHub 上，谁都可以看。不用担心哪天软件停服或者数据丢失，甚至你自己也可以改成想要的样子。</p>
         </article>
         <article class="card">
           <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 1.41 1.41"/><path d="M4.93 19.07a10 10 0 0 1-1.41-1.41"/><path d="M19.07 19.07a10 10 0 0 1-1.41 1.41"/><path d="M4.93 4.93a10 10 0 0 1 1.41-1.41"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2"/></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.07 4.93a10 10 0 0 1 1.41 1.41" />
+              <path d="M4.93 19.07a10 10 0 0 1-1.41-1.41" />
+              <path d="M19.07 19.07a10 10 0 0 1-1.41 1.41" />
+              <path d="M4.93 4.93a10 10 0 0 1 1.41-1.41" />
+              <path d="M12 2v2m0 16v2M2 12h2m16 0h2" />
+            </svg>
           </div>
           <h3>鼠标一划，常用操作秒弹出</h3>
           <p>就像 Quicker 的鼠标面板一样，在桌面划一下鼠标，你的常用工具和快捷操作就会弹出来。不用记快捷键，不用找图标，随手就能用。</p>
         </article>
         <article class="card">
           <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
           </div>
           <h3>数据存自己电脑，安全有保障</h3>
           <p>你的所有设置和工具配置都保存在自己电脑上，也支持同步到坚果云等网盘。数据是你的，不会被上传到别人服务器。</p>
@@ -109,28 +136,44 @@
       <div class="feature-grid">
         <article class="card">
           <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
           </div>
           <h3>打字搜索，什么都能找到</h3>
           <p>按下快捷键，弹出搜索框，输几个字就能找到想打开的软件、文件夹、网站，还支持拼音缩写，超级快。</p>
         </article>
         <article class="card">
           <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2L2 7l10 5 10-5-10-5z" />
+              <path d="M2 17l10 5 10-5" />
+              <path d="M2 12l10 5 10-5" />
+            </svg>
           </div>
           <h3>鼠标面板，常用工具一触即达</h3>
           <p>把你最常用的操作放进鼠标面板，需要的时候轻轻一划就能弹出来。可以自由分组排列，按自己的习惯来摆。</p>
         </article>
         <article class="card">
           <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+            </svg>
           </div>
           <h3>一键批量操作，告别重复劳动</h3>
           <p>需要批量重命名文件？需要每天定时打开某些网页？这些重复操作都可以做成一个按钮，点一下全搞定。</p>
         </article>
         <article class="card">
           <div class="card-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
+            </svg>
           </div>
           <h3>多台电脑同步，换机不丢设置</h3>
           <p>通过坚果云、WebDAV 等方式，你在一台电脑上设好的所有工具，在另一台电脑上也能同步过去，不用重新配置。</p>
@@ -148,7 +191,7 @@
           想要什么功能，就描述什么功能。燕子内置了 AI 生成提示词，复制到 ChatGPT、Kimi 等 AI 工具，粘贴回来就能用。
         </p>
         <div class="code-card">
-<pre><code>// 举个例子，你告诉 AI：
+          <pre><code>// 举个例子，你告诉 AI：
 "帮我做一个工具，
  能快速打开我的工作文件夹"
 
@@ -211,13 +254,77 @@
         <h2>下载即用，<br>5 分钟让电脑效率翻倍。</h2>
       </div>
       <div class="download-panel">
-        <strong>燕子启动器 for Windows（完全免费）</strong>
-        <span>版本 0.1.0 | 一键安装，开箱即用 | Windows 10 / 11 | 蓝奏云密码：62yn</span>
-        <a class="button primary" href="https://wwbnh.lanzout.com/b0pnkaj6j">免费下载 YanziSetup-0.1.0.exe</a>
-        <p class="download-password">蓝奏云提取密码：<strong>62yn</strong></p>
+        <strong id="download-title">燕子启动器 for Windows（完全免费）</strong>
+        <span id="download-meta">一键安装，开箱即用 | Windows 10 / 11 </span>
+        <a class="button primary js-update-download-link" id="download-button"
+          href="https://wwbnh.lanzout.com/b0pnkaj6j" data-default-label="免费下载 YanziSetup-0.1.0.exe">免费下载</a>
+        <p class="download-password js-update-password-wrap">蓝奏云提取密码：<strong class="js-update-password">62yn</strong>
+        </p>
         <a class="release-link" href="https://github.com/luoluoluo22/yanzi">查看 GitHub 源码 &amp; 更新记录（完全公开）</a>
       </div>
     </section>
   </main>
+  <script>
+    (function () {
+      const UPDATE_API = "https://openquickhost-sync.a1137583371.workers.dev/v1/app/update/latest";
+
+      function formatVersionMeta(data) {
+        const parts = [
+          `版本 ${data.version || "未知版本"}`,
+          "一键安装，开箱即用",
+          "Windows 10 / 11"
+        ];
+        if (data.download_code) {
+          parts.push(`蓝奏云密码：${data.download_code}`);
+        }
+        return parts.join(" | ");
+      }
+
+      function applyUpdateInfo(data) {
+        if (!data || !data.download_url) {
+          return;
+        }
+
+        document.querySelectorAll(".js-update-download-link").forEach((link) => {
+          const label = link.dataset.defaultLabel || link.textContent || "立即下载";
+          link.href = data.download_url;
+          if (link.id === "download-button" && data.file_name) {
+            link.textContent = `免费下载 ${data.file_name}`;
+          } else {
+            link.textContent = label;
+          }
+        });
+
+        document.querySelectorAll(".js-update-password").forEach((node) => {
+          node.textContent = data.download_code || "无";
+        });
+
+        document.querySelectorAll(".js-update-password-wrap").forEach((node) => {
+          node.style.display = data.download_code ? "" : "none";
+        });
+
+        const title = document.getElementById("download-title");
+        if (title && data.title) {
+          title.textContent = `${data.title}（完全免费）`;
+        }
+
+        const meta = document.getElementById("download-meta");
+        if (meta) {
+          meta.textContent = formatVersionMeta(data);
+        }
+      }
+
+      fetch(UPDATE_API)
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`update api error: ${response.status}`);
+          }
+          return response.json();
+        })
+        .then(applyUpdateInfo)
+        .catch(() => { });
+    })();
+  </script>
 </body>
+
 </html>

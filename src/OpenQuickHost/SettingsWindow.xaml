@@ -477,6 +477,11 @@
                             <TextBlock Text="链接与反馈" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
                             <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1">
                                 <StackPanel>
+                                    <Grid Margin="15,12" Cursor="Hand" Background="Transparent" ToolTip="检查软件更新并前往下载页" Tag="https://yanzi.luoluoluo.cc.cd/#download" MouseLeftButtonDown="ExternalLink_Click">
+                                        <TextBlock Text="软件更新" Foreground="White" FontSize="13" IsHitTestVisible="False"/>
+                                        <TextBlock Text="打开下载页" Foreground="#FF555555" HorizontalAlignment="Right" FontSize="11" IsHitTestVisible="False"/>
+                                    </Grid>
+                                    <Rectangle Height="1" Fill="#FF2A2A2A" Margin="15,0"/>
                                     <Grid Margin="15,12" Cursor="Hand" Background="Transparent" ToolTip="点击访问官网" Tag="https://yanzi.luoluoluo.cc.cd/" MouseLeftButtonDown="ExternalLink_Click">
                                         <TextBlock Text="官方网站" Foreground="White" FontSize="13" IsHitTestVisible="False"/>
                                         <TextBlock Text="https://yanzi.luoluoluo.cc.cd/" Foreground="#FF555555" HorizontalAlignment="Right" FontSize="11" IsHitTestVisible="False"/>

@@ -130,7 +130,8 @@ public static class LocalExtensionCatalog
             iconReference: manifest.Icon,
             queryPrefixes: manifest.QueryPrefixes,
             queryTargetTemplate: manifest.QueryTargetTemplate,
-            startup: manifest.Startup?.ToDefinition());
+            startup: manifest.Startup?.ToDefinition(),
+            searchProvider: manifest.SearchProvider?.ToDefinition(manifest.OpenTarget));
     }
 
     private static void EnsureSampleNotesExtension()
@@ -604,7 +605,7 @@ public static class YanziAction
             title: manifest.Name,
             subtitle: manifest.Description ?? $"来自本地扩展目录：{extensionDirectory}",
             category: manifest.Category ?? "扩展",
-            accentHex: "#FF22C55E",
+            accentHex: "#FF38BDF8",
             openTarget: manifest.OpenTarget,
             keywords: manifest.Keywords ?? [],
             source: CommandSource.LocalExtension,
@@ -623,7 +624,8 @@ public static class YanziAction
             iconReference: manifest.Icon,
             queryPrefixes: manifest.QueryPrefixes,
             queryTargetTemplate: manifest.QueryTargetTemplate,
-            startup: manifest.Startup?.ToDefinition());
+            startup: manifest.Startup?.ToDefinition(),
+            searchProvider: manifest.SearchProvider?.ToDefinition(manifest.OpenTarget));
     }
 
     public static string LoadManifestJson(string extensionId)
@@ -962,6 +964,8 @@ public sealed record LocalExtensionManifest
     public LocalExtensionInlineScriptManifest? Script { get; init; }
 
     public LocalExtensionStartupManifest? Startup { get; init; }
+
+    public LocalExtensionSearchProviderManifest? SearchProvider { get; init; }
 }
 
 public sealed record LocalExtensionCatalogEntry(string ManifestPath, LocalExtensionManifest Manifest);
@@ -987,6 +991,35 @@ public sealed record LocalExtensionStartupManifest
 public sealed class LocalExtensionInlineScriptManifest
 {
     public string? Source { get; init; }
+}
+
+public sealed class LocalExtensionSearchProviderManifest
+{
+    public string Type { get; init; } = "folder";
+
+    public string? Path { get; init; }
+
+    public bool IncludeSubdirectories { get; init; } = true;
+
+    public bool IncludeFiles { get; init; } = true;
+
+    public bool IncludeDirectories { get; init; }
+
+    public int? MaxResults { get; init; }
+
+    public string[]? Aliases { get; init; }
+
+    public CommandSearchProviderDefinition ToDefinition(string? fallbackPath = null)
+    {
+        return new CommandSearchProviderDefinition(
+            Type,
+            string.IsNullOrWhiteSpace(Path) ? fallbackPath : Path,
+            IncludeSubdirectories,
+            IncludeFiles,
+            IncludeDirectories,
+            Math.Clamp(MaxResults ?? 128, 1, 512),
+            Aliases ?? []);
+    }
 }
 
 public sealed class LocalExtensionHostedViewManifest

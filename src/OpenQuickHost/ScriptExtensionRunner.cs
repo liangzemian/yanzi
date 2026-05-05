@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Basic.Reference.Assemblies;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -16,6 +17,26 @@ namespace OpenQuickHost;
 public static class ScriptExtensionRunner
 {
     private const string CSharpCacheVersion = "v5";
+    private const int MaxExtensionHostWorkerPoolSize = 4;
+    private static readonly JsonSerializerOptions ExtensionHostWorkerJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+    private static readonly object ExtensionHostWorkerPoolGate = new();
+    private static readonly List<ExtensionHostWorkerClient> ExtensionHostWorkers = [];
+
+    public static async Task WarmupExtensionHostAsync(CancellationToken cancellationToken = default)
+    {
+        var worker = await AcquireExtensionHostWorkerAsync(requireNativeWindowSlot: false, cancellationToken);
+        if (worker == null)
+        {
+            HostAssets.AppendLog("ScriptRunner warmup skipped: worker host unavailable.");
+            return;
+        }
+
+        worker.RequestLock.Release();
+        HostAssets.AppendLog($"ScriptRunner worker host warmed up: pid={worker.ProcessId}");
+    }
 
     public static async Task<ScriptExecutionResult> PreparePortableAssetsAsync(
         CommandItem command,
@@ -37,7 +58,7 @@ public static class ScriptExtensionRunner
             return new ScriptExecutionResult(false, string.Empty, "C# 扩展缺少源码入口。", -1);
         }
 
-        return await EnsureCSharpBuildAsync(command, source, cancellationToken);
+        return await EnsureCSharpBuildAsync(command, source, ShouldUseNativeWindowMode(command, source), cancellationToken);
     }
 
     public static bool CanExecute(CommandItem command)
@@ -225,10 +246,11 @@ public static class ScriptExtensionRunner
         CancellationToken cancellationToken)
     {
         var compileStopwatch = Stopwatch.StartNew();
+        var useNativeWindowMode = ShouldUseNativeWindowMode(command, source);
         var context = CreateContext(command, inputText, launchSource, state);
         var contextPath = Path.Combine(Path.GetTempPath(), $"yanzi-{command.ExtensionId}-{Guid.NewGuid():N}.json");
         var stateUpdatePath = Path.Combine(Path.GetTempPath(), $"yanzi-{command.ExtensionId}-{Guid.NewGuid():N}-state.json");
-        var readyPath = command.UsesNativeWindowUi
+        var readyPath = useNativeWindowMode
             ? Path.Combine(Path.GetTempPath(), $"yanzi-{command.ExtensionId}-{Guid.NewGuid():N}-ready.txt")
             : null;
 
@@ -240,9 +262,9 @@ public static class ScriptExtensionRunner
                 Encoding.UTF8,
                 cancellationToken);
 
-            var build = await EnsureCSharpBuildAsync(command, source, cancellationToken);
+            var build = await EnsureCSharpBuildAsync(command, source, useNativeWindowMode, cancellationToken);
             HostAssets.AppendLog(
-                $"ScriptRunner csharp build done: id={command.ExtensionId}, title={command.Title}, success={build.Success}, elapsedMs={compileStopwatch.ElapsedMilliseconds}, output={build.Output.Trim()}");
+                $"ScriptRunner csharp build done: id={command.ExtensionId}, title={command.Title}, success={build.Success}, nativeWindowMode={useNativeWindowMode}, elapsedMs={compileStopwatch.ElapsedMilliseconds}, output={build.Output.Trim()}");
             if (!build.Success)
             {
                 return build;
@@ -250,12 +272,13 @@ public static class ScriptExtensionRunner
             var assemblyPath = build.Output.Trim();
             if (File.Exists(assemblyPath))
             {
-                return await ExecuteManagedAssemblyOutOfProcessAsync(
+                return await ExecuteManagedAssemblyAsync(
                     command,
                     assemblyPath,
                     contextPath,
                     stateUpdatePath,
                     readyPath,
+                    useNativeWindowMode,
                     launchSource,
                     cancellationToken);
             }
@@ -270,7 +293,7 @@ public static class ScriptExtensionRunner
         {
             TryDeleteTempFile(contextPath);
             TryDeleteTempFile(stateUpdatePath);
-            if (!command.UsesNativeWindowUi)
+            if (!useNativeWindowMode)
             {
                 TryDeleteTempFile(readyPath ?? string.Empty);
             }
@@ -280,6 +303,7 @@ public static class ScriptExtensionRunner
     private static async Task<ScriptExecutionResult> EnsureCSharpBuildAsync(
         CommandItem command,
         string source,
+        bool useNativeWindowMode,
         CancellationToken cancellationToken)
     {
         var cacheFingerprint = string.Join(
@@ -313,7 +337,7 @@ public static class ScriptExtensionRunner
         var compilation = CSharpCompilation.Create(
             assemblyName: "YanziExtension",
             syntaxTrees: syntaxTrees,
-            references: BuildCSharpMetadataReferences(command),
+            references: BuildCSharpMetadataReferences(),
             options: new CSharpCompilationOptions(
                 OutputKind.ConsoleApplication,
                 optimizationLevel: OptimizationLevel.Release,
@@ -338,63 +362,53 @@ public static class ScriptExtensionRunner
         var error = diagnostics.Length == 0
             ? "C# 扩展编译失败。"
             : string.Join(Environment.NewLine, diagnostics);
-        if (command.UsesNativeWindowUi)
+        if (useNativeWindowMode)
         {
             error = BuildNativeWindowReferenceDebugInfo() + Environment.NewLine + error;
         }
         return new ScriptExecutionResult(false, string.Empty, error, -1);
     }
 
-    private static IReadOnlyList<MetadataReference> BuildCSharpMetadataReferences(CommandItem command)
+    private static IReadOnlyList<MetadataReference> BuildCSharpMetadataReferences()
     {
-        if (command.UsesNativeWindowUi)
+        var references = new List<MetadataReference>(
+            global::Basic.Reference.Assemblies.Net90.ReferenceInfos.All
+                .Select(static info => (MetadataReference)info.Reference));
+
+        var bundledDirectory = GetBundledNativeWindowReferenceDirectory();
+        if (!string.IsNullOrWhiteSpace(bundledDirectory) && Directory.Exists(bundledDirectory))
         {
-            var references = new List<MetadataReference>(
-                global::Basic.Reference.Assemblies.Net90.ReferenceInfos.All
-                    .Select(static info => (MetadataReference)info.Reference));
-
-            var bundledDirectory = GetBundledNativeWindowReferenceDirectory();
-            if (!string.IsNullOrWhiteSpace(bundledDirectory) && Directory.Exists(bundledDirectory))
-            {
-                references.AddRange(Directory.EnumerateFiles(bundledDirectory, "*.dll", SearchOption.TopDirectoryOnly)
-                    .Select(static path => (MetadataReference)MetadataReference.CreateFromFile(path)));
-            }
-
-            var referenceDirectories = new[]
-            {
-                GetWindowsDesktopReferenceDirectory()
-            }
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Cast<string>()
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-            if (referenceDirectories.Length > 0)
-            {
-                references.AddRange(referenceDirectories
-                    .SelectMany(static directory => Directory.EnumerateFiles(directory, "*.dll", SearchOption.TopDirectoryOnly))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Select(static path => (MetadataReference)MetadataReference.CreateFromFile(path))
-                    .ToArray());
-            }
-
-            var runtimeReferences = BuildNativeWindowRuntimeReferences();
-            if (runtimeReferences.Count > 0)
-            {
-                references.AddRange(runtimeReferences);
-            }
-
-            if (references.Count > 0)
-            {
-                return references
-                    .GroupBy(static reference => reference.Display, StringComparer.OrdinalIgnoreCase)
-                    .Select(static group => group.First())
-                    .ToArray();
-            }
+            references.AddRange(Directory.EnumerateFiles(bundledDirectory, "*.dll", SearchOption.TopDirectoryOnly)
+                .Select(static path => (MetadataReference)MetadataReference.CreateFromFile(path)));
         }
 
-        return global::Basic.Reference.Assemblies.Net90.ReferenceInfos.All
-            .Select(static info => (MetadataReference)info.Reference)
+        var referenceDirectories = new[]
+        {
+            GetWindowsDesktopReferenceDirectory()
+        }
+        .Where(path => !string.IsNullOrWhiteSpace(path))
+        .Cast<string>()
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+        if (referenceDirectories.Length > 0)
+        {
+            references.AddRange(referenceDirectories
+                .SelectMany(static directory => Directory.EnumerateFiles(directory, "*.dll", SearchOption.TopDirectoryOnly))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(static path => (MetadataReference)MetadataReference.CreateFromFile(path))
+                .ToArray());
+        }
+
+        var runtimeReferences = BuildNativeWindowRuntimeReferences();
+        if (runtimeReferences.Count > 0)
+        {
+            references.AddRange(runtimeReferences);
+        }
+
+        return references
+            .GroupBy(static reference => reference.Display, StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
             .ToArray();
     }
 
@@ -619,12 +633,155 @@ public static class ScriptExtensionRunner
             ]);
     }
 
+    private static async Task<ScriptExecutionResult> ExecuteManagedAssemblyAsync(
+        CommandItem command,
+        string assemblyPath,
+        string contextPath,
+        string stateUpdatePath,
+        string? readyPath,
+        bool useNativeWindowMode,
+        string launchSource,
+        CancellationToken cancellationToken)
+    {
+        if (useNativeWindowMode)
+        {
+            return await ExecuteManagedAssemblyOutOfProcessAsync(
+                command,
+                assemblyPath,
+                contextPath,
+                stateUpdatePath,
+                readyPath,
+                useNativeWindowMode,
+                launchSource,
+                cancellationToken);
+        }
+
+        var workerResult = await TryExecuteManagedAssemblyViaWorkerAsync(
+            command,
+            assemblyPath,
+            contextPath,
+            stateUpdatePath,
+            readyPath,
+            useNativeWindowMode,
+            launchSource,
+            cancellationToken);
+        if (workerResult != null)
+        {
+            return workerResult;
+        }
+
+        return await ExecuteManagedAssemblyOutOfProcessAsync(
+            command,
+            assemblyPath,
+            contextPath,
+            stateUpdatePath,
+            readyPath,
+            useNativeWindowMode,
+            launchSource,
+            cancellationToken);
+    }
+
+    private static async Task<ScriptExecutionResult?> TryExecuteManagedAssemblyViaWorkerAsync(
+        CommandItem command,
+        string assemblyPath,
+        string contextPath,
+        string stateUpdatePath,
+        string? readyPath,
+        bool useNativeWindowMode,
+        string launchSource,
+        CancellationToken cancellationToken)
+    {
+        var client = await AcquireExtensionHostWorkerAsync(useNativeWindowMode, cancellationToken);
+        if (client == null)
+        {
+            HostAssets.AppendLog("ScriptRunner worker pool unavailable or exhausted; falling back to transient host.");
+            return null;
+        }
+
+        try
+        {
+            var completionPath = useNativeWindowMode
+                ? Path.Combine(Path.GetTempPath(), $"yanzi-{command.ExtensionId}-{Guid.NewGuid():N}-worker-done.txt")
+                : null;
+            var request = new ExtensionHostWorkerRequest
+            {
+                AssemblyPath = assemblyPath,
+                ExtensionDirectory = command.ExtensionDirectoryPath!,
+                Environment = BuildRuntimeEnvironmentMap(command, null, contextPath, stateUpdatePath, readyPath, launchSource),
+                AllowEarlySuccess = useNativeWindowMode,
+                ReadyPath = readyPath,
+                CompletionPath = completionPath
+            };
+
+            await client.Input.WriteLineAsync(JsonSerializer.Serialize(request));
+            await client.Input.FlushAsync();
+
+            var responseLine = await client.Output.ReadLineAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(responseLine))
+            {
+                HostAssets.AppendLog("ScriptRunner worker host returned empty response, falling back to transient host.");
+                ResetExtensionHostWorker(client);
+                return null;
+            }
+
+            var response = JsonSerializer.Deserialize<ExtensionHostWorkerResponse>(responseLine, ExtensionHostWorkerJsonOptions);
+            if (response == null)
+            {
+                HostAssets.AppendLog("ScriptRunner worker host response parse failed, falling back to transient host.");
+                ResetExtensionHostWorker(client);
+                return null;
+            }
+
+            if (string.Equals(response.Status, "busy", StringComparison.OrdinalIgnoreCase))
+            {
+                HostAssets.AppendLog($"ScriptRunner worker host busy: pid={client.ProcessId}, falling back to transient host.");
+                return null;
+            }
+
+            var stateUpdates = await TryReadStateUpdatesAsync(stateUpdatePath, cancellationToken);
+            if (string.Equals(response.Status, "started", StringComparison.OrdinalIgnoreCase))
+            {
+                client.NativeWindowActive = true;
+                MonitorWorkerNativeWindowCompletion(client, completionPath);
+                return new ScriptExecutionResult(true, "native-window-started", "原生窗口已启动。", 0, stateUpdates);
+            }
+
+            if (string.Equals(response.Status, "completed", StringComparison.OrdinalIgnoreCase))
+            {
+                return new ScriptExecutionResult(
+                    true,
+                    response.Output?.Trim() ?? string.Empty,
+                    response.Error?.Trim() ?? string.Empty,
+                    response.ExitCode,
+                    stateUpdates);
+            }
+
+            return new ScriptExecutionResult(
+                false,
+                response.Output?.Trim() ?? string.Empty,
+                string.IsNullOrWhiteSpace(response.Error) ? $"C# 扩展宿主退出码：{response.ExitCode}" : response.Error.Trim(),
+                response.ExitCode,
+                stateUpdates);
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"ScriptRunner worker host failed, falling back to transient host: {ex.Message}");
+            ResetExtensionHostWorker(client);
+            return null;
+        }
+        finally
+        {
+            client.RequestLock.Release();
+        }
+    }
+
     private static async Task<ScriptExecutionResult> ExecuteManagedAssemblyOutOfProcessAsync(
         CommandItem command,
         string assemblyPath,
         string contextPath,
         string stateUpdatePath,
         string? readyPath,
+        bool useNativeWindowMode,
         string launchSource,
         CancellationToken cancellationToken)
     {
@@ -636,7 +793,7 @@ public static class ScriptExtensionRunner
                 return new ScriptExecutionResult(false, string.Empty, "没有找到扩展宿主进程。", -1);
             }
 
-            var isDetachedNativeWindow = command.UsesNativeWindowUi;
+            var isDetachedNativeWindow = useNativeWindowMode;
             var startInfo = new ProcessStartInfo
             {
                 FileName = hostPath,
@@ -661,7 +818,9 @@ public static class ScriptExtensionRunner
                 stateUpdatePath,
                 readyPath,
                 cancellationToken,
-                allowEarlySuccess: isDetachedNativeWindow);
+                allowEarlySuccess: isDetachedNativeWindow,
+                trackedCommand: isDetachedNativeWindow ? command : null,
+                trackedLaunchSource: isDetachedNativeWindow ? launchSource : null);
         }
         catch (Exception ex)
         {
@@ -699,7 +858,9 @@ public static class ScriptExtensionRunner
         string? stateUpdatePath,
         string? readyPath,
         CancellationToken cancellationToken,
-        bool allowEarlySuccess = false)
+        bool allowEarlySuccess = false,
+        CommandItem? trackedCommand = null,
+        string? trackedLaunchSource = null)
     {
         var processStopwatch = Stopwatch.StartNew();
         var process = new Process { StartInfo = startInfo };
@@ -723,6 +884,14 @@ public static class ScriptExtensionRunner
             {
                 if (earlyResult.Success)
                 {
+                    if (trackedCommand != null)
+                    {
+                        RunningExtensionRegistry.RegisterNativeWindowProcess(
+                            trackedCommand,
+                            process,
+                            trackedLaunchSource ?? "unknown");
+                    }
+
                     _ = ObserveProcessAfterEarlySuccessAsync(process, label, stateUpdatePath, outputTask, errorTask);
                     HostAssets.AppendLog(
                         $"ScriptRunner process early success: label={label}, pid={process.Id}, elapsedMs={processStopwatch.ElapsedMilliseconds}");
@@ -757,21 +926,16 @@ public static class ScriptExtensionRunner
         CancellationToken cancellationToken)
     {
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(4);
-        var readySeenAt = (DateTimeOffset?)null;
 
         while (DateTimeOffset.UtcNow < deadline)
         {
             if (!string.IsNullOrWhiteSpace(readyPath) && File.Exists(readyPath))
             {
-                readySeenAt ??= DateTimeOffset.UtcNow;
-                if (DateTimeOffset.UtcNow - readySeenAt.Value >= TimeSpan.FromMilliseconds(1200))
-                {
-                    return new ScriptExecutionResult(
-                        true,
-                        "native-window-started",
-                        "原生窗口已启动。",
-                        0);
-                }
+                return new ScriptExecutionResult(
+                    true,
+                    "native-window-started",
+                    "原生窗口已启动。",
+                    0);
             }
 
             if (process.HasExited)
@@ -792,6 +956,28 @@ public static class ScriptExtensionRunner
         return process.HasExited
             ? new ScriptExecutionResult(false, string.Empty, $"{label}在原生窗口稳定启动前退出，退出码：{TryGetProcessExitCode(process)}", process.ExitCode)
             : new ScriptExecutionResult(true, "native-window-started", "原生窗口已启动。", 0);
+    }
+
+    private static bool ShouldUseNativeWindowMode(CommandItem command, string source)
+    {
+        if (command.UsesNativeWindowUi)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return false;
+        }
+
+        return source.Contains("using System.Windows", StringComparison.Ordinal) ||
+               source.Contains("System.Windows.", StringComparison.Ordinal) ||
+               source.Contains("new Window", StringComparison.Ordinal) ||
+               source.Contains("ShowDialog()", StringComparison.Ordinal) ||
+               source.Contains("TextBox", StringComparison.Ordinal) ||
+               source.Contains("Button", StringComparison.Ordinal) ||
+               source.Contains("SolidColorBrush", StringComparison.Ordinal) ||
+               source.Contains("Brushes.", StringComparison.Ordinal);
     }
 
     private static async Task ObserveProcessAfterEarlySuccessAsync(
@@ -842,6 +1028,18 @@ public static class ScriptExtensionRunner
         catch
         {
             return "unknown";
+        }
+    }
+
+    private static int TryGetWorkerProcessId(Process process)
+    {
+        try
+        {
+            return process.Id;
+        }
+        catch
+        {
+            return -1;
         }
     }
 
@@ -926,6 +1124,390 @@ public static class ScriptExtensionRunner
         startInfo.Environment["YANZI_HOST_LOG_PATH"] = HostAssets.HostLogPath;
     }
 
+    private static Dictionary<string, string> BuildRuntimeEnvironmentMap(
+        CommandItem command,
+        string? inputText,
+        string contextPath,
+        string stateUpdatePath,
+        string? readyPath,
+        string launchSource)
+    {
+        var settings = AppSettingsStore.Load();
+        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["YANZI_INPUT"] = inputText ?? string.Empty,
+            ["YANZI_CONTEXT_PATH"] = contextPath,
+            ["YANZI_STATE_UPDATES_PATH"] = stateUpdatePath,
+            ["YANZI_EXTENSION_ID"] = command.ExtensionId,
+            ["YANZI_EXTENSION_DIR"] = command.ExtensionDirectoryPath!,
+            ["YANZI_EXTENSION_DATA_DIR"] = ExtensionStorageService.GetExtensionStorageDirectoryPath(command.ExtensionId),
+            ["YANZI_LAUNCH_SOURCE"] = launchSource,
+            ["YANZI_AGENT_API_BASE_URL"] = settings.EnableAgentApi
+                ? $"http://127.0.0.1:{settings.AgentApiPort}"
+                : string.Empty,
+            ["YANZI_AGENT_API_TOKEN"] = settings.AgentApiToken ?? string.Empty,
+            ["YANZI_HOST_LOG_PATH"] = HostAssets.HostLogPath
+        };
+
+        if (!string.IsNullOrWhiteSpace(readyPath))
+        {
+            environment["YANZI_READY_PATH"] = readyPath;
+        }
+
+        return environment;
+    }
+
+    private static async Task<ExtensionHostWorkerClient?> AcquireExtensionHostWorkerAsync(bool requireNativeWindowSlot, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            ExtensionHostWorkerClient? acquired = null;
+            ExtensionHostWorkerClient? created = null;
+            List<ExtensionHostWorkerClient>? activeWorkersNeedingProbe = null;
+
+            lock (ExtensionHostWorkerPoolGate)
+            {
+                PruneExtensionHostWorkers_NoLock();
+                RefreshExtensionHostWorkerCompletion_NoLock();
+
+                foreach (var worker in ExtensionHostWorkers)
+                {
+                    if (requireNativeWindowSlot && worker.NativeWindowActive)
+                    {
+                        activeWorkersNeedingProbe ??= [];
+                        activeWorkersNeedingProbe.Add(worker);
+                        continue;
+                    }
+
+                    if (worker.RequestLock.Wait(0))
+                    {
+                        acquired = worker;
+                        break;
+                    }
+                }
+
+                if (acquired == null && ExtensionHostWorkers.Count < MaxExtensionHostWorkerPoolSize)
+                {
+                    created = CreateExtensionHostWorker_NoLock();
+                    if (created != null)
+                    {
+                        ExtensionHostWorkers.Add(created);
+                        if (created.RequestLock.Wait(0))
+                        {
+                            acquired = created;
+                        }
+                    }
+                }
+            }
+
+            if (acquired != null)
+            {
+                return acquired;
+            }
+
+            if (requireNativeWindowSlot && activeWorkersNeedingProbe is { Count: > 0 })
+            {
+                foreach (var worker in activeWorkersNeedingProbe)
+                {
+                    if (!worker.RequestLock.Wait(0))
+                    {
+                        continue;
+                    }
+
+                    var reusable = false;
+                    try
+                    {
+                        reusable = await TryProbeAndReclaimWorkerAsync(worker, cancellationToken);
+                        if (reusable)
+                        {
+                            return worker;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        HostAssets.AppendLog($"ScriptRunner worker status probe failed: pid={worker.ProcessId}, error={ex.Message}");
+                        ResetExtensionHostWorker(worker);
+                    }
+                    finally
+                    {
+                        if (!reusable)
+                        {
+                            worker.RequestLock.Release();
+                        }
+                    }
+                }
+            }
+
+            if (!requireNativeWindowSlot)
+            {
+                return null;
+            }
+
+            await Task.Delay(120, cancellationToken);
+        }
+    }
+
+    private static ExtensionHostWorkerClient? CreateExtensionHostWorker_NoLock()
+    {
+        var hostPath = GetExtensionHostProcessPath();
+        if (string.IsNullOrWhiteSpace(hostPath) || !File.Exists(hostPath))
+        {
+            return null;
+        }
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = hostPath,
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+        startInfo.ArgumentList.Add("--server");
+        startInfo.Environment["YANZI_HOST_LOG_PATH"] = HostAssets.HostLogPath;
+
+        var process = new Process
+        {
+            StartInfo = startInfo,
+            EnableRaisingEvents = true
+        };
+        process.Start();
+        var client = new ExtensionHostWorkerClient(process, process.StandardInput, process.StandardOutput);
+        _ = DrainExtensionHostWorkerErrorAsync(process, CancellationToken.None);
+        HostAssets.AppendLog($"ScriptRunner worker host started: pid={process.Id}, path={hostPath}, poolSize={ExtensionHostWorkers.Count + 1}/{MaxExtensionHostWorkerPoolSize}");
+        return client;
+    }
+
+    private static async Task DrainExtensionHostWorkerErrorAsync(Process process, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!process.HasExited)
+            {
+                var line = await process.StandardError.ReadLineAsync(cancellationToken);
+                if (line == null)
+                {
+                    break;
+                }
+
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    HostAssets.AppendLog($"ExtensionHost worker stderr: {line}");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"ExtensionHost worker stderr drain failed: {ex.Message}");
+        }
+    }
+
+    private static void PruneExtensionHostWorkers_NoLock()
+    {
+        for (var index = ExtensionHostWorkers.Count - 1; index >= 0; index--)
+        {
+            if (!ExtensionHostWorkers[index].IsAlive)
+            {
+                DisposeExtensionHostWorker_NoLock(ExtensionHostWorkers[index], removeFromPool: false);
+                ExtensionHostWorkers.RemoveAt(index);
+            }
+        }
+    }
+
+    private static void RefreshExtensionHostWorkerCompletion_NoLock()
+    {
+        foreach (var worker in ExtensionHostWorkers)
+        {
+            TryMarkWorkerReusableFromCompletion_NoLock(worker, "pool scan");
+        }
+    }
+
+    private static async Task<bool> TryProbeAndReclaimWorkerAsync(ExtensionHostWorkerClient worker, CancellationToken cancellationToken)
+    {
+        if (!worker.IsAlive)
+        {
+            return false;
+        }
+
+        lock (ExtensionHostWorkerPoolGate)
+        {
+            if (TryMarkWorkerReusableFromCompletion_NoLock(worker, "status probe pre-check"))
+            {
+                return true;
+            }
+        }
+
+        var request = new ExtensionHostWorkerRequest
+        {
+            Kind = "status"
+        };
+
+        await worker.Input.WriteLineAsync(JsonSerializer.Serialize(request));
+        await worker.Input.FlushAsync();
+
+        string? responseLine;
+        try
+        {
+            responseLine = await worker.Output.ReadLineAsync(cancellationToken).AsTask().WaitAsync(TimeSpan.FromSeconds(1.5), cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            HostAssets.AppendLog($"ScriptRunner worker status probe timed out: pid={worker.ProcessId}");
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(responseLine))
+        {
+            return false;
+        }
+
+        var response = JsonSerializer.Deserialize<ExtensionHostWorkerResponse>(responseLine, ExtensionHostWorkerJsonOptions);
+        if (response == null)
+        {
+            return false;
+        }
+
+        if (!string.Equals(response.Status, "idle", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        lock (ExtensionHostWorkerPoolGate)
+        {
+            MarkWorkerReusable_NoLock(worker, "status probe");
+        }
+
+        return true;
+    }
+
+    private static void ResetExtensionHostWorker(ExtensionHostWorkerClient worker)
+    {
+        lock (ExtensionHostWorkerPoolGate)
+        {
+            if (ExtensionHostWorkers.Remove(worker))
+            {
+                DisposeExtensionHostWorker_NoLock(worker, removeFromPool: true);
+            }
+            else
+            {
+                DisposeExtensionHostWorker_NoLock(worker, removeFromPool: false);
+            }
+        }
+    }
+
+    private static void DisposeExtensionHostWorker_NoLock(ExtensionHostWorkerClient worker, bool removeFromPool)
+    {
+        worker.NativeWindowActive = false;
+        if (!string.IsNullOrWhiteSpace(worker.CompletionPath))
+        {
+            TryDeleteTempFile(worker.CompletionPath);
+            worker.CompletionPath = null;
+        }
+        try
+        {
+            worker.Input.Dispose();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            worker.Output.Dispose();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            if (worker.Process is { HasExited: false })
+            {
+                worker.Process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+        }
+        finally
+        {
+            worker.Process.Dispose();
+            HostAssets.AppendLog($"ScriptRunner worker host disposed: pid={worker.ProcessId}, removed={removeFromPool}");
+        }
+    }
+
+    private static void MonitorWorkerNativeWindowCompletion(ExtensionHostWorkerClient worker, string? completionPath)
+    {
+        if (string.IsNullOrWhiteSpace(completionPath))
+        {
+            worker.NativeWindowActive = false;
+            return;
+        }
+
+        worker.CompletionPath = completionPath;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var deadline = DateTimeOffset.UtcNow + TimeSpan.FromHours(1);
+                while (DateTimeOffset.UtcNow < deadline)
+                {
+                    if (File.Exists(completionPath))
+                    {
+                        break;
+                    }
+
+                    await Task.Delay(200).ConfigureAwait(false);
+                }
+            }
+            catch
+            {
+            }
+            finally
+            {
+                lock (ExtensionHostWorkerPoolGate)
+                {
+                    MarkWorkerReusable_NoLock(worker, "completion monitor");
+                }
+            }
+        });
+    }
+
+    private static bool TryMarkWorkerReusableFromCompletion_NoLock(ExtensionHostWorkerClient worker, string source)
+    {
+        if (!worker.NativeWindowActive || string.IsNullOrWhiteSpace(worker.CompletionPath))
+        {
+            return false;
+        }
+
+        if (!File.Exists(worker.CompletionPath))
+        {
+            return false;
+        }
+
+        MarkWorkerReusable_NoLock(worker, source);
+        return true;
+    }
+
+    private static void MarkWorkerReusable_NoLock(ExtensionHostWorkerClient worker, string source)
+    {
+        worker.NativeWindowActive = false;
+        if (!string.IsNullOrWhiteSpace(worker.CompletionPath))
+        {
+            TryDeleteTempFile(worker.CompletionPath);
+            worker.CompletionPath = null;
+        }
+
+        HostAssets.AppendLog($"ScriptRunner worker completion reaped via {source}: pid={worker.ProcessId}; worker can be reused.");
+    }
+
     private static string Quote(string value)
     {
         return "\"" + value.Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
@@ -1006,6 +1588,57 @@ public static class ScriptExtensionRunner
     {
         WriteIndented = true
     };
+
+    private sealed class ExtensionHostWorkerClient
+    {
+        public ExtensionHostWorkerClient(Process process, StreamWriter input, StreamReader output)
+        {
+            Process = process;
+            Input = input;
+            Output = output;
+        }
+
+        public Process Process { get; }
+        public StreamWriter Input { get; }
+        public StreamReader Output { get; }
+        public SemaphoreSlim RequestLock { get; } = new(1, 1);
+        public bool NativeWindowActive { get; set; }
+        public string? CompletionPath { get; set; }
+        public int ProcessId => TryGetWorkerProcessId(Process);
+        public bool IsAlive
+        {
+            get
+            {
+                try
+                {
+                    return !Process.HasExited;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    private sealed class ExtensionHostWorkerRequest
+    {
+        public string Kind { get; init; } = "execute";
+        public string AssemblyPath { get; init; } = string.Empty;
+        public string ExtensionDirectory { get; init; } = string.Empty;
+        public Dictionary<string, string> Environment { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public bool AllowEarlySuccess { get; init; }
+        public string? ReadyPath { get; init; }
+        public string? CompletionPath { get; init; }
+    }
+
+    private sealed class ExtensionHostWorkerResponse
+    {
+        public string Status { get; init; } = string.Empty;
+        public int ExitCode { get; init; }
+        public string? Output { get; init; }
+        public string? Error { get; init; }
+    }
 
     private const string CSharpProgramSource =
         """

@@ -13,6 +13,7 @@ public partial class App : WpfApplication
     private const string SingleInstanceAppId = "Yanzi.OpenQuickHost";
     private Forms.NotifyIcon? _notifyIcon;
     private SettingsWindow? _settingsWindow;
+    private RunningExtensionsWindow? _runningExtensionsWindow;
     private LocalAgentApiServer? _agentApiServer;
     private SingleInstanceService? _singleInstanceService;
     private bool _listenerServicesPaused;
@@ -52,6 +53,7 @@ public partial class App : WpfApplication
         }
 
         StartLocalAgentApi(window, settings);
+        _ = WarmupExtensionHostAsync();
         _singleInstanceService.StartServer(message => HandleSecondaryLaunchMessageAsync(window, message));
         _ = HandleLaunchArgumentsAsync(window, e.Args);
     }
@@ -105,6 +107,29 @@ public partial class App : WpfApplication
         DispatcherUnhandledException -= App_DispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException -= CurrentDomain_UnhandledException;
         TaskScheduler.UnobservedTaskException -= TaskScheduler_UnobservedTaskException;
+
+        try
+        {
+            var terminatedCount = RunningExtensionRegistry.TerminateAll();
+            if (terminatedCount > 0)
+            {
+                HostAssets.AppendLog($"App shutdown terminated running extensions: count={terminatedCount}");
+            }
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"App shutdown terminate running extensions failed: {ex.Message}");
+        }
+
+        try
+        {
+            EverythingRuntimeService.StopOwnedRuntime();
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"App shutdown stop Everything failed: {ex.Message}");
+        }
+
         if (_notifyIcon != null)
         {
             _notifyIcon.Visible = false;
@@ -204,6 +229,19 @@ public partial class App : WpfApplication
         }
     }
 
+    private static async Task WarmupExtensionHostAsync()
+    {
+        try
+        {
+            await Task.Delay(800).ConfigureAwait(false);
+            await Task.Run(() => ScriptExtensionRunner.WarmupExtensionHostAsync()).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"ExtensionHost warmup failed: {ex.Message}");
+        }
+    }
+
     private Forms.NotifyIcon BuildNotifyIcon(MainWindow window)
     {
         var notifyIcon = new Forms.NotifyIcon
@@ -280,6 +318,11 @@ public partial class App : WpfApplication
         CurrentApp?.OpenSettingsWindow();
     }
 
+    private void TrayRunningExtensions_Click(object sender, RoutedEventArgs e)
+    {
+        CurrentApp?.OpenRunningExtensionsWindow();
+    }
+
     private void TrayExit_Click(object sender, RoutedEventArgs e)
     {
         if (MainWindow is MainWindow mw)
@@ -324,6 +367,10 @@ public partial class App : WpfApplication
             else if (Equals(item.Tag, "mouse-panel"))
             {
                 item.IsEnabled = !_listenerServicesPaused;
+            }
+            else if (Equals(item.Tag, "running-extensions"))
+            {
+                item.Header = $"正在运行的扩展 ({RunningExtensionRegistry.GetRunningCount()})";
             }
         }
     }
@@ -399,5 +446,27 @@ public partial class App : WpfApplication
         _settingsWindow.NavigateTo(sectionKey);
         _settingsWindow.Activate();
         _settingsWindow.Focus();
+    }
+
+    public void OpenRunningExtensionsWindow()
+    {
+        if (_runningExtensionsWindow == null || !_runningExtensionsWindow.IsLoaded)
+        {
+            _runningExtensionsWindow = new RunningExtensionsWindow();
+            _runningExtensionsWindow.Closed += (_, _) => _runningExtensionsWindow = null;
+        }
+
+        if (!_runningExtensionsWindow.IsVisible)
+        {
+            _runningExtensionsWindow.Show();
+        }
+
+        if (_runningExtensionsWindow.WindowState == System.Windows.WindowState.Minimized)
+        {
+            _runningExtensionsWindow.WindowState = System.Windows.WindowState.Normal;
+        }
+
+        _runningExtensionsWindow.Activate();
+        _runningExtensionsWindow.Focus();
     }
 }

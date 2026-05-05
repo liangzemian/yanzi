@@ -2,6 +2,19 @@ const TOKEN_TTL_SECONDS = 60 * 60 * 12;
 const PASSWORD_ITERATIONS = 100000;
 const VERIFICATION_CODE_TTL_MINUTES = 10;
 const PUBLIC_SITE_ORIGIN = "https://yanzi.luoluoluo.cc.cd";
+const DEFAULT_APP_UPDATE_CHANNEL = "stable";
+const DEFAULT_APP_RELEASE = {
+  channel: DEFAULT_APP_UPDATE_CHANNEL,
+  version: "0.1.0",
+  title: "燕子启动器 for Windows",
+  notes: "默认稳定版下载渠道。",
+  download_url: "https://wwbnh.lanzout.com/b0pnkaj6j",
+  file_name: "YanziSetup-0.1.0.exe",
+  download_code: "62yn",
+  provider: "lanzou",
+  sha256: "",
+  published_at: "2026-05-04T00:00:00.000Z"
+};
 const PUBLIC_STORE_EXTENSIONS = [
   {
     extension_id: "open-yanzi-homepage",
@@ -393,7 +406,149 @@ async function handleRequest(request, env) {
     return json({
       userId: auth.userId,
       username: auth.username,
-      email: auth.email
+      email: auth.email,
+      isAdmin: isAdminUser(auth, env)
+    });
+  }
+
+  if (url.pathname === "/v1/app/update/latest" && request.method === "GET") {
+    const channel = normalizeReleaseChannel(url.searchParams.get("channel"));
+    const row = await env.DB.prepare(
+      `select
+        channel,
+        version,
+        title,
+        notes,
+        download_url,
+        file_name,
+        download_code,
+        provider,
+        sha256,
+        published_at,
+        updated_at,
+        updated_by_user_id,
+        updated_by_username
+      from app_release_channels
+      where channel = ?`
+    )
+      .bind(channel)
+      .first();
+
+    return json(serializeAppRelease(row, channel));
+  }
+
+  if (url.pathname === "/v1/admin/app/update/latest") {
+    const auth = await requireAdmin(request, env);
+    const channel = normalizeReleaseChannel(url.searchParams.get("channel"));
+
+    if (request.method === "GET") {
+      const row = await env.DB.prepare(
+        `select
+          channel,
+          version,
+          title,
+          notes,
+          download_url,
+          file_name,
+          download_code,
+          provider,
+          sha256,
+          published_at,
+          updated_at,
+          updated_by_user_id,
+          updated_by_username
+        from app_release_channels
+        where channel = ?`
+      )
+        .bind(channel)
+        .first();
+
+      return json({
+        ...serializeAppRelease(row, channel),
+        is_admin: true
+      });
+    }
+
+    if (request.method !== "PUT") {
+      return json({ error: "method_not_allowed", message: "Method not allowed" }, 405);
+    }
+
+    const payload = await readJson(request);
+    const release = normalizeAppReleasePayload(payload, channel);
+    const now = isoNow();
+
+    await env.DB.prepare(
+      `insert into app_release_channels (
+        channel,
+        version,
+        title,
+        notes,
+        download_url,
+        file_name,
+        download_code,
+        provider,
+        sha256,
+        published_at,
+        updated_at,
+        updated_by_user_id,
+        updated_by_username
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      on conflict(channel) do update set
+        version = excluded.version,
+        title = excluded.title,
+        notes = excluded.notes,
+        download_url = excluded.download_url,
+        file_name = excluded.file_name,
+        download_code = excluded.download_code,
+        provider = excluded.provider,
+        sha256 = excluded.sha256,
+        published_at = excluded.published_at,
+        updated_at = excluded.updated_at,
+        updated_by_user_id = excluded.updated_by_user_id,
+        updated_by_username = excluded.updated_by_username`
+    )
+      .bind(
+        channel,
+        release.version,
+        release.title,
+        release.notes,
+        release.download_url,
+        release.file_name,
+        release.download_code,
+        release.provider,
+        release.sha256,
+        release.published_at,
+        now,
+        auth.userId,
+        auth.username
+      )
+      .run();
+
+    const saved = await env.DB.prepare(
+      `select
+        channel,
+        version,
+        title,
+        notes,
+        download_url,
+        file_name,
+        download_code,
+        provider,
+        sha256,
+        published_at,
+        updated_at,
+        updated_by_user_id,
+        updated_by_username
+      from app_release_channels
+      where channel = ?`
+    )
+      .bind(channel)
+      .first();
+
+    return json({
+      ok: true,
+      ...serializeAppRelease(saved, channel),
+      is_admin: true
     });
   }
 
@@ -976,6 +1131,7 @@ async function buildAuthResponse(env, user) {
   const accessToken = await signToken(env, {
     sub: user.userId,
     username: user.username,
+    email: user.email ?? null,
     iat: now,
     exp: expiresAt
   });
@@ -1007,6 +1163,24 @@ async function requireAuth(request, env) {
     username: String(payload.username),
     email: payload.email ? String(payload.email) : null
   };
+}
+
+async function requireAdmin(request, env) {
+  const auth = await requireAuth(request, env);
+  if (!isAdminUser(auth, env)) {
+    throw new HttpError(403, "forbidden", "Administrator access required");
+  }
+
+  return auth;
+}
+
+function isAdminUser(auth, env) {
+  const configured = String(env.ADMIN_USERNAMES || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  const allowed = configured.length > 0 ? configured : ["luoluo"];
+  return allowed.includes(String(auth?.username || "").trim().toLowerCase());
 }
 
 async function signToken(env, payload) {
@@ -1384,6 +1558,125 @@ function resolveIconExtension(filename, contentType) {
   }
 
   return ".img";
+}
+
+function normalizeReleaseChannel(value) {
+  const channel = String(value || DEFAULT_APP_UPDATE_CHANNEL).trim().toLowerCase();
+  if (!/^[a-z0-9_-]{1,32}$/.test(channel)) {
+    throw new HttpError(400, "invalid_channel", "Channel must be 1-32 chars: a-z, 0-9, _, -");
+  }
+
+  return channel;
+}
+
+function normalizeAppReleasePayload(payload, channel) {
+  const version = String(payload.version || "").trim();
+  if (!version || version.length > 50) {
+    throw new HttpError(400, "invalid_version", "Version is required and must be 1-50 characters");
+  }
+
+  const downloadUrl = normalizePublicHttpUrl(payload.download_url ?? payload.downloadUrl, "download_url");
+  const title = String(payload.title || "燕子启动器 for Windows").trim().slice(0, 120);
+  const fileName = String(payload.file_name ?? payload.fileName ?? "").trim().slice(0, 200);
+  const downloadCode = String(payload.download_code ?? payload.downloadCode ?? "").trim().slice(0, 50);
+  const provider = String(payload.provider || "custom").trim().slice(0, 50) || "custom";
+  const notes = String(payload.notes || "").trim().slice(0, 8000);
+  const sha256 = String(payload.sha256 || "").trim().toLowerCase();
+  if (sha256 && !/^[a-f0-9]{64}$/.test(sha256)) {
+    throw new HttpError(400, "invalid_sha256", "sha256 must be a 64-character lowercase hex string");
+  }
+
+  const publishedAtInput = String(payload.published_at ?? payload.publishedAt ?? "").trim();
+  const publishedAt = publishedAtInput ? new Date(publishedAtInput) : new Date();
+  if (Number.isNaN(publishedAt.getTime())) {
+    throw new HttpError(400, "invalid_published_at", "published_at must be a valid datetime");
+  }
+
+  return {
+    channel,
+    version,
+    title,
+    notes,
+    download_url: downloadUrl,
+    file_name: fileName,
+    download_code: downloadCode,
+    provider,
+    sha256,
+    published_at: publishedAt.toISOString()
+  };
+}
+
+function normalizePublicHttpUrl(value, fieldName) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    throw new HttpError(400, `invalid_${fieldName}`, `${fieldName} is required`);
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new HttpError(400, `invalid_${fieldName}`, `${fieldName} must be a valid URL`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new HttpError(400, `invalid_${fieldName}`, `${fieldName} must use http or https`);
+  }
+
+  return parsed.toString();
+}
+
+function serializeAppRelease(row, channel = DEFAULT_APP_UPDATE_CHANNEL) {
+  const fallback = {
+    ...DEFAULT_APP_RELEASE,
+    channel
+  };
+  const merged = row
+    ? {
+        ...fallback,
+        channel: row.channel || channel,
+        version: row.version || fallback.version,
+        title: row.title || fallback.title,
+        notes: row.notes || "",
+        download_url: row.download_url || fallback.download_url,
+        file_name: row.file_name || fallback.file_name,
+        download_code: row.download_code || fallback.download_code,
+        provider: row.provider || fallback.provider,
+        sha256: row.sha256 || "",
+        published_at: row.published_at || fallback.published_at,
+        updated_at: row.updated_at || row.published_at || fallback.published_at,
+        updated_by_user_id: row.updated_by_user_id || "",
+        updated_by_username: row.updated_by_username || ""
+      }
+    : {
+        ...fallback,
+        notes: fallback.notes || "",
+        updated_at: fallback.published_at,
+        updated_by_user_id: "",
+        updated_by_username: ""
+      };
+
+  return {
+    channel: merged.channel,
+    version: merged.version,
+    title: merged.title,
+    notes: merged.notes,
+    download_url: merged.download_url,
+    downloadUrl: merged.download_url,
+    file_name: merged.file_name,
+    fileName: merged.file_name,
+    download_code: merged.download_code,
+    downloadCode: merged.download_code,
+    provider: merged.provider,
+    sha256: merged.sha256,
+    published_at: merged.published_at,
+    publishedAt: merged.published_at,
+    updated_at: merged.updated_at,
+    updatedAt: merged.updated_at,
+    updated_by_user_id: merged.updated_by_user_id,
+    updated_by_username: merged.updated_by_username,
+    managed: Boolean(row)
+  };
 }
 
 async function ensureUser(env, userId) {

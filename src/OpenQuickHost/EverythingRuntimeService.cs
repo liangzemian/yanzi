@@ -8,6 +8,7 @@ public static class EverythingRuntimeService
     private const string RuntimeDirectoryName = "EverythingRuntime";
     private const string RuntimeExecutableName = "Everything.exe";
     private static readonly Lock SyncLock = new();
+    private static int? _launchedProcessId;
 
     public static void EnsureStartedInBackground()
     {
@@ -88,7 +89,8 @@ public static class EverythingRuntimeService
                     WindowStyle = ProcessWindowStyle.Hidden
                 };
 
-                Process.Start(startInfo);
+                var process = Process.Start(startInfo);
+                _launchedProcessId = process?.Id;
                 HostAssets.AppendLog($"Everything runtime launch requested: path={runtimeExecutablePath}, args={startInfo.Arguments}");
             }
             catch (Exception ex)
@@ -98,6 +100,40 @@ public static class EverythingRuntimeService
             }
 
             return WaitForIpcReady(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    public static void StopOwnedRuntime()
+    {
+        int? processId;
+        lock (SyncLock)
+        {
+            processId = _launchedProcessId;
+            _launchedProcessId = null;
+        }
+
+        if (processId == null)
+        {
+            return;
+        }
+
+        try
+        {
+            using var process = Process.GetProcessById(processId.Value);
+            if (process.HasExited)
+            {
+                return;
+            }
+
+            process.Kill(entireProcessTree: true);
+            HostAssets.AppendLog($"Everything runtime stopped: pid={processId.Value}");
+        }
+        catch (ArgumentException)
+        {
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Everything runtime stop failed: pid={processId.Value}, error={ex.Message}");
         }
     }
 
