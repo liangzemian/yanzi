@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using OpenQuickHost.Sync;
@@ -60,6 +61,7 @@ public partial class AddJsonExtensionWindow : Window
     {
         InitializeComponent();
         AddHandler(System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent, new TextChangedEventHandler(AnyTextBox_TextChanged));
+        AddHandler(Keyboard.PreviewKeyDownEvent, new System.Windows.Input.KeyEventHandler(TextBoxClipboard_PreviewKeyDown), true);
         BuiltInIconsList.ItemsSource = _builtInIcons;
         _isEditMode = isEditMode;
         _settings = AppSettingsStore.Load();
@@ -1010,6 +1012,40 @@ public partial class AddJsonExtensionWindow : Window
         }
 
         _lastEditedSource = EditSource.Form;
+    }
+
+    private void TextBoxClipboard_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (!IsCopyShortcut(e) || e.OriginalSource is not System.Windows.Controls.TextBox textBox)
+        {
+            return;
+        }
+
+        var selectedText = textBox.SelectedText;
+        if (string.IsNullOrEmpty(selectedText))
+        {
+            return;
+        }
+
+        try
+        {
+            ClipboardService.SetText(selectedText);
+            e.Handled = true;
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"AddJson text box copy failed: {ex}");
+            ShowError($"复制选中内容失败：{ex.Message}");
+            e.Handled = true;
+        }
+    }
+
+    private static bool IsCopyShortcut(System.Windows.Input.KeyEventArgs e)
+    {
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        return (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control &&
+               ((Keyboard.Modifiers & ModifierKeys.Alt) != ModifierKeys.Alt) &&
+               (key == Key.C || key == Key.Insert);
     }
 
     private void TryPopulateManualFormFromJson(string json, bool showError)
@@ -2826,94 +2862,7 @@ Write-Output "说明：这是模板输出，后续可以替换为真实翻译 AP
 
     private static void CopyTextToClipboard(string text)
     {
-        if (TryCopyViaStaClipboard(text, out var staError))
-        {
-            return;
-        }
-
-        if (TryCopyViaClipExe(text, out var fallbackError))
-        {
-            return;
-        }
-
-        throw new InvalidOperationException($"复制到剪贴板失败：{fallbackError ?? staError}");
-    }
-
-    private static bool TryCopyViaStaClipboard(string text, out string? error)
-    {
-        error = null;
-        Exception? threadError = null;
-        var done = new ManualResetEventSlim(false);
-
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                Forms.Clipboard.SetText(text, Forms.TextDataFormat.UnicodeText);
-            }
-            catch (Exception ex)
-            {
-                threadError = ex;
-            }
-            finally
-            {
-                done.Set();
-            }
-        });
-
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.IsBackground = true;
-        thread.Start();
-        done.Wait(TimeSpan.FromSeconds(5));
-
-        if (!done.IsSet)
-        {
-            error = "STA 剪贴板线程超时。";
-            return false;
-        }
-
-        if (threadError == null)
-        {
-            return true;
-        }
-
-        error = threadError.Message;
-        return false;
-    }
-
-    private static bool TryCopyViaClipExe(string text, out string? error)
-    {
-        error = null;
-        try
-        {
-            using var process = new Process();
-            process.StartInfo = new ProcessStartInfo
-            {
-                FileName = "clip.exe",
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                StandardInputEncoding = Encoding.Unicode,
-                CreateNoWindow = true
-            };
-
-            process.Start();
-            process.StandardInput.Write(text);
-            process.StandardInput.Close();
-            process.WaitForExit(5000);
-
-            if (process.ExitCode == 0)
-            {
-                return true;
-            }
-
-            error = $"clip.exe 返回了退出码 {process.ExitCode}";
-            return false;
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-            return false;
-        }
+        ClipboardService.SetText(text);
     }
 
     private static void TryDeleteDirectory(string path)

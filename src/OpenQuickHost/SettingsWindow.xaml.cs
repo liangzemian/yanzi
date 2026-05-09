@@ -35,6 +35,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private string _webDavUsername = string.Empty;
     private string _webDavStatusText = "未启用个人扩展同步。";
     private string _syncActivityLogText = "暂无同步记录。";
+    private string _aiBaseUrl = string.Empty;
+    private string _aiApiKey = string.Empty;
+    private string _aiModel = string.Empty;
+    private string _aiSettingsStatusText = "尚未配置 AI。";
     private string _recycleBinSummary = "回收站为空。";
     private string _recycleBinSearchText = string.Empty;
     private bool _isExtensionsLoading;
@@ -51,13 +55,14 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         _settings.QuickPanelMouseTriggers ??= new QuickPanelMouseTriggerSettings();
         NavigationItems =
         [
-            new SettingsNavigationItem("general", "M12,15.5A3.5,3.5 0 1,1 12,8.5A3.5,3.5 0 1,1 12,15.5M19.4,15L21.7,13.5L19.9,8.9L17.3,10L15.7,8.6L16.1,5.8L11.2,5.8L10.8,8.6L9.2,10L6.6,8.9L4.7,13.5L7,15L7,17L4.7,18.5L6.6,23.1L9.2,22L10.8,23.4L11.2,26.2L16.1,26.2L16.5,23.4L18.1,22L20.7,23.1L22.6,18.5L20.3,17Z", "常规", "#FF3B82F6"),
-            new SettingsNavigationItem("sync", "M12,6V9L16,5L12,1V4A8,8 0 0,0 4,12C4,13.43 4.37,14.77 5.03,15.94L6.47,14.5C6.17,13.73 6,12.89 6,12A6,6 0 0,1 12,6M18.97,8.06L17.53,9.5C17.83,10.27 18,11.11 18,12A6,6 0 0,1 12,18V15L8,19L12,23V20A8,8 0 0,0 20,12C20,10.57 19.63,9.23 18.97,8.06Z", "同步", "#FF22C55E"),
-            new SettingsNavigationItem("extensions", "M20.5,11H19V7C19,5.89 18.11,5 17,5H13V3.5A1.5,1.5 0 0,0 11.5,2A1.5,1.5 0 0,0 10,3.5V5H6C4.89,5 4,5.89 4,7V11H2.5A1.5,1.5 0 0,0 1,12.5A1.5,1.5 0 0,0 2.5,14H4V18C4,19.11 4.89,20 6,20H10V21.5A1.5,1.5 0 0,0 11.5,23A1.5,1.5 0 0,0 13,21.5V20H17C18.11,20 19,19.11 19,18V14H20.5A1.5,1.5 0 0,0 22,12.5A1.5,1.5 0 0,0 20.5,11Z", "扩展", "#FFF97316"),
-            new SettingsNavigationItem("recycle", "M9,3H15L16,5H20A1,1 0 0,1 21,6V8H3V6A1,1 0 0,1 4,5H8L9,3M5,10H19L18.2,20.2A2,2 0 0,1 16.21,22H7.79A2,2 0 0,1 5.8,20.2L5,10M9,12V19H11V12H9M13,12V19H15V12H13Z", "回收站", "#FFEF4444"),
-            new SettingsNavigationItem("shortcuts", "M7,7H17V9H7V7M7,11H13V13H7V11M15,11H17V13H15V11M7,15H11V17H7V15M13,15H17V17H13V15M5,3H19A2,2 0 0,1 21,5V19A2,2 0 0,1 19,21H5A2,2 0 0,1 3,19V5A2,2 0 0,1 5,3Z", "快捷键", "#FFEAB308"),
-            new SettingsNavigationItem("quickpanel", "M4,4H20V20H4V4M6,6V18H18V6H6M8,8H10V10H8V8M14,8H16V10H14V8M8,14H10V16H8V14M14,14H16V16H14V14Z", "鼠标面板", "#FFEC4899"),
-            new SettingsNavigationItem("about", "M11,9H13V7H11M12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M11,17H13V11H11V17Z", "关于", "#FF8B5CF6")
+            new SettingsNavigationItem("general", "mdi:settings", "常规", "#FF3B82F6"),
+            new SettingsNavigationItem("ai", "mdi:ai", "AI", "#FF8B5CF6"),
+            new SettingsNavigationItem("sync", "mdi:sync", "同步", "#FF22C55E"),
+            new SettingsNavigationItem("extensions", "mdi:dashboard", "扩展", "#FFF97316"),
+            new SettingsNavigationItem("recycle", "mdi:recycle", "回收站", "#FFEF4444"),
+            new SettingsNavigationItem("shortcuts", "mdi:shortcut", "快捷键", "#FFEAB308"),
+            new SettingsNavigationItem("quickpanel", "mdi:mouse-panel", "鼠标面板", "#FFEC4899"),
+            new SettingsNavigationItem("about", "mdi:about", "关于", "#FF8B5CF6")
         ];
         _selectedNavigation = NavigationItems.First();
         LaunchAtStartup = _settings.LaunchAtStartup;
@@ -68,6 +73,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         WebDavServerUrl = string.IsNullOrWhiteSpace(_settings.WebDavServerUrl) ? "https://dav.jianguoyun.com/dav/" : _settings.WebDavServerUrl;
         WebDavRootPath = _settings.WebDavRootPath;
         WebDavUsername = _settings.WebDavUsername;
+        AiBaseUrl = _settings.AiBaseUrl;
+        AiApiKey = _settings.AiApiKey;
+        AiModel = _settings.AiModel;
+        AiSettingsStatusText = BuildAiSettingsSummary(_settings);
         BaseUrl = _mainWindow.SyncBaseUrl;
         ExtensionsRootPath = LocalExtensionCatalog.CatalogRootPath;
         AppVersionText = AppVersionInfo.DisplayText;
@@ -108,6 +117,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(SelectedSectionTitle));
             OnPropertyChanged(nameof(SelectedSectionDescription));
             OnPropertyChanged(nameof(IsGeneralSelected));
+            OnPropertyChanged(nameof(IsAiSelected));
             OnPropertyChanged(nameof(IsSyncSelected));
             OnPropertyChanged(nameof(IsExtensionsSelected));
             OnPropertyChanged(nameof(IsRecycleBinSelected));
@@ -390,6 +400,66 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public string AiBaseUrl
+    {
+        get => _aiBaseUrl;
+        set
+        {
+            if (value == _aiBaseUrl)
+            {
+                return;
+            }
+
+            _aiBaseUrl = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string AiApiKey
+    {
+        get => _aiApiKey;
+        set
+        {
+            if (value == _aiApiKey)
+            {
+                return;
+            }
+
+            _aiApiKey = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string AiModel
+    {
+        get => _aiModel;
+        set
+        {
+            if (value == _aiModel)
+            {
+                return;
+            }
+
+            _aiModel = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string AiSettingsStatusText
+    {
+        get => _aiSettingsStatusText;
+        private set
+        {
+            if (value == _aiSettingsStatusText)
+            {
+                return;
+            }
+
+            _aiSettingsStatusText = value;
+            OnPropertyChanged();
+        }
+    }
+
     public string RecycleBinSummary
     {
         get => _recycleBinSummary;
@@ -595,6 +665,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     public string SelectedSectionDescription => SelectedNavigation?.Key switch
     {
         "general" => "控制燕子(Swallow)的基础行为，包括启动同步和托盘停驻策略。",
+        "ai" => "配置 AI 对话使用的本地或远程兼容接口，包括地址、Key 和模型名。",
         "sync" => "管理云账号状态、同步入口和当前服务端连接信息。",
         "extensions" => "查看本地扩展目录和当前机器已发现的扩展数量。",
         "recycle" => "查看已删除扩展，支持恢复和彻底删除。",
@@ -605,6 +676,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     };
 
     public bool IsGeneralSelected => SelectedNavigation?.Key == "general";
+
+    public bool IsAiSelected => SelectedNavigation?.Key == "ai";
 
     public bool IsSyncSelected => SelectedNavigation?.Key == "sync";
 
@@ -655,6 +728,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         WebDavServerUrl = string.IsNullOrWhiteSpace(_settings.WebDavServerUrl) ? "https://dav.jianguoyun.com/dav/" : _settings.WebDavServerUrl;
         WebDavRootPath = _settings.WebDavRootPath;
         WebDavUsername = _settings.WebDavUsername;
+        AiBaseUrl = _settings.AiBaseUrl;
+        AiApiKey = _settings.AiApiKey;
+        AiModel = _settings.AiModel;
+        AiSettingsStatusText = BuildAiSettingsSummary(_settings);
         
         // 加载已保存的密码
         var credential = WebDavCredentialStore.Load();
@@ -698,6 +775,18 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         {
             RefreshSyncActivityLog();
         }
+    }
+
+    private static string BuildAiSettingsSummary(AppSettings settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings.AiBaseUrl) ||
+            string.IsNullOrWhiteSpace(settings.AiApiKey) ||
+            string.IsNullOrWhiteSpace(settings.AiModel))
+        {
+            return "尚未配置 AI。首次使用前请填写服务地址、API Key 和模型名。";
+        }
+
+        return $"当前使用 {settings.AiModel} · {settings.AiBaseUrl}";
     }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -956,6 +1045,21 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         RefreshWebDavSummary();
         SyncStatusText = "WebDAV 配置已保存。";
         RefreshSyncActivityLog();
+    }
+
+    private void SaveAiSettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        _mainWindow.SaveAiSettings(AiBaseUrl, AiApiKey, AiModel);
+        _settings = AppSettingsStore.Load();
+        AiBaseUrl = _settings.AiBaseUrl;
+        AiApiKey = _settings.AiApiKey;
+        AiModel = _settings.AiModel;
+        AiSettingsStatusText = BuildAiSettingsSummary(_settings);
+        SyncStatusText = string.IsNullOrWhiteSpace(_settings.AiBaseUrl) ||
+                         string.IsNullOrWhiteSpace(_settings.AiApiKey) ||
+                         string.IsNullOrWhiteSpace(_settings.AiModel)
+            ? "AI 配置已清空。"
+            : "AI 配置已保存。";
     }
 
     private void WebDavPasswordBox_PasswordChanged(object sender, RoutedEventArgs e)
@@ -1446,6 +1550,15 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         RefreshSyncActivityLog();
     }
 
+    public void RefreshAiConfigFromExternal()
+    {
+        _settings = AppSettingsStore.Load();
+        AiBaseUrl = _settings.AiBaseUrl;
+        AiApiKey = _settings.AiApiKey;
+        AiModel = _settings.AiModel;
+        AiSettingsStatusText = BuildAiSettingsSummary(_settings);
+    }
+
     private void EditLauncherHotkeyButton_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new HotkeyCaptureWindow(
@@ -1924,7 +2037,10 @@ public sealed class EmptyStringToVisibilityConverter : IValueConverter
     }
 }
 
-public sealed record SettingsNavigationItem(string Key, string Glyph, string Title, string Accent);
+public sealed record SettingsNavigationItem(string Key, string IconReference, string Title, string Accent)
+{
+    public Geometry? IconGeometry => ExtensionIconLibrary.ResolveVectorIcon(IconReference);
+}
 
 public sealed record SettingsShortcutItem(string ExtensionId, string Title, string Category, string? Shortcut)
 {

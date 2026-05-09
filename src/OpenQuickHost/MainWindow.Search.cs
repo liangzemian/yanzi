@@ -1,0 +1,1834 @@
+using System.Data;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Collections.Specialized;
+using System.Text.RegularExpressions;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using Microsoft.VisualBasic.FileIO;
+using Forms = System.Windows.Forms;
+using OpenQuickHost.Sync;
+
+namespace OpenQuickHost;
+
+public partial class MainWindow
+{
+    private bool TryHandleSearchScopeTabNavigation(System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Tab || IsHostedViewOpen)
+        {
+            return false;
+        }
+
+        var delta = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift ? -1 : 1;
+        CycleSearchScope(delta);
+        e.Handled = true;
+
+        if (!IsAiChatMode)
+        {
+            SearchBox.Focus();
+            SearchBox.CaretIndex = SearchBox.Text.Length;
+        }
+
+        return true;
+    }
+
+    private void ApplyFilter(string? query)
+    {
+        var parsed = ParseSearchQuery(query);
+        _activeFilterScopeKey = parsed.ScopeKey;
+        UpdateSearchScopeCounts(parsed);
+        _activeQueryArgument = string.Empty;
+
+        var calculatorCommand = TryBuildCalculatorCommand(query, parsed);
+        if (calculatorCommand != null)
+        {
+            foreach (var command in _allCommands)
+            {
+                command.SetQueryPreview(null, null);
+            }
+
+            FilteredCommands.Clear();
+            FilteredCommands.Add(calculatorCommand);
+            SelectedCommand = calculatorCommand;
+            CommandList.SelectedItem = SelectedCommand;
+            OnPropertyChanged(nameof(VisibleCountText));
+            OnPropertyChanged(nameof(FooterHint));
+            return;
+        }
+
+        if (string.Equals(parsed.ScopeKey, SearchScopeFile, StringComparison.OrdinalIgnoreCase))
+        {
+            QueueFileSearchResults(parsed.Term);
+            return;
+        }
+
+        if (TryGetPinnedSearchProviderCommand(parsed.ScopeKey, out var providerCommand))
+        {
+            var providerTerm = NormalizePinnedSearchProviderInlineQuery(providerCommand, parsed.ScopeKey, parsed.Term);
+            QueueExtensionSearchProviderResults(providerCommand, parsed.ScopeKey, providerTerm);
+            return;
+        }
+
+        if (TryResolveInlineSearchProviderCommand(parsed, query, out var inlineProviderCommand, out var inlineProviderTerm))
+        {
+            QueueExtensionSearchProviderResults(inlineProviderCommand, parsed.ScopeKey, inlineProviderTerm);
+            return;
+        }
+
+        Interlocked.Increment(ref _fileSearchRequestVersion);
+        _fileSearchDebounceTimer.Stop();
+
+        var sourceCommands = parsed.IsEmpty
+            ? _allCommands
+                .Where(command => IsExtensionEnabled(command.ExtensionId))
+                .Where(command => SearchScopeAllows(command, parsed.ScopeKey))
+            : _allCommands
+                .Where(command => IsExtensionEnabled(command.ExtensionId))
+                .Where(command => SearchScopeAllows(command, parsed.ScopeKey))
+                .Select(command => new
+                {
+                    Command = command,
+                    Match = BuildCommandMatch(command, parsed.Term, AllowsRawQueryArgument(parsed.ScopeKey))
+                })
+                .Where(x => x.Match.IsMatch)
+                .Select(x => x.Command);
+
+        foreach (var command in _allCommands)
+        {
+            command.SetQueryPreview(null, null);
+        }
+
+        var matches = sourceCommands
+            .DistinctBy(command => command.ExtensionId, StringComparer.OrdinalIgnoreCase)
+            .Select(command => new
+            {
+                Command = command,
+                Score = ScoreSearchResult(command, parsed.Term) + GetRecentlyAddedOrderingBoost(command, parsed)
+            })
+            .OrderByDescending(x => x.Score)
+            .ThenBy(x => x.Command.Category, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Command.Title, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.Command)
+            .ToList();
+
+        var allowRawQueryArgument = AllowsRawQueryArgument(parsed.ScopeKey);
+        var leadingCommand = matches.FirstOrDefault(static command => command.SupportsQueryArgument);
+        if (leadingCommand != null && !string.IsNullOrWhiteSpace(parsed.Term))
+        {
+            _activeQueryArgument = ExtractQueryArgument(leadingCommand, parsed.Term, allowRawQueryArgument);
+            if (string.IsNullOrWhiteSpace(_activeQueryArgument) && allowRawQueryArgument)
+            {
+                _activeQueryArgument = parsed.Term;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(parsed.Term))
+        {
+            foreach (var command in matches.Where(static item => item.SupportsQueryArgument))
+            {
+                ApplyQueryPreview(command, parsed.Term, allowRawQueryArgument);
+            }
+        }
+
+        FilteredCommands.Clear();
+        foreach (var item in matches)
+        {
+            FilteredCommands.Add(item);
+        }
+
+        if (string.Equals(parsed.ScopeKey, SearchScopeApplication, StringComparison.OrdinalIgnoreCase))
+        {
+            HostAssets.AppendLog($"Application scope filter: totalCommands={_allCommands.Count}, appCommands={_allCommands.Count(x => x.Source == CommandSource.Application)}, visible={matches.Count}, query='{parsed.Term}'.");
+        }
+
+        SelectedCommand = FilteredCommands.FirstOrDefault();
+        CommandList.SelectedItem = SelectedCommand;
+        OnPropertyChanged(nameof(VisibleCountText));
+        OnPropertyChanged(nameof(FooterHint));
+    }
+
+    private void CycleSearchScope(int delta)
+    {
+        if (SearchScopes.Count == 0)
+        {
+            return;
+        }
+
+        var currentIndex = SelectedSearchScope == null ? 0 : SearchScopes.IndexOf(SelectedSearchScope);
+        if (currentIndex < 0)
+        {
+            currentIndex = 0;
+        }
+
+        var nextIndex = (currentIndex + delta) % SearchScopes.Count;
+        if (nextIndex < 0)
+        {
+            nextIndex = SearchScopes.Count - 1;
+        }
+
+        SelectedSearchScope = SearchScopes[nextIndex];
+    }
+
+    private SearchQueryState ParseSearchQuery(string? query)
+    {
+        var raw = (query ?? string.Empty).Trim();
+        var scope = SelectedSearchScope?.Key ?? SearchScopeAll;
+        if (!raw.StartsWith('@') && !raw.StartsWith('＠'))
+        {
+            return new SearchQueryState(scope, raw, string.IsNullOrWhiteSpace(raw));
+        }
+
+        var withoutAt = raw[1..].TrimStart();
+        if (string.IsNullOrWhiteSpace(withoutAt))
+        {
+            return new SearchQueryState(scope, string.Empty, true);
+        }
+
+        var separator = withoutAt.IndexOf(' ');
+        var token = separator < 0 ? withoutAt : withoutAt[..separator];
+        var term = separator < 0 ? string.Empty : withoutAt[(separator + 1)..].Trim();
+        return TryResolveSearchScopeAlias(token, out var parsedScope)
+            ? new SearchQueryState(parsedScope, term, string.IsNullOrWhiteSpace(term))
+            : new SearchQueryState(scope, raw, false);
+    }
+
+    private bool TryResolveSearchScopeAlias(string token, out string scope)
+    {
+        if (TryResolveBuiltInSearchScopeAlias(token, out scope))
+        {
+            return true;
+        }
+
+        foreach (var command in GetPinnedSearchScopeCommands())
+        {
+            if (!IsPinnedSearchScopeAliasMatch(command, token))
+            {
+                continue;
+            }
+
+            scope = SearchScopeTab.CreatePinnedCommandKey(command.ExtensionId);
+            return true;
+        }
+
+        scope = string.Empty;
+        return false;
+    }
+
+    private static bool TryResolveBuiltInSearchScopeAlias(string token, out string scope)
+    {
+        scope = token.Trim().ToLowerInvariant() switch
+        {
+            "all" or "全部" => SearchScopeAll,
+            "extension" or "ext" or "扩展" or "插件" => SearchScopeExtension,
+            "application" or "app" or "应用" or "程序" => SearchScopeApplication,
+            "file" or "files" or "everything" or "文件" => SearchScopeFile,
+            "system" or "sys" or "设置" or "系统" => SearchScopeSystem,
+            _ => string.Empty
+        };
+
+        if (scope.Length == 0 && token.StartsWith("pin:", StringComparison.OrdinalIgnoreCase))
+        {
+            scope = token;
+        }
+
+        return scope.Length > 0;
+    }
+
+    private static bool IsPinnedSearchScopeAliasMatch(CommandItem command, string token)
+    {
+        var normalizedToken = NormalizeSearchScopeAlias(token);
+        if (normalizedToken.Length == 0)
+        {
+            return false;
+        }
+
+        if (NormalizeSearchScopeAlias(command.Title).Equals(normalizedToken, StringComparison.OrdinalIgnoreCase) ||
+            NormalizeSearchScopeAlias(command.ExtensionId).Equals(normalizedToken, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (command.QueryPrefixes.Any(prefix =>
+                NormalizeSearchScopeAlias(prefix).Equals(normalizedToken, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return ResolveSearchProviderForCommand(command)?.Aliases.Any(alias =>
+            NormalizeSearchScopeAlias(alias).Equals(normalizedToken, StringComparison.OrdinalIgnoreCase)) == true;
+    }
+
+    private string NormalizePinnedSearchProviderInlineQuery(CommandItem command, string scopeKey, string term)
+    {
+        if (!string.Equals(SelectedSearchScope?.Key, scopeKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return term;
+        }
+
+        var trimmedTerm = term.TrimStart();
+        if (trimmedTerm.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        foreach (var alias in EnumeratePinnedSearchProviderActivationAliases(command))
+        {
+            if (trimmedTerm.Equals(alias, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            if (trimmedTerm.StartsWith(alias + " ", StringComparison.OrdinalIgnoreCase) ||
+                trimmedTerm.StartsWith(alias + "　", StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmedTerm[(alias.Length + 1)..].TrimStart();
+            }
+        }
+
+        return term;
+    }
+
+    private static IEnumerable<string> EnumeratePinnedSearchProviderActivationAliases(CommandItem command)
+    {
+        yield return command.Title;
+        yield return command.ExtensionId;
+
+        foreach (var prefix in command.QueryPrefixes)
+        {
+            if (!string.IsNullOrWhiteSpace(prefix))
+            {
+                yield return prefix;
+            }
+        }
+
+        if (ResolveSearchProviderForCommand(command) is { Aliases: var aliases })
+        {
+            foreach (var alias in aliases)
+            {
+                if (!string.IsNullOrWhiteSpace(alias))
+                {
+                    yield return alias;
+                }
+            }
+        }
+    }
+
+    private bool TryResolveInlineSearchProviderCommand(SearchQueryState parsed, string? rawQuery, out CommandItem command, out string providerTerm)
+    {
+        command = null!;
+        providerTerm = string.Empty;
+
+        if (!string.Equals(parsed.ScopeKey, SearchScopeExtension, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var rawInput = rawQuery ?? string.Empty;
+        if (rawInput.StartsWith('@') || rawInput.StartsWith('＠'))
+        {
+            return false;
+        }
+
+        var trimmedStartInput = rawInput.TrimStart();
+        if (trimmedStartInput.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var candidate in _allCommands.Where(item =>
+                     item.Source == CommandSource.LocalExtension &&
+                     IsExtensionEnabled(item.ExtensionId) &&
+                     ResolveSearchProviderForCommand(item) != null))
+        {
+            foreach (var alias in EnumeratePinnedSearchProviderActivationAliases(candidate))
+            {
+                if (string.IsNullOrWhiteSpace(alias))
+                {
+                    continue;
+                }
+
+                if (!trimmedStartInput.StartsWith(alias + " ", StringComparison.OrdinalIgnoreCase) &&
+                    !trimmedStartInput.StartsWith(alias + "　", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                command = candidate;
+                providerTerm = trimmedStartInput[(alias.Length + 1)..];
+                if (providerTerm.Length == 0)
+                {
+                    return true;
+                }
+
+                providerTerm = providerTerm.TrimStart();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private CommandItem? TryBuildCalculatorCommand(string? rawQuery, SearchQueryState parsed)
+    {
+        if (!string.Equals(parsed.ScopeKey, SearchScopeAll, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(parsed.ScopeKey, SearchScopeExtension, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var input = (rawQuery ?? string.Empty).Trim();
+        if (input.Length == 0 ||
+            input.Contains('@') ||
+            input.Contains(' ') ||
+            !Regex.IsMatch(input, @"^[0-9\.\+\-\*/%\(\)]+$"))
+        {
+            return null;
+        }
+
+        try
+        {
+            var table = new DataTable();
+            var result = table.Compute(input, string.Empty);
+            var normalized = Convert.ToString(result, CultureInfo.InvariantCulture) ?? string.Empty;
+            if (normalized.Length == 0)
+            {
+                return null;
+            }
+
+            return new CommandItem(
+                glyph: "=",
+                title: normalized,
+                subtitle: $"计算结果   ·   {input}",
+                category: "计算",
+                accentHex: "#FF8B5CF6",
+                openTarget: null,
+                keywords: [input, normalized, "计算", "calculator"],
+                source: CommandSource.Local,
+                extensionId: $"calc::{input}",
+                resultKind: ResultItemKind.Record,
+                resultProviderTitle: "计算器");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void UpdateSearchInlineCompletion()
+    {
+        var text = SearchBox.Text ?? string.Empty;
+        if (text.Length == 0 || text.StartsWith('@') || text.Contains(' ') || SearchBox.CaretIndex != text.Length)
+        {
+            SearchInlineCompletionSuffix = string.Empty;
+            SearchInlineCompletionPrefixWidth = 0;
+            return;
+        }
+
+        var candidate = FilteredCommands
+            .FirstOrDefault(command =>
+                !string.IsNullOrWhiteSpace(command.Title) &&
+                command.Title.StartsWith(text, StringComparison.OrdinalIgnoreCase) &&
+                !command.Title.Equals(text, StringComparison.OrdinalIgnoreCase));
+
+        if (candidate == null)
+        {
+            SearchInlineCompletionSuffix = string.Empty;
+            SearchInlineCompletionPrefixWidth = 0;
+            return;
+        }
+
+        SearchInlineCompletionSuffix = candidate.Title[text.Length..];
+        SearchInlineCompletionPrefixWidth = MeasureSearchTextWidth(text);
+    }
+
+    private bool AcceptSearchInlineCompletion()
+    {
+        if (string.IsNullOrWhiteSpace(SearchInlineCompletionSuffix) || SearchBox.CaretIndex != SearchBox.Text.Length)
+        {
+            return false;
+        }
+
+        SearchBox.Text += SearchInlineCompletionSuffix;
+        SearchBox.CaretIndex = SearchBox.Text.Length;
+        SearchInlineCompletionSuffix = string.Empty;
+        return true;
+    }
+
+    private double MeasureSearchTextWidth(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return 0;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var formattedText = new FormattedText(
+            text,
+            CultureInfo.CurrentUICulture,
+            System.Windows.FlowDirection.LeftToRight,
+            new Typeface(SearchBox.FontFamily, SearchBox.FontStyle, SearchBox.FontWeight, SearchBox.FontStretch),
+            SearchBox.FontSize,
+            System.Windows.Media.Brushes.Transparent,
+            dpi);
+        return formattedText.WidthIncludingTrailingWhitespace + 1;
+    }
+
+    private static string NormalizeSearchScopeAlias(string value)
+    {
+        return (value ?? string.Empty)
+            .Trim()
+            .Replace(" ", string.Empty, StringComparison.Ordinal)
+            .Replace("　", string.Empty, StringComparison.Ordinal)
+            .ToLowerInvariant();
+    }
+
+    private static bool SearchScopeAllows(CommandItem command, string scope)
+    {
+        return scope switch
+        {
+            SearchScopeAll => true,
+            SearchScopeExtension => command.Source == CommandSource.LocalExtension || command.Source == CommandSource.WebSearch,
+            SearchScopeApplication => command.Source == CommandSource.Application,
+            SearchScopeFile => command.Source == CommandSource.File,
+            SearchScopeSystem => command.Category.Contains("系统", StringComparison.OrdinalIgnoreCase),
+            _ when SearchScopeTab.TryParsePinnedCommandScope(scope, out var extensionId) =>
+                command.ExtensionId.Equals(extensionId, StringComparison.OrdinalIgnoreCase),
+            _ => true
+        };
+    }
+
+    private int ScoreSearchResult(CommandItem command, string query)
+    {
+        var score = string.IsNullOrWhiteSpace(query)
+            ? 0
+            : BuildCommandMatch(command, query).Priority;
+        score += command.Source == CommandSource.WebSearch ? 80 : 0;
+        score += _searchUsageMemory.Score(command.ExtensionId);
+        return score;
+    }
+
+    private int GetRecentlyAddedOrderingBoost(CommandItem command, SearchQueryState query)
+    {
+        if (command.Source != CommandSource.LocalExtension)
+        {
+            return 0;
+        }
+
+        if (!query.IsEmpty &&
+            !string.Equals(query.ScopeKey, SearchScopeExtension, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(query.ScopeKey, SearchScopeAll, StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        var index = (_appSettings.RecentlyAddedExtensionIds ?? []).FindIndex(id =>
+            id.Equals(command.ExtensionId, StringComparison.OrdinalIgnoreCase));
+        return index < 0 ? 0 : Math.Max(0, 5000 - index);
+    }
+
+    private void UpdateSearchScopeCounts(SearchQueryState parsed)
+    {
+        foreach (var scope in SearchScopes)
+        {
+            var scopedQuery = parsed with { ScopeKey = scope.Key };
+            scope.Count = CountScopeResults(scopedQuery);
+        }
+    }
+
+    private int CountScopeResults(SearchQueryState query)
+    {
+        if (string.Equals(query.ScopeKey, SearchScopeFile, StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Equals(SelectedSearchScope?.Key, SearchScopeFile, StringComparison.OrdinalIgnoreCase)
+                ? FilteredCommands.Count(command => command.Source == CommandSource.File)
+                : 0;
+        }
+
+        if (TryGetPinnedSearchProviderCommand(query.ScopeKey, out _))
+        {
+            return string.Equals(SelectedSearchScope?.Key, query.ScopeKey, StringComparison.OrdinalIgnoreCase)
+                ? FilteredCommands.Count
+                : 0;
+        }
+
+        var commandCount = query.IsEmpty
+            ? 0
+            : _allCommands.Count(command =>
+                IsExtensionEnabled(command.ExtensionId) &&
+                SearchScopeAllows(command, query.ScopeKey) &&
+                BuildCommandMatch(command, query.Term, AllowsRawQueryArgument(query.ScopeKey)).IsMatch);
+        return commandCount;
+    }
+
+    private static bool AllowsRawQueryArgument(string scopeKey) => false;
+
+    private void ApplyQueryPreview(CommandItem command, string rawInput, bool allowRawQueryArgument)
+    {
+        var argument = ExtractQueryArgument(command, rawInput, allowRawQueryArgument);
+        if (string.IsNullOrWhiteSpace(argument))
+        {
+            if (!allowRawQueryArgument)
+            {
+                command.SetQueryPreview(null, null);
+                return;
+            }
+
+            argument = rawInput.Trim();
+        }
+
+        var compactArgument = argument.Length <= 18 ? argument : argument[..18] + "...";
+        var subtitle = BuildQueryPreviewText(command, compactArgument);
+        command.SetQueryPreview(subtitle, null);
+    }
+
+    private static string BuildQueryPreviewText(CommandItem command, string argument)
+    {
+        if (!string.IsNullOrWhiteSpace(command.QueryTargetTemplate))
+        {
+            var searchName = command.Title.Replace("搜索", string.Empty, StringComparison.Ordinal).Trim();
+            if (string.IsNullOrWhiteSpace(searchName))
+            {
+                searchName = command.Title;
+            }
+
+            return $"用{searchName}搜索「{argument}」";
+        }
+
+        if (command.HasHostedView)
+        {
+            return $"打开{command.Title}并填入「{argument}」";
+        }
+
+        if (command.HasScriptEntry)
+        {
+            return $"将「{argument}」传给{command.Title}";
+        }
+
+        return $"使用{command.Title}处理「{argument}」";
+    }
+
+    private void MoveSelection(int delta)
+    {
+        if (FilteredCommands.Count == 0)
+        {
+            return;
+        }
+
+        var currentIndex = SelectedCommand == null ? -1 : FilteredCommands.IndexOf(SelectedCommand);
+        var nextIndex = currentIndex + delta;
+        if (nextIndex < 0)
+        {
+            nextIndex = 0;
+        }
+        else if (nextIndex >= FilteredCommands.Count)
+        {
+            nextIndex = FilteredCommands.Count - 1;
+        }
+
+        SelectedCommand = FilteredCommands[nextIndex];
+        CommandList.SelectedItem = SelectedCommand;
+        CommandList.ScrollIntoView(SelectedCommand);
+    }
+
+    private void AddCurrentCommandToPinnedSearchScopes()
+    {
+        var sourceCommand = SelectedCommand != null && !IsInternalCommand(SelectedCommand)
+            ? SelectedCommand
+            : _lastActionableCommand;
+        if (sourceCommand == null)
+        {
+            SyncStatus = "没有可固定到顶部的扩展。";
+            return;
+        }
+
+        var command = ResolveRunnableCommand(sourceCommand);
+        if (command.IsFileSystemResult)
+        {
+            SyncStatus = "文件结果不支持固定为顶部扩展标签。";
+            return;
+        }
+
+        var settings = AppSettingsStore.Load();
+        settings.PinnedSearchScopeCommandIds ??= [];
+        if (settings.PinnedSearchScopeCommandIds.Contains(command.ExtensionId, StringComparer.OrdinalIgnoreCase))
+        {
+            LastRunMessage = $"顶部已固定：{command.Title}";
+            return;
+        }
+
+        settings.PinnedSearchScopeCommandIds.Add(command.ExtensionId);
+        AppSettingsStore.Save(settings);
+        _appSettings = settings;
+        ReloadSearchScopes();
+        SelectedSearchScope = SearchScopes.FirstOrDefault(scope => scope.Key.Equals(SearchScopeTab.CreatePinnedCommandKey(command.ExtensionId), StringComparison.OrdinalIgnoreCase))
+            ?? SelectedSearchScope;
+        LastRunMessage = $"已固定到顶部：{command.Title}";
+        SyncStatus = $"已固定到顶部标签：{command.Title}";
+    }
+
+    private void RemovePinnedSearchScope(SearchScopeTab scope)
+    {
+        if (!scope.IsPinnedCommand || string.IsNullOrWhiteSpace(scope.PinnedCommandId))
+        {
+            return;
+        }
+
+        var settings = AppSettingsStore.Load();
+        settings.PinnedSearchScopeCommandIds ??= [];
+        var removed = settings.PinnedSearchScopeCommandIds.RemoveAll(id => id.Equals(scope.PinnedCommandId, StringComparison.OrdinalIgnoreCase));
+        if (removed == 0)
+        {
+            return;
+        }
+
+        AppSettingsStore.Save(settings);
+        _appSettings = settings;
+        ReloadSearchScopes();
+        SelectedSearchScope = SearchScopes.FirstOrDefault(item => item.Key.Equals(scope.Key, StringComparison.OrdinalIgnoreCase)) == null
+            ? SearchScopes.FirstOrDefault(item => !item.IsPinnedCommand) ?? SearchScopes.FirstOrDefault()
+            : SelectedSearchScope;
+        LastRunMessage = $"已移除顶部标签：{scope.Label}";
+        SyncStatus = $"已移除顶部标签：{scope.Label}";
+    }
+
+    private void AddCurrentCommandToQuickPanel()
+    {
+        var sourceCommand = SelectedCommand != null && !IsInternalCommand(SelectedCommand)
+            ? SelectedCommand
+            : _lastActionableCommand;
+        
+        if (sourceCommand == null) return;
+        var command = ResolveRunnableCommand(sourceCommand);
+        if (command.IsFileSystemResult)
+        {
+            SyncStatus = "文件结果不能加入鼠标面板。";
+            return;
+        }
+
+        var settings = AppSettingsStore.Load();
+        var group = settings.QuickPanelGlobalGroups
+            .FirstOrDefault(item => string.Equals(item.Id, settings.SelectedQuickPanelGlobalGroupId, StringComparison.OrdinalIgnoreCase))
+            ?? settings.QuickPanelGlobalGroups.FirstOrDefault();
+        if (group == null)
+        {
+            SyncStatus = "鼠标面板分组未初始化，无法添加。";
+            return;
+        }
+
+        group.SlotItems ??= [];
+        while (group.SlotItems.Count < 12)
+        {
+            group.SlotItems.Add(null);
+        }
+
+        if (group.SlotItems.Any(slot =>
+                slot != null &&
+                ((!slot.IsFolder && string.Equals(slot.ExtensionId, command.ExtensionId, StringComparison.OrdinalIgnoreCase)) ||
+                 (slot.IsFolder && slot.FolderExtensionIds.Any(id => string.Equals(id, command.ExtensionId, StringComparison.OrdinalIgnoreCase))))))
+        {
+            LastRunMessage = $"鼠标面板中已存在：{command.Title}";
+            _quickPanel?.ReloadSlots();
+            return;
+        }
+
+        var index = group.SlotItems.FindIndex(static item => item == null);
+        if (index >= 0)
+        {
+            group.SlotItems[index] = new QuickPanelSlotItem
+            {
+                ExtensionId = command.ExtensionId
+            };
+            group.Slots = group.SlotItems.Select(static item => item != null && !item.IsFolder ? item.ExtensionId : null).ToList();
+            if (settings.QuickPanelSlots.Count > index)
+            {
+                settings.QuickPanelSlots[index] = command.ExtensionId;
+            }
+
+            AppSettingsStore.Save(settings);
+            _quickPanel?.ReloadSlots();
+            LastRunMessage = $"已添加到鼠标面板「{group.Name}」第 {index + 1} 个槽位：{command.Title}";
+        }
+        else
+        {
+            SyncStatus = $"鼠标面板分组「{group.Name}」已满（12 个槽位），请先移除旧扩展。";
+        }
+    }
+
+    private IEnumerable<CommandItem> GetPinnedSearchScopeCommands()
+    {
+        var pinnedIds = _appSettings.PinnedSearchScopeCommandIds ?? [];
+        foreach (var pinnedId in pinnedIds)
+        {
+            var command = _allCommands.FirstOrDefault(item => item.ExtensionId.Equals(pinnedId, StringComparison.OrdinalIgnoreCase));
+            if (command != null && !IsInternalCommand(command))
+            {
+                yield return command;
+            }
+        }
+    }
+
+    private bool TryGetPinnedSearchProviderCommand(string scopeKey, out CommandItem command)
+    {
+        command = null!;
+        if (!SearchScopeTab.TryParsePinnedCommandScope(scopeKey, out var extensionId))
+        {
+            return false;
+        }
+
+        var matchedCommand = _allCommands.FirstOrDefault(item =>
+            item.ExtensionId.Equals(extensionId, StringComparison.OrdinalIgnoreCase) &&
+            ResolveSearchProviderForCommand(item) != null);
+        if (matchedCommand == null)
+        {
+            return false;
+        }
+
+        command = matchedCommand;
+        return true;
+    }
+
+    private static CommandSearchProviderDefinition? ResolveSearchProviderForCommand(CommandItem command)
+    {
+        if (command.SearchProvider != null)
+        {
+            return command.SearchProvider;
+        }
+
+        if (command.Source == CommandSource.LocalExtension &&
+            command.OpenTarget is { Length: > 0 } openTarget &&
+            Directory.Exists(openTarget))
+        {
+            return new CommandSearchProviderDefinition(
+                "folder",
+                openTarget,
+                IncludeSubdirectories: true,
+                IncludeFiles: true,
+                IncludeDirectories: false,
+                MaxResults: 128,
+                Aliases: []);
+        }
+
+        return null;
+    }
+
+    private void ReloadSearchScopes()
+    {
+        var currentKey = SelectedSearchScope?.Key ?? SearchScopeAll;
+        SearchScopes.Clear();
+        foreach (var scope in BuildSearchScopes())
+        {
+            SearchScopes.Add(scope);
+        }
+
+        SelectedSearchScope = SearchScopes.FirstOrDefault(scope => scope.Key.Equals(currentKey, StringComparison.OrdinalIgnoreCase))
+            ?? SearchScopes.FirstOrDefault();
+    }
+
+    private void CopyExtensionMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var sourceCommand = SelectedCommand != null && !IsInternalCommand(SelectedCommand)
+            ? SelectedCommand
+            : _lastActionableCommand;
+        if (sourceCommand == null)
+        {
+            return;
+        }
+
+        var command = ResolveRunnableCommand(sourceCommand);
+        if (command.IsFileSystemResult)
+        {
+            return;
+        }
+
+        SetQuickPanelClipboard(command, isCut: false, sourceSlot: null);
+    }
+
+    private void CutExtensionMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var sourceCommand = SelectedCommand != null && !IsInternalCommand(SelectedCommand)
+            ? SelectedCommand
+            : _lastActionableCommand;
+        if (sourceCommand == null)
+        {
+            return;
+        }
+
+        var command = ResolveRunnableCommand(sourceCommand);
+        if (command.IsFileSystemResult)
+        {
+            return;
+        }
+
+        SetQuickPanelClipboard(command, isCut: true, sourceSlot: null);
+    }
+
+    private void PasteExtensionMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (TryImportExtensionFromSystemClipboard(out var command, out var message) && command != null)
+        {
+            LastRunMessage = $"已从剪贴板导入扩展：{command.Title}";
+            QueueBackgroundWebDavSync("extension-import-clipboard");
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            SyncStatus = message;
+        }
+    }
+
+    private Task SetSelectedExtensionShortcutAsync()
+    {
+        var sourceCommand = SelectedCommand != null && !IsInternalCommand(SelectedCommand)
+            ? SelectedCommand
+            : _lastActionableCommand;
+        if (sourceCommand == null)
+        {
+            SyncStatus = "没有可设置快捷键的扩展。";
+            return Task.CompletedTask;
+        }
+
+        var extension = ResolveRunnableCommand(sourceCommand);
+        if (extension.Source != CommandSource.LocalExtension)
+        {
+            SyncStatus = "当前选中项不是本地扩展，不能直接设置快捷键。";
+            return Task.CompletedTask;
+        }
+
+        var dialog = new HotkeyCaptureWindow(
+            "设置快捷键",
+            "窗口激活后，直接按一次新的组合键即可完成录制。需要清除时可点“清空”。",
+            extension.GlobalShortcut ?? string.Empty,
+            allowEmpty: true)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(dialog.ShortcutText) &&
+                (!TryParseHotkey(dialog.ShortcutText, out _, out _) || IsDoubleTapShortcut(dialog.ShortcutText)))
+            {
+                SyncStatus = "快捷键格式无效。示例：Ctrl+Alt+T";
+                return Task.CompletedTask;
+            }
+
+            var updated = LocalExtensionCatalog.SetGlobalShortcut(extension.ExtensionId, dialog.ShortcutText);
+            UpsertLocalExtensionCommand(updated);
+            ApplyFilter(SearchBox.Text);
+            SelectedCommand = _allCommands.FirstOrDefault(x => x.ExtensionId.Equals(updated.ExtensionId, StringComparison.OrdinalIgnoreCase));
+            CommandList.SelectedItem = SelectedCommand;
+            LastRunMessage = string.IsNullOrWhiteSpace(updated.GlobalShortcut)
+                ? $"已清除快捷键：{updated.Title}"
+                : $"已设置快捷键：{updated.Title} -> {updated.GlobalShortcut}";
+            QueueBackgroundWebDavSync("extension-shortcut");
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"设置快捷键失败：{FormatExceptionMessage(ex)}";
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task ApplyFileSearchResultsAsync(string query, int requestVersion)
+    {
+        foreach (var command in _allCommands)
+        {
+            command.SetQueryPreview(null, null);
+        }
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            if (requestVersion != _fileSearchRequestVersion)
+            {
+                return;
+            }
+
+            FilteredCommands.Clear();
+            SelectedCommand = null;
+            CommandList.SelectedItem = null;
+            OnPropertyChanged(nameof(VisibleCountText));
+            OnPropertyChanged(nameof(FooterHint));
+            return;
+        }
+
+        var response = await Task.Run(() => EverythingSearchService.Search(query, 256));
+        if (requestVersion != _fileSearchRequestVersion ||
+            !string.Equals(_activeFilterScopeKey, SearchScopeFile, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(_pendingFileSearchTerm, query, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!response.Success)
+        {
+            if (!string.IsNullOrWhiteSpace(response.ErrorMessage))
+            {
+                SyncStatus = response.ErrorMessage;
+            }
+
+            MaybePromptEverythingManualInitialization(query);
+
+            FilteredCommands.Clear();
+            SelectedCommand = null;
+            CommandList.SelectedItem = null;
+            OnPropertyChanged(nameof(VisibleCountText));
+            OnPropertyChanged(nameof(FooterHint));
+            return;
+        }
+
+        var fileCommands = response.Results
+            .Select(BuildResultItemFromEverythingResult)
+            .Select(BuildCommandFromResultItem)
+            .ToList();
+
+        FilteredCommands.Clear();
+        foreach (var item in fileCommands)
+        {
+            FilteredCommands.Add(item);
+        }
+
+        SelectedCommand = FilteredCommands.FirstOrDefault();
+        CommandList.SelectedItem = SelectedCommand;
+        OnPropertyChanged(nameof(VisibleCountText));
+        OnPropertyChanged(nameof(FooterHint));
+
+        if (fileCommands.Count == 0)
+        {
+            MaybePromptEverythingManualInitialization(query);
+        }
+
+        _ = LoadFileIconsAsync(fileCommands, requestVersion);
+    }
+
+    private async Task ApplyExtensionSearchProviderResultsAsync(CommandItem providerCommand, string scopeKey, string query, int requestVersion)
+    {
+        foreach (var command in _allCommands)
+        {
+            command.SetQueryPreview(null, null);
+        }
+
+        var searchProvider = ResolveSearchProviderForCommand(providerCommand);
+        if (searchProvider == null)
+        {
+            if (requestVersion != _fileSearchRequestVersion)
+            {
+                return;
+            }
+
+            FilteredCommands.Clear();
+            SelectedCommand = null;
+            CommandList.SelectedItem = null;
+            OnPropertyChanged(nameof(VisibleCountText));
+            OnPropertyChanged(nameof(FooterHint));
+            return;
+        }
+
+        var response = await ExtensionSearchProviderService.SearchAsync(providerCommand, searchProvider, query, CancellationToken.None);
+        if (requestVersion != _fileSearchRequestVersion ||
+            !string.Equals(_activeFilterScopeKey, scopeKey, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(_pendingProviderSearchScopeKey, scopeKey, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(_pendingProviderSearchTerm, query, StringComparison.Ordinal) ||
+            _pendingProviderSearchCommand == null ||
+            !_pendingProviderSearchCommand.ExtensionId.Equals(providerCommand.ExtensionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!response.Success)
+        {
+            if (!string.IsNullOrWhiteSpace(response.ErrorMessage))
+            {
+                SyncStatus = response.ErrorMessage;
+            }
+
+            FilteredCommands.Clear();
+            SelectedCommand = null;
+            CommandList.SelectedItem = null;
+            OnPropertyChanged(nameof(VisibleCountText));
+            OnPropertyChanged(nameof(FooterHint));
+            return;
+        }
+
+        var resultCommands = response.Results
+            .Select(result => BuildCommandFromResultItem(result with
+            {
+                Subtitle = string.IsNullOrWhiteSpace(result.ProviderTitle)
+                    ? $"{result.Subtitle}   ·   来源：{providerCommand.Title}"
+                    : result.Subtitle
+            }))
+            .ToList();
+
+        FilteredCommands.Clear();
+        foreach (var item in resultCommands)
+        {
+            FilteredCommands.Add(item);
+        }
+
+        SelectedCommand = FilteredCommands.FirstOrDefault();
+        CommandList.SelectedItem = SelectedCommand;
+        OnPropertyChanged(nameof(VisibleCountText));
+        OnPropertyChanged(nameof(FooterHint));
+
+        if (resultCommands.Count == 0)
+        {
+            SyncStatus = $"{providerCommand.Title} 没有找到匹配结果。";
+        }
+
+        _ = LoadFileIconsAsync(resultCommands, requestVersion);
+    }
+
+    private void QueueFileSearchResults(string query)
+    {
+        _pendingFileSearchTerm = query;
+        _pendingProviderSearchTerm = string.Empty;
+        _pendingProviderSearchScopeKey = string.Empty;
+        _pendingProviderSearchCommand = null;
+        _fileSearchDebounceTimer.Stop();
+        var requestVersion = Interlocked.Increment(ref _fileSearchRequestVersion);
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            _ = ApplyFileSearchResultsAsync(string.Empty, requestVersion);
+            return;
+        }
+
+        _fileSearchDebounceTimer.Start();
+    }
+
+    private void QueueExtensionSearchProviderResults(CommandItem providerCommand, string scopeKey, string query)
+    {
+        _pendingProviderSearchCommand = providerCommand;
+        _pendingProviderSearchScopeKey = scopeKey;
+        _pendingProviderSearchTerm = query;
+        _pendingFileSearchTerm = string.Empty;
+        _fileSearchDebounceTimer.Stop();
+        var requestVersion = Interlocked.Increment(ref _fileSearchRequestVersion);
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            _ = ApplyExtensionSearchProviderResultsAsync(providerCommand, scopeKey, string.Empty, requestVersion);
+            return;
+        }
+
+        _fileSearchDebounceTimer.Start();
+    }
+
+    private async void FileSearchDebounceTimer_Tick(object? sender, EventArgs e)
+    {
+        _fileSearchDebounceTimer.Stop();
+        if (!string.Equals(_activeFilterScopeKey, SearchScopeFile, StringComparison.OrdinalIgnoreCase))
+        {
+            if (_pendingProviderSearchCommand == null ||
+                !string.Equals(_activeFilterScopeKey, _pendingProviderSearchScopeKey, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var providerRequestVersion = _fileSearchRequestVersion;
+            await ApplyExtensionSearchProviderResultsAsync(_pendingProviderSearchCommand, _pendingProviderSearchScopeKey, _pendingProviderSearchTerm, providerRequestVersion);
+            return;
+        }
+
+        var requestVersion = _fileSearchRequestVersion;
+        await ApplyFileSearchResultsAsync(_pendingFileSearchTerm, requestVersion);
+    }
+
+    private static CommandItem BuildCommandFromResultItem(ResultProviderItem result)
+    {
+        return new CommandItem(
+            glyph: string.Empty,
+            title: result.Title,
+            subtitle: result.Subtitle,
+            category: result.Kind == ResultItemKind.Folder ? "文件夹" : result.Kind == ResultItemKind.File ? "文件" : "结果",
+            accentHex: result.AccentHex,
+            openTarget: result.OpenTarget,
+            keywords: result.Keywords,
+            source: CommandSource.File,
+            extensionId: $"result::{result.Id}",
+            resultKind: result.Kind,
+            resultProviderTitle: result.ProviderTitle);
+    }
+
+    private static ResultProviderItem BuildResultItemFromEverythingResult(EverythingSearchResult result)
+    {
+        var subtitle = string.IsNullOrWhiteSpace(result.SizeText)
+            ? result.DirectoryPath
+            : $"{result.DirectoryPath}   ·   {result.SizeText}";
+
+        return new ResultProviderItem(
+            Id: result.FullPath,
+            Title: result.Name,
+            Subtitle: subtitle,
+            Kind: result.IsFolder ? ResultItemKind.Folder : ResultItemKind.File,
+            OpenTarget: result.FullPath,
+            Keywords: [result.FullPath, result.DirectoryPath, result.Name],
+            AccentHex: result.IsFolder ? "#FF3B82F6" : "#FF4B5563",
+            ProviderTitle: "Everything 文件");
+    }
+
+    private bool IsFileIconLoadScopeActive()
+    {
+        return string.Equals(_activeFilterScopeKey, SearchScopeFile, StringComparison.OrdinalIgnoreCase) ||
+               TryGetPinnedSearchProviderCommand(_activeFilterScopeKey, out _);
+    }
+
+    private async Task LoadFileIconsAsync(IReadOnlyList<CommandItem> commands, int requestVersion)
+    {
+        foreach (var command in commands)
+        {
+            if (requestVersion != _fileSearchRequestVersion ||
+                !IsFileIconLoadScopeActive())
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(command.OpenTarget))
+            {
+                continue;
+            }
+
+            var isFolder = command.ResultKind == ResultItemKind.Folder;
+            var icon = await Task.Run(() => NativeFileIconService.GetIcon(command.OpenTarget, isFolder));
+            if (icon == null)
+            {
+                continue;
+            }
+
+            if (requestVersion != _fileSearchRequestVersion ||
+                !IsFileIconLoadScopeActive())
+            {
+                return;
+            }
+
+            await Dispatcher.InvokeAsync(() => command.SetIconSource(icon));
+        }
+    }
+
+    private void MaybePromptEverythingManualInitialization(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return;
+        }
+
+        if (EverythingSearchService.IsDatabaseLoaded())
+        {
+            return;
+        }
+
+        if (!EverythingRuntimeService.HasBundledRuntime())
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastFileSearchManualInitPromptAt < TimeSpan.FromSeconds(10))
+        {
+            return;
+        }
+
+        _lastFileSearchManualInitPromptAt = now;
+        SyncStatus = EverythingRuntimeService.IsProcessRunning()
+            ? "Everything 已启动，但索引尚未完成初始化。"
+            : "Everything 尚未完成初始化，文件搜索暂时不可用。";
+        HostAssets.AppendLog("File search prompt: Everything runtime is not initialized; showing manual initialization hint.");
+        var result = System.Windows.MessageBox.Show(
+            "文件搜索引擎已启动，但当前还没有完成索引初始化。\n\n点击“是”后，燕子会直接打开 Everything，让它弹出原生授权/初始化提示。完成后回到燕子重新搜索即可。",
+            "文件搜索需要初始化",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Information);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        if (EverythingRuntimeService.ShowInteractiveSetup())
+        {
+            SyncStatus = "已打开 Everything 初始化窗口，请按提示完成授权。";
+        }
+        else
+        {
+            SyncStatus = "无法打开 Everything 初始化窗口，请手动从托盘打开一次 Everything。";
+        }
+    }
+
+    private bool TryShowNativeFileContextMenu()
+    {
+        var command = SelectedCommand;
+        if (command?.IsFileSystemResult != true || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return false;
+        }
+
+        return ShowFileResultContextMenu();
+    }
+
+    private bool ShowFileResultContextMenu(FrameworkElement? placementTarget = null)
+    {
+        var command = SelectedCommand;
+        if (command?.IsFileSystemResult != true || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return false;
+        }
+
+        if (TryFindResource("FileResultContextMenu") is not System.Windows.Controls.ContextMenu menu)
+        {
+            return false;
+        }
+
+        menu.PlacementTarget = placementTarget ?? CommandList;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+        menu.IsOpen = true;
+        return true;
+    }
+
+    private bool ShowGenericResultContextMenu(FrameworkElement? placementTarget = null)
+    {
+        var command = SelectedCommand;
+        if (command?.IsProviderResult != true || command.IsFileSystemResult)
+        {
+            return false;
+        }
+
+        if (TryFindResource("GenericResultContextMenu") is not System.Windows.Controls.ContextMenu menu)
+        {
+            return false;
+        }
+
+        foreach (var item in menu.Items.OfType<MenuItem>())
+        {
+            if (item.Header is not string header)
+            {
+                continue;
+            }
+
+            if (header.Contains("复制目标", StringComparison.Ordinal))
+            {
+                item.IsEnabled = !string.IsNullOrWhiteSpace(command.OpenTarget);
+            }
+        }
+
+        menu.PlacementTarget = placementTarget ?? CommandList;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+        menu.IsOpen = true;
+        return true;
+    }
+
+    private async Task ExecuteGenericResultAsync(CommandItem command)
+    {
+        if (!string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = command.OpenTarget,
+                    UseShellExecute = true
+                });
+                LastRunMessage = $"已运行结果：{command.Title}";
+                return;
+            }
+            catch (Exception ex)
+            {
+                SyncStatus = $"执行结果失败：{FormatExceptionMessage(ex)}";
+                return;
+            }
+        }
+
+        ShowGenericResultDetails(command);
+        await Task.CompletedTask;
+    }
+
+    private void ShowGenericResultDetails(CommandItem command)
+    {
+        var detailWindow = new Window
+        {
+            Title = command.Title,
+            Owner = this,
+            Width = 640,
+            Height = 420,
+            MinWidth = 480,
+            MinHeight = 320,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(28, 28, 28)),
+            Foreground = System.Windows.Media.Brushes.White
+        };
+
+        var contentBox = new System.Windows.Controls.TextBox
+        {
+            Text = BuildGenericResultDetailText(command),
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Background = new SolidColorBrush(System.Windows.Media.Color.FromRgb(28, 28, 28)),
+            Foreground = System.Windows.Media.Brushes.White,
+            BorderThickness = new Thickness(0),
+            Padding = new Thickness(16)
+        };
+
+        detailWindow.Content = contentBox;
+        detailWindow.ShowDialog();
+    }
+
+    private static string BuildGenericResultDetailText(CommandItem command)
+    {
+        var lines = new List<string>
+        {
+            $"标题：{command.Title}",
+            $"类型：{command.ResultKind}",
+            $"摘要：{command.Subtitle}"
+        };
+
+        if (!string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            lines.Add($"目标：{command.OpenTarget}");
+        }
+
+        if (command.Keywords.Count > 0)
+        {
+            lines.Add($"关键词：{string.Join(", ", command.Keywords)}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(command.ResultProviderTitle))
+        {
+            lines.Add($"来源：{command.ResultProviderTitle}");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private void CopyGenericResultText(string text, string successMessage)
+    {
+        try
+        {
+            ClipboardService.SetText(text ?? string.Empty);
+            LastRunMessage = successMessage;
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"复制失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void OpenGenericResultMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedCommand is not { IsProviderResult: true } command)
+        {
+            return;
+        }
+
+        _ = ExecuteGenericResultAsync(command);
+    }
+
+    private void ShowGenericResultDetailsMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedCommand is not { IsProviderResult: true } command)
+        {
+            return;
+        }
+
+        ShowGenericResultDetails(command);
+    }
+
+    private void CopyGenericResultTitleMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedCommand is not { IsProviderResult: true } command)
+        {
+            return;
+        }
+
+        CopyGenericResultText(command.Title, $"已复制标题：{command.Title}");
+    }
+
+    private void CopyGenericResultContentMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedCommand is not { IsProviderResult: true } command)
+        {
+            return;
+        }
+
+        CopyGenericResultText(BuildGenericResultDetailText(command), $"已复制结果内容：{command.Title}");
+    }
+
+    private void CopyGenericResultTargetMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedCommand is not { IsProviderResult: true } command || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        CopyGenericResultText(command.OpenTarget, $"已复制目标：{command.OpenTarget}");
+    }
+
+    private void OpenFileResultMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = SelectedCommand;
+        if (command?.IsFileSystemResult != true || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = command.OpenTarget,
+                UseShellExecute = true
+            });
+            LastRunMessage = $"已打开：{command.Title}";
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"打开失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void OpenFileResultDirectoryMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = SelectedCommand;
+        if (command?.IsFileSystemResult != true || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(command.OpenTarget))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = command.OpenTarget,
+                    UseShellExecute = true
+                });
+            }
+            else
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{command.OpenTarget}\"",
+                    UseShellExecute = true
+                });
+            }
+
+            LastRunMessage = $"已打开路径：{command.Title}";
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"打开路径失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void CopyFileResultMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        SetFileResultClipboard(isCut: false);
+    }
+
+    private void CopyFileResultFullPathMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = SelectedCommand;
+        if (command?.IsFileSystemResult != true || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        try
+        {
+            ClipboardService.SetText(command.OpenTarget);
+            LastRunMessage = $"已复制完整路径：{command.OpenTarget}";
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"复制完整路径失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void CutFileResultMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        SetFileResultClipboard(isCut: true);
+    }
+
+    private void DeleteFileResultMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = SelectedCommand;
+        if (command?.IsFileSystemResult != true || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        var targetPath = command.OpenTarget;
+        var confirm = System.Windows.MessageBox.Show(
+            this,
+            $"确认删除“{command.Title}”吗？",
+            "删除文件",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(targetPath))
+            {
+                FileSystem.DeleteDirectory(targetPath, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
+            }
+            else if (File.Exists(targetPath))
+            {
+                FileSystem.DeleteFile(targetPath, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin);
+            }
+            else
+            {
+                SyncStatus = "目标不存在，无法删除。";
+                return;
+            }
+
+            LastRunMessage = $"已删除：{command.Title}";
+            ApplyFilter(SearchBox.Text);
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"删除失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void SetFileResultClipboard(bool isCut)
+    {
+        var command = SelectedCommand;
+        if (command?.IsFileSystemResult != true || string.IsNullOrWhiteSpace(command.OpenTarget))
+        {
+            return;
+        }
+
+        try
+        {
+            var files = new StringCollection
+            {
+                command.OpenTarget
+            };
+            var dataObject = new System.Windows.DataObject();
+            dataObject.SetFileDropList(files);
+
+            var dropEffect = isCut ? 2u : 5u;
+            using var stream = new MemoryStream(new byte[] { (byte)dropEffect, 0, 0, 0 });
+            dataObject.SetData("Preferred DropEffect", stream);
+            ClipboardService.SetDataObject(dataObject, true);
+            LastRunMessage = isCut ? $"已剪切：{command.Title}" : $"已复制：{command.Title}";
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"{(isCut ? "剪切" : "复制")}失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private bool HandleInternalCommand(CommandItem command)
+    {
+        switch (command.OpenTarget)
+        {
+            case "oqh://settings":
+                if (System.Windows.Application.Current is App app)
+                {
+                    app.OpenSettingsWindow();
+                    LastRunMessage = "已打开设置。";
+                }
+
+                return true;
+            case "oqh://add-extension":
+                _ = AddJsonExtensionAsync();
+                return true;
+            case "oqh://edit-extension":
+                _ = EditSelectedExtensionAsync();
+                return true;
+            case "oqh://delete-extension":
+                _ = DeleteSelectedExtensionAsync();
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsInternalCommand(CommandItem command)
+    {
+        return command.OpenTarget?.StartsWith("oqh://", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static CommandMatch BuildCommandMatch(CommandItem command, string query, bool allowRawQueryArgument = false)
+    {
+        var argument = ExtractQueryArgument(command, query, allowRawQueryArgument);
+        if (command.SupportsQueryArgument && argument.Length > 0)
+        {
+            return new CommandMatch(true, 300);
+        }
+
+        if (command.SupportsQueryArgument && command.QueryPrefixes.Any(prefix =>
+                prefix.Contains(query, StringComparison.OrdinalIgnoreCase)))
+        {
+            return new CommandMatch(true, 260);
+        }
+
+        if (command.Title.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return new CommandMatch(true, 220);
+        }
+
+        if (command.ExtensionId.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return new CommandMatch(true, 210);
+        }
+
+        if (command.Subtitle.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return new CommandMatch(true, 160);
+        }
+
+        if (command.Category.Contains(query, StringComparison.OrdinalIgnoreCase))
+        {
+            return new CommandMatch(true, 120);
+        }
+
+        if (command.Keywords.Any(k => k.Contains(query, StringComparison.OrdinalIgnoreCase)))
+        {
+            return new CommandMatch(true, 140);
+        }
+
+        return new CommandMatch(false, 0);
+    }
+
+    private static string ExtractQueryArgument(CommandItem command, string rawInput, bool allowRawQuery = false)
+    {
+        if (!command.SupportsQueryArgument || string.IsNullOrWhiteSpace(rawInput))
+        {
+            return string.Empty;
+        }
+
+        var input = rawInput.Trim();
+        foreach (var prefix in command.QueryPrefixes)
+        {
+            if (input.Equals(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            if (input.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase))
+            {
+                return input[(prefix.Length + 1)..].Trim();
+            }
+
+            if (input.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && input.Length > prefix.Length)
+            {
+                return input[prefix.Length..].Trim();
+            }
+        }
+
+        if (allowRawQuery)
+        {
+            return input;
+        }
+
+        return string.Empty;
+    }
+
+    private static string? BuildExecutionTarget(CommandItem command, string? rawInput, bool allowRawQuery = false)
+    {
+        if (command.SupportsQueryArgument)
+        {
+            var argument = ExtractQueryArgument(command, rawInput ?? string.Empty, allowRawQuery);
+            if (!string.IsNullOrWhiteSpace(argument))
+            {
+                return command.QueryTargetTemplate!.Replace("{query}", Uri.EscapeDataString(argument), StringComparison.Ordinal);
+            }
+        }
+
+        return command.OpenTarget;
+    }
+
+    private static string BuildScriptInput(CommandItem command, string? rawInput)
+    {
+        if (command.SupportsQueryArgument)
+        {
+            var argument = ExtractQueryArgument(command, rawInput ?? string.Empty);
+            if (!string.IsNullOrWhiteSpace(argument))
+            {
+                return argument;
+            }
+        }
+
+        return (rawInput ?? string.Empty).Trim();
+    }
+
+    private async Task ExecuteScriptCommandAsync(CommandItem runnable, string? input, string launchSource)
+    {
+        var executionStopwatch = Stopwatch.StartNew();
+        HostAssets.AppendLog(
+            $"Main execute script start: id={runnable.ExtensionId}, title={runnable.Title}, launchSource={launchSource}, nativeWindow={runnable.UsesNativeWindowUi}, inputLength={(input ?? string.Empty).Length}");
+        SyncStatus = $"正在执行脚本：{runnable.Title}";
+        var result = await ScriptExtensionRunner.ExecuteAsync(runnable, input, launchSource);
+        if (result.Success)
+        {
+            RecordCommandUsage(runnable);
+            HostAssets.AppendRecent(runnable.Title);
+            HostAssets.AppendLog($"Executed script extension: {runnable.Title} -> {runnable.EntryPoint}");
+            var nativeWindowStarted = string.Equals(result.Output, "native-window-started", StringComparison.Ordinal);
+            var summary = string.IsNullOrWhiteSpace(result.Output)
+                ? "脚本执行完成。"
+                : result.Output.ReplaceLineEndings(" ").Trim();
+            if (nativeWindowStarted)
+            {
+                summary = "原生窗口已启动。";
+            }
+
+            if (summary.Length > 180)
+            {
+                summary = summary[..180] + "...";
+            }
+
+            LastRunMessage = $"已执行脚本：{runnable.Title} -> {summary}";
+            SyncStatus = nativeWindowStarted ? "原生窗口已启动。" : "脚本执行完成。";
+            HostAssets.AppendLog(
+                $"Main execute script success: id={runnable.ExtensionId}, title={runnable.Title}, launchSource={launchSource}, nativeWindowStarted={nativeWindowStarted}, elapsedMs={executionStopwatch.ElapsedMilliseconds}, outputLength={result.Output.Length}, errorLength={result.Error.Length}");
+            if (!nativeWindowStarted &&
+                (!string.IsNullOrWhiteSpace(result.Output) || !string.IsNullOrWhiteSpace(result.Error)))
+            {
+                var logWindow = new ExecutionLogWindow(
+                    runnable.Title,
+                    success: true,
+                    output: result.Output,
+                    error: result.Error,
+                    exitCode: result.ExitCode,
+                    extraMeta: $"来源：{launchSource}")
+                {
+                    Owner = this
+                };
+                logWindow.Show();
+                logWindow.Activate();
+            }
+            return;
+        }
+
+        HostAssets.AppendLog($"Script extension failed: {runnable.Title} -> {result.Error}");
+        HostAssets.AppendLog(
+            $"Main execute script failed: id={runnable.ExtensionId}, title={runnable.Title}, launchSource={launchSource}, elapsedMs={executionStopwatch.ElapsedMilliseconds}, exitCode={result.ExitCode}");
+        LastRunMessage = $"脚本执行失败：{runnable.Title}";
+        SyncStatus = $"脚本执行失败：{result.Error}";
+        System.Windows.MessageBox.Show(
+            this,
+            string.IsNullOrWhiteSpace(result.Error) ? "脚本执行失败。" : result.Error.Trim(),
+            $"{runnable.Title} 执行失败",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+    }
+
+    // --- Quick Panel Support ---
+
+}

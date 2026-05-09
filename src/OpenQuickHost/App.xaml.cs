@@ -430,6 +430,7 @@ public partial class App : WpfApplication
         if (_settingsWindow == null || !_settingsWindow.IsLoaded)
         {
             _settingsWindow = new SettingsWindow(mainWindow);
+            _settingsWindow.Owner = mainWindow;
             _settingsWindow.Closed += (_, _) => _settingsWindow = null;
         }
 

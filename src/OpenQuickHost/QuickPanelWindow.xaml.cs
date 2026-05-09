@@ -12,6 +12,7 @@ using System.Windows.Interop;
 using System.Windows.Threading;
 using System.Text;
 using System.Diagnostics;
+using System.IO;
 
 namespace OpenQuickHost;
 
@@ -742,6 +743,24 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        if (TryGetDroppedFilePaths(e, out _))
+        {
+            if (target.Item != null)
+            {
+                e.Effects = System.Windows.DragDropEffects.None;
+            }
+            else
+            {
+                _suspendReleaseTargetPollingUntilUtc = DateTimeOffset.UtcNow.AddMilliseconds(350);
+                SetReleaseTarget(target);
+                e.Effects = System.Windows.DragDropEffects.Copy;
+            }
+
+            StopFolderHoverTimer();
+            e.Handled = true;
+            return;
+        }
+
         if (!IsEditMode || !e.Data.GetDataPresent(typeof(SlotViewModel)))
         {
             e.Effects = System.Windows.DragDropEffects.None;
@@ -799,6 +818,19 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        if (TryGetDroppedFilePaths(e, out var filePaths))
+        {
+            if (target.Item == null)
+            {
+                AddDroppedPathsToSlot(target, filePaths);
+            }
+
+            StopFolderHoverTimer();
+            ClearReleaseTarget();
+            e.Handled = true;
+            return;
+        }
+
         if (!IsEditMode || !e.Data.GetDataPresent(typeof(SlotViewModel)))
         {
             return;
@@ -813,6 +845,50 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         StopFolderHoverTimer();
         MoveOrSwapSlot(source, target);
         e.Handled = true;
+    }
+
+    private static bool TryGetDroppedFilePaths(System.Windows.DragEventArgs e, out string[] filePaths)
+    {
+        filePaths = [];
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+        {
+            return false;
+        }
+
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] droppedPaths || droppedPaths.Length == 0)
+        {
+            return false;
+        }
+
+        filePaths = droppedPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path) && (File.Exists(path) || Directory.Exists(path)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return filePaths.Length > 0;
+    }
+
+    private void AddDroppedPathsToSlot(SlotViewModel target, IEnumerable<string> filePaths)
+    {
+        var firstPath = filePaths.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(firstPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var newCommand = _mainWindow.CreateQuickOpenExtensionFromPath(firstPath);
+            _mainWindow.MarkExtensionAsNewFromQuickPanel(newCommand);
+            target.SetCommand(newCommand, false, target.IsContextual);
+            SaveSlots(target.IsContextual);
+            LoadSlots();
+            BringToFront();
+            _mainWindow.LastRunMessage = $"已拖拽创建扩展并放入槽位：{newCommand.Title}";
+        }
+        catch (Exception ex)
+        {
+            _mainWindow.SyncStatus = $"拖拽创建扩展失败：{Path.GetFileName(firstPath)}，{ex.Message}";
+        }
     }
 
     public void ExecuteHoveredSlotFromHoldRelease()

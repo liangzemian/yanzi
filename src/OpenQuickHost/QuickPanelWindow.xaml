@@ -145,9 +145,7 @@
                         </ItemsControl>
                         <Button Style="{StaticResource SidebarButtonStyle}" Width="32" Height="32" ToolTip="新建通用分组" Click="AddGlobalGroupButton_Click">
                             <Viewbox Width="16" Height="16">
-                                <Canvas Width="24" Height="24">
-                                    <Path Data="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" Fill="#FFFFFFFF"/>
-                                </Canvas>
+                                <Path Data="{local:IconGeometry plus}" Fill="#FFFFFFFF" Stretch="Uniform"/>
                             </Viewbox>
                         </Button>
                         </StackPanel>
@@ -193,9 +191,7 @@
                         </ItemsControl>
                         <Button Style="{StaticResource SidebarButtonStyle}" Width="32" Height="32" ToolTip="新建专属分组" Click="AddContextGroupButton_Click">
                             <Viewbox Width="16" Height="16">
-                                <Canvas Width="24" Height="24">
-                                    <Path Data="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" Fill="#FFFFFFFF"/>
-                                </Canvas>
+                                <Path Data="{local:IconGeometry plus}" Fill="#FFFFFFFF" Stretch="Uniform"/>
                             </Viewbox>
                         </Button>
                         </StackPanel>
@@ -203,9 +199,7 @@
                     
                     <Button Grid.Row="4" Style="{StaticResource SidebarButtonStyle}" VerticalAlignment="Bottom" HorizontalAlignment="Center" Click="SettingsButton_Click" Width="32" Height="32" ToolTip="设置">
                         <Viewbox Width="16" Height="16">
-                            <Canvas Width="24" Height="24">
-                                <Path Data="M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M12,10A2,2 0 0,0 10,12A2,2 0 0,0 12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10M10,22C9.75,22 9.54,21.82 9.5,21.58L9.13,18.93C8.5,18.68 7.96,18.34 7.44,17.94L4.95,18.95C4.73,19.03 4.46,18.95 4.34,18.73L2.34,15.27C2.21,15.05 2.27,14.78 2.46,14.63L4.57,12.97L4.5,12L4.57,11L2.46,9.37C2.27,9.22 2.21,8.95 2.34,8.73L4.34,5.27C4.46,5.05 4.73,4.96 4.95,5.05L7.44,6.05C7.96,5.66 8.5,5.32 9.13,5.07L9.5,2.42C9.54,2.18 9.75,2 10,2H14C14.25,2 14.46,2.18 14.5,2.42L14.87,5.07C15.5,5.32 16.04,5.66 16.56,6.05L19.05,5.05C19.27,4.96 19.54,5.05 19.66,5.27L21.66,8.73C21.79,8.95 21.73,9.22 21.54,9.37L19.43,11L19.5,12L19.43,13L21.54,14.63C21.73,14.78 21.79,15.05 21.66,15.27L19.66,18.73C19.54,18.95 19.27,19.04 19.05,18.95L16.56,17.95C16.04,18.34 15.5,18.68 14.87,18.93L14.5,21.58C14.46,21.82 14.25,22 14,22H10Z" Fill="#FF888888"/>
-                            </Canvas>
+                            <Path Data="{local:IconGeometry settings}" Fill="#FF888888" Stretch="Uniform"/>
                         </Viewbox>
                     </Button>
                 </Grid>
@@ -228,10 +222,9 @@
                             Click="EditModeButton_Click"
                             Style="{StaticResource SidebarButtonStyle}">
                         <Viewbox Width="14" Height="14">
-                            <Canvas Width="24" Height="24">
-                                <Path Data="M3,17.25V21H6.75L17.81,9.94L14.06,6.19L3,17.25M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04Z"
-                                      Fill="{Binding IsEditMode, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#FFF59E0B|#FFFFFFFF'}"/>
-                            </Canvas>
+                            <Path Data="{local:IconGeometry pen}"
+                                  Fill="{Binding IsEditMode, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#FFF59E0B|#FFFFFFFF'}"
+                                  Stretch="Uniform"/>
                         </Viewbox>
                     </Button>
                     <TextBlock Grid.Column="1"
@@ -253,10 +246,9 @@
                             Click="PinAutoHideButton_Click"
                             Style="{StaticResource SidebarButtonStyle}">
                         <Viewbox Width="14" Height="14">
-                            <Canvas Width="24" Height="24">
-                                <Path Data="M14,3L21,10L18,11L15,18L13,18L13,12L8,17L7,16L12,11L6,11L6,9L13,8L14,3Z"
-                                      Fill="{Binding PinButtonBrush}"/>
-                            </Canvas>
+                            <Path Data="{local:IconGeometry pin}"
+                                  Fill="{Binding PinButtonBrush}"
+                                  Stretch="Uniform"/>
                         </Viewbox>
                     </Button>
                     
@@ -264,7 +256,7 @@
                         <Border Background="#FF252525" CornerRadius="6" Padding="8,4" Width="130" Margin="0,0,5,0">
                             <Grid>
                                 <Viewbox Width="12" Height="12" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                    <Path Data="M15.5,14H14.71L14.43,13.73C15.41,12.59 16,11.11 16,9.5A6.5,6.5 0 1,0 9.5,16C11.11,16 12.59,15.41 13.73,14.43L14,14.71V15.5L19,20.5L20.5,19L15.5,14M9.5,14C7.01,14 5,11.99 5,9.5C5,7.01 7.01,5 9.5,5C11.99,5 14,7.01 14,9.5C14,11.99 11.99,14 9.5,14Z" 
+                                    <Path Data="{local:IconGeometry search}" 
                                           Fill="#FF888888" Opacity="0.8"/>
                                 </Viewbox>
                                 <TextBox x:Name="HubSearchBox"
@@ -325,49 +317,49 @@
                                                 <MenuItem Header="{Binding FavoriteLabel}" Click="ToggleFavorite_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z" Fill="#FBBF24" Stretch="Uniform" />
+                                                        <Path Data="{local:IconGeometry star}" Fill="#FBBF24" Stretch="Uniform" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="复制扩展" Click="CopySlotExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M16,1H4C2.89,1 2,1.89 2,3V17H4V3H16M19,5H8C6.89,5 6,5.89 6,7V21C6,22.11 6.89,23 8,23H19C20.11,23 21,22.11 21,21V7C21,5.89 20.11,5 19,5Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry copy}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="剪切扩展" Click="CutSlotExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M9.64,7.64C11.19,6.09 13.7,6.09 15.24,7.64L16.66,9.05L18.07,7.64L16.66,6.22C14.34,3.91 10.55,3.91 8.22,6.22C6.23,8.21 5.95,11.32 7.38,13.62L4,17V15H2V21H8V19H6L8.79,16.21L12.38,19.79C10.08,21.23 6.96,20.95 4.97,18.96L3.56,17.54L2.14,18.96L3.56,20.37C6.67,23.49 11.72,23.49 14.83,20.37L16.24,18.96L20.5,23.22L21.91,21.81L17.66,17.56L19.07,16.15C22.18,13.03 22.18,7.98 19.07,4.86L17.66,3.45L16.24,4.86L17.66,6.27C19.98,8.59 19.98,12.38 17.66,14.7L16.24,16.12L9.64,9.52C8.48,8.36 8.48,6.48 9.64,5.31" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry cut}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="粘贴扩展" Click="PasteSlotExtension_Click" CommandParameter="{Binding}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M19,20H5V4H7V2H17V6H19M19,8H5C3.89,8 3,8.89 3,10V20A2,2 0 0,0 5,22H19A2,2 0 0,0 21,20V10C21,8.89 20.11,8 19,8Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry paste}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="编辑扩展" Click="EditExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanEdit, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M14.06,9L15,9.94L5.92,19H5V18.08L14.06,9M17.66,3C17.41,3 17.15,3.1 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18.17,3.09 17.92,3 17.66,3M14.06,6.19L3,17.25V21H6.75L17.81,9.94L14.06,6.19Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry pen}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="发布到商店" Click="PublishExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanPublish, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M12,2L14.39,8.26L21,9L16,13.74L17.18,20.5L12,17.27L6.82,20.5L8,13.74L3,9L9.61,8.26L12,2M11,11V15H13V11H16L12,7L8,11H11Z" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry publish}" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="打开扩展目录" Click="OpenExtensionDirectory_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanOpenDirectory, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M10,4L12,6H20A2,2 0 0,1 22,8V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4H10Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry open-folder}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <Separator Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                 <MenuItem Header="移除扩展" Click="RemoveExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19V4M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z" Fill="#EF4444" Stretch="Uniform" />
+                                                        <Path Data="{local:IconGeometry delete}" Fill="#EF4444" Stretch="Uniform" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                             </ContextMenu>
@@ -410,9 +402,7 @@
                                                     <Viewbox Width="18" Height="18"
                                                              HorizontalAlignment="Center" VerticalAlignment="Center"
                                                              Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                        <Canvas Width="24" Height="24">
-                                                            <Path Data="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" Fill="#22FFFFFF"/>
-                                                        </Canvas>
+                                                        <Path Data="{local:IconGeometry plus}" Fill="#22FFFFFF" Stretch="Uniform"/>
                                                     </Viewbox>
                                                     
                                                     <!-- Occupied -->
@@ -424,9 +414,7 @@
                                                                  HorizontalAlignment="Center"
                                                                  VerticalAlignment="Center"
                                                                  Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                            <Canvas Width="24" Height="24">
-                                                                <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
-                                                            </Canvas>
+                                                            <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
                                                         </Viewbox>
                                                         <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="18" FontWeight="SemiBold"
                                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -498,49 +486,49 @@
                                                 <MenuItem Header="{Binding FavoriteLabel}" Click="ToggleFavorite_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z" Fill="#FBBF24" Stretch="Uniform" />
+                                                        <Path Data="{local:IconGeometry star}" Fill="#FBBF24" Stretch="Uniform" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="复制扩展" Click="CopySlotExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M16,1H4C2.89,1 2,1.89 2,3V17H4V3H16M19,5H8C6.89,5 6,5.89 6,7V21C6,22.11 6.89,23 8,23H19C20.11,23 21,22.11 21,21V7C21,5.89 20.11,5 19,5Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry copy}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="剪切扩展" Click="CutSlotExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M9.64,7.64C11.19,6.09 13.7,6.09 15.24,7.64L16.66,9.05L18.07,7.64L16.66,6.22C14.34,3.91 10.55,3.91 8.22,6.22C6.23,8.21 5.95,11.32 7.38,13.62L4,17V15H2V21H8V19H6L8.79,16.21L12.38,19.79C10.08,21.23 6.96,20.95 4.97,18.96L3.56,17.54L2.14,18.96L3.56,20.37C6.67,23.49 11.72,23.49 14.83,20.37L16.24,18.96L20.5,23.22L21.91,21.81L17.66,17.56L19.07,16.15C22.18,13.03 22.18,7.98 19.07,4.86L17.66,3.45L16.24,4.86L17.66,6.27C19.98,8.59 19.98,12.38 17.66,14.7L16.24,16.12L9.64,9.52C8.48,8.36 8.48,6.48 9.64,5.31" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry cut}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="粘贴扩展" Click="PasteSlotExtension_Click" CommandParameter="{Binding}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M19,20H5V4H7V2H17V6H19M19,8H5C3.89,8 3,8.89 3,10V20A2,2 0 0,0 5,22H19A2,2 0 0,0 21,20V10C21,8.89 20.11,8 19,8Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry paste}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="编辑扩展" Click="EditExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanEdit, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M14.06,9L15,9.94L5.92,19H5V18.08L14.06,9M17.66,3C17.41,3 17.15,3.1 16.96,3.29L15.13,5.12L18.88,8.87L20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18.17,3.09 17.92,3 17.66,3M14.06,6.19L3,17.25V21H6.75L17.81,9.94L14.06,6.19Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry pen}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="发布到商店" Click="PublishExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanPublish, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M12,2L14.39,8.26L21,9L16,13.74L17.18,20.5L12,17.27L6.82,20.5L8,13.74L3,9L9.61,8.26L12,2M11,11V15H13V11H16L12,7L8,11H11Z" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry publish}" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="打开扩展目录" Click="OpenExtensionDirectory_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanOpenDirectory, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M10,4L12,6H20A2,2 0 0,1 22,8V18A2,2 0 0,1 20,20H4A2,2 0 0,1 2,18V6A2,2 0 0,1 4,4H10Z" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                                        <Path Data="{local:IconGeometry open-folder}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <Separator Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                                 <MenuItem Header="移除扩展" Click="RemoveExtension_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanRemoveFromFixedSlots, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
-                                                        <Path Data="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19V4M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z" Fill="#EF4444" Stretch="Uniform" />
+                                                        <Path Data="{local:IconGeometry delete}" Fill="#EF4444" Stretch="Uniform" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                             </ContextMenu>
@@ -582,9 +570,7 @@
                                                     <Viewbox Width="18" Height="18"
                                                              HorizontalAlignment="Center" VerticalAlignment="Center"
                                                              Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                        <Canvas Width="24" Height="24">
-                                                            <Path Data="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" Fill="#14FFFFFF"/>
-                                                        </Canvas>
+                                                        <Path Data="{local:IconGeometry plus}" Fill="#14FFFFFF" Stretch="Uniform"/>
                                                     </Viewbox>
 
                                                     <Grid Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
@@ -595,9 +581,7 @@
                                                                  HorizontalAlignment="Center"
                                                                  VerticalAlignment="Center"
                                                                  Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                            <Canvas Width="24" Height="24">
-                                                                <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
-                                                            </Canvas>
+                                                            <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
                                                         </Viewbox>
                                                         <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="18" FontWeight="SemiBold"
                                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
@@ -677,9 +661,7 @@
                                                          HorizontalAlignment="Center"
                                                          VerticalAlignment="Center"
                                                          Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                    <Canvas Width="24" Height="24">
-                                                        <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
-                                                    </Canvas>
+                                                    <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
                                                 </Viewbox>
                                                 <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="18" FontWeight="SemiBold"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center"

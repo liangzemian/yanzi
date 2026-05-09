@@ -34,6 +34,9 @@ public static class KeyboardDoubleTapService
     private static bool _rightShiftDown;
     private static bool _leftWinDown;
     private static bool _rightWinDown;
+    private static bool _doubleCtrlEnabled = true;
+    private static bool _doubleAltEnabled = true;
+    private static bool _suppressCurrentAltTap;
 
     public static bool IsRunning => _hookId != IntPtr.Zero;
 
@@ -49,6 +52,7 @@ public static class KeyboardDoubleTapService
         _sequenceDirty = false;
         _lastTapKind = ModifierTapKind.None;
         _lastTapTimestamp = 0;
+        ApplyConfiguredShortcut(AppSettingsStore.Load().LauncherHotkey);
         _hookId = SetHook(Proc);
         if (_hookId == IntPtr.Zero)
         {
@@ -57,6 +61,13 @@ public static class KeyboardDoubleTapService
         }
 
         HostAssets.AppendLog($"Keyboard double tap: started. hook=0x{_hookId.ToInt64():X}, triggers=DoubleCtrl,DoubleAlt.");
+    }
+
+    public static void ApplyConfiguredShortcut(string? shortcut)
+    {
+        _doubleCtrlEnabled = string.Equals(shortcut, "DoubleCtrl", StringComparison.OrdinalIgnoreCase);
+        _doubleAltEnabled = string.Equals(shortcut, "DoubleAlt", StringComparison.OrdinalIgnoreCase);
+        _suppressCurrentAltTap = false;
     }
 
     public static void Stop()
@@ -97,54 +108,75 @@ public static class KeyboardDoubleTapService
             var message = wParam.ToInt32();
             var info = Marshal.PtrToStructure<KbdLlHookStruct>(lParam);
             var vkCode = (int)info.vkCode;
+            var suppress = false;
 
             if (message is WmKeyDown or WmSysKeyDown)
             {
-                HandleKeyDown(vkCode);
+                suppress = HandleKeyDown(vkCode);
             }
             else if (message is WmKeyUp or WmSysKeyUp)
             {
-                HandleKeyUp(vkCode);
+                suppress = HandleKeyUp(vkCode);
+            }
+
+            if (suppress)
+            {
+                return 1;
             }
         }
 
         return CallNextHookEx(_hookId, nCode, wParam, lParam);
     }
 
-    private static void HandleKeyDown(int vkCode)
+    private static bool HandleKeyDown(int vkCode)
     {
         switch (vkCode)
         {
             case VkLControl:
                 _leftCtrlDown = true;
-                return;
+                return false;
             case VkRControl:
                 _rightCtrlDown = true;
-                return;
+                return false;
             case VkLMenu:
+                if (ShouldSuppressCurrentAltTap())
+                {
+                    _leftAltDown = true;
+                    _suppressCurrentAltTap = true;
+                    return true;
+                }
+
                 _leftAltDown = true;
-                return;
+                return false;
             case VkRMenu:
+                if (ShouldSuppressCurrentAltTap())
+                {
+                    _rightAltDown = true;
+                    _suppressCurrentAltTap = true;
+                    return true;
+                }
+
                 _rightAltDown = true;
-                return;
+                return false;
             case VkLShift:
                 _leftShiftDown = true;
-                return;
+                return false;
             case VkRShift:
                 _rightShiftDown = true;
-                return;
+                return false;
             case VkLWin:
                 _leftWinDown = true;
-                return;
+                return false;
             case VkRWin:
                 _rightWinDown = true;
-                return;
+                return false;
         }
 
         _sequenceDirty = true;
+        return false;
     }
 
-    private static void HandleKeyUp(int vkCode)
+    private static bool HandleKeyUp(int vkCode)
     {
         ModifierTapKind releasedKind;
         switch (vkCode)
@@ -167,25 +199,26 @@ public static class KeyboardDoubleTapService
                 break;
             case VkLShift:
                 _leftShiftDown = false;
-                return;
+                return false;
             case VkRShift:
                 _rightShiftDown = false;
-                return;
+                return false;
             case VkLWin:
                 _leftWinDown = false;
-                return;
+                return false;
             case VkRWin:
                 _rightWinDown = false;
-                return;
+                return false;
             default:
                 _sequenceDirty = true;
-                return;
+                return false;
         }
 
         if (HasOtherModifiersPressed(releasedKind))
         {
             _sequenceDirty = true;
-            return;
+            _suppressCurrentAltTap = false;
+            return false;
         }
 
         var now = Environment.TickCount64;
@@ -193,16 +226,29 @@ public static class KeyboardDoubleTapService
             _lastTapKind == releasedKind &&
             now - _lastTapTimestamp <= 350)
         {
+            var shouldSuppress = releasedKind == ModifierTapKind.Alt && _doubleAltEnabled && _suppressCurrentAltTap;
             _lastTapKind = ModifierTapKind.None;
             _lastTapTimestamp = 0;
+            _suppressCurrentAltTap = false;
             HostAssets.AppendLog($"Keyboard double tap: triggered {releasedKind}.");
+            if (shouldSuppress)
+            {
+                CancelForegroundAltMenuMode();
+            }
+
             System.Windows.Application.Current.Dispatcher.Invoke(() => _onDoubleTap?.Invoke(releasedKind.ToString()));
-            return;
+            return shouldSuppress;
         }
 
         _lastTapKind = releasedKind;
         _lastTapTimestamp = now;
         _sequenceDirty = false;
+        if (releasedKind != ModifierTapKind.Alt)
+        {
+            _suppressCurrentAltTap = false;
+        }
+
+        return releasedKind == ModifierTapKind.Alt && _doubleAltEnabled && _suppressCurrentAltTap;
     }
 
     private static bool HasOtherModifiersPressed(ModifierTapKind releasedKind)
@@ -225,6 +271,32 @@ public static class KeyboardDoubleTapService
         _rightShiftDown = false;
         _leftWinDown = false;
         _rightWinDown = false;
+        _suppressCurrentAltTap = false;
+    }
+
+    private static bool ShouldSuppressCurrentAltTap()
+    {
+        if (!_doubleAltEnabled || _sequenceDirty)
+        {
+            return false;
+        }
+
+        var now = Environment.TickCount64;
+        return _lastTapKind == ModifierTapKind.Alt &&
+               now - _lastTapTimestamp <= 350 &&
+               !_leftCtrlDown &&
+               !_rightCtrlDown &&
+               !_leftShiftDown &&
+               !_rightShiftDown &&
+               !_leftWinDown &&
+               !_rightWinDown;
+    }
+
+    private static void CancelForegroundAltMenuMode()
+    {
+        const uint keyEventKeyUp = 0x0002;
+        keybd_event((byte)VkEscape, 0, 0, UIntPtr.Zero);
+        keybd_event((byte)VkEscape, 0, keyEventKeyUp, UIntPtr.Zero);
     }
 
     private enum ModifierTapKind
@@ -233,6 +305,8 @@ public static class KeyboardDoubleTapService
         Control,
         Alt
     }
+
+    private const int VkEscape = 0x1B;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct KbdLlHookStruct
@@ -258,4 +332,7 @@ public static class KeyboardDoubleTapService
 
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 }

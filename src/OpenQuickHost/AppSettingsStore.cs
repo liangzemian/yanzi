@@ -148,6 +148,10 @@ public static class AppSettingsStore
             settings.EnableWebDavSync = true;
         }
 
+        settings.AiBaseUrl = settings.AiBaseUrl?.Trim() ?? string.Empty;
+        settings.AiApiKey = settings.AiApiKey?.Trim() ?? string.Empty;
+        settings.AiModel = settings.AiModel?.Trim() ?? string.Empty;
+
         return settings;
     }
 
@@ -251,6 +255,12 @@ public sealed record AppSettings
     public string WebDavUsername { get; set; } = string.Empty;
 
     public bool PreferManualExtensionEditor { get; set; } = false;
+
+    public string AiBaseUrl { get; set; } = string.Empty;
+
+    public string AiApiKey { get; set; } = string.Empty;
+
+    public string AiModel { get; set; } = string.Empty;
 
     public double? SettingsWindowLeft { get; set; }
 

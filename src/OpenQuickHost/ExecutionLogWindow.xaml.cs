@@ -1,8 +1,5 @@
-using System.Diagnostics;
 using System.Text;
-using System.Threading;
 using System.Windows;
-using Forms = System.Windows.Forms;
 
 namespace OpenQuickHost;
 
@@ -95,93 +92,6 @@ public partial class ExecutionLogWindow : Window
 
     private static void CopyTextToClipboard(string text)
     {
-        if (TryCopyViaStaClipboard(text, out var staError))
-        {
-            return;
-        }
-
-        if (TryCopyViaClipExe(text, out var fallbackError))
-        {
-            return;
-        }
-
-        throw new InvalidOperationException($"复制到剪贴板失败：{fallbackError ?? staError}");
-    }
-
-    private static bool TryCopyViaStaClipboard(string text, out string? error)
-    {
-        error = null;
-        Exception? threadError = null;
-        var done = new ManualResetEventSlim(false);
-
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                Forms.Clipboard.SetText(text, Forms.TextDataFormat.UnicodeText);
-            }
-            catch (Exception ex)
-            {
-                threadError = ex;
-            }
-            finally
-            {
-                done.Set();
-            }
-        });
-
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.IsBackground = true;
-        thread.Start();
-        done.Wait(TimeSpan.FromSeconds(5));
-
-        if (!done.IsSet)
-        {
-            error = "STA 剪贴板线程超时。";
-            return false;
-        }
-
-        if (threadError == null)
-        {
-            return true;
-        }
-
-        error = threadError.Message;
-        return false;
-    }
-
-    private static bool TryCopyViaClipExe(string text, out string? error)
-    {
-        error = null;
-        try
-        {
-            using var process = new Process();
-            process.StartInfo = new ProcessStartInfo
-            {
-                FileName = "clip.exe",
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                StandardInputEncoding = Encoding.Unicode,
-                CreateNoWindow = true
-            };
-
-            process.Start();
-            process.StandardInput.Write(text);
-            process.StandardInput.Close();
-            process.WaitForExit(5000);
-
-            if (process.ExitCode == 0)
-            {
-                return true;
-            }
-
-            error = $"clip.exe 返回了退出码 {process.ExitCode}";
-            return false;
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-            return false;
-        }
+        ClipboardService.SetText(text);
     }
 }

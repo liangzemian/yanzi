@@ -8,6 +8,10 @@
     <UseWPF>true</UseWPF>
     <AssemblyName>Yanzi.ExtensionHost</AssemblyName>
     <RootNamespace>Yanzi.ExtensionHost</RootNamespace>
+    <Product>Yanzi</Product>
+    <Company>Yanzi</Company>
+    <Authors>Yanzi</Authors>
+    <Description>Yanzi isolated extension host process for Windows extensions.</Description>
   </PropertyGroup>
 
 </Project>

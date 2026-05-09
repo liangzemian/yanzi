@@ -14,7 +14,12 @@
     <AssemblyName>Yanzi</AssemblyName>
     <Product>Yanzi</Product>
     <Title>Yanzi</Title>
+    <Company>Yanzi</Company>
+    <Authors>Yanzi</Authors>
+    <Description>Yanzi desktop launcher and extension host for Windows.</Description>
     <ApplicationIcon>yanzi.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <CETCompat>false</CETCompat>
   </PropertyGroup>
 
@@ -43,6 +48,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Resource>
+    <Resource Include="Assets\Icons\*.svg" />
     <None Include="..\..\third_party\everything-sdk\Everything64.dll" Link="Everything64.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
@@ -78,11 +84,11 @@
   </ItemGroup>
 
   <Target Name="PublishExtensionHostForBuild" AfterTargets="Build">
-    <Exec Command='dotnet publish "$(MSBuildThisFileDirectory)..\Yanzi.ExtensionHost\Yanzi.ExtensionHost.csproj" -c $(Configuration) -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o "$(TargetDir)ExtensionHost"' />
+    <Exec Command='dotnet publish "$(MSBuildThisFileDirectory)..\Yanzi.ExtensionHost\Yanzi.ExtensionHost.csproj" -c $(Configuration) -r win-x64 --self-contained true -p:PublishSingleFile=true -p:SatelliteResourceLanguages=zh-Hans -p:DebugType=None -o "$(TargetDir)ExtensionHost"' />
   </Target>
 
   <Target Name="PublishExtensionHostForPublish" AfterTargets="Publish">
-    <Exec Command='dotnet publish "$(MSBuildThisFileDirectory)..\Yanzi.ExtensionHost\Yanzi.ExtensionHost.csproj" -c $(Configuration) -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o "$(PublishDir)ExtensionHost"' />
+    <Exec Command='dotnet publish "$(MSBuildThisFileDirectory)..\Yanzi.ExtensionHost\Yanzi.ExtensionHost.csproj" -c $(Configuration) -r win-x64 --self-contained true -p:PublishSingleFile=true -p:SatelliteResourceLanguages=zh-Hans -p:DebugType=None -o "$(PublishDir)ExtensionHost"' />
   </Target>
 
   <Target Name="CopyNativeWindowReferenceAssembliesForBuild" AfterTargets="Build">

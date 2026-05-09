@@ -1,9 +1,11 @@
 using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Xml.Linq;
 
 namespace OpenQuickHost;
 
@@ -34,7 +36,98 @@ internal static class ExtensionIconLibrary
         ["star"] = "M12,17.27L18.18,21L16.54,13.97L22,9.24L14.81,8.62L12,2L9.19,8.62L2,9.24L7.45,13.97L5.82,21L12,17.27Z",
         ["link"] = "M10.59,13.41L9.17,12L13.41,7.76L14.83,9.17L10.59,13.41M13.41,16.24L9.17,20.5L7.76,19.08L12,14.83L13.41,16.24M16.24,13.41L20.5,9.17L19.08,7.76L14.83,12L16.24,13.41M7.76,16.24L3.5,12L4.92,10.59L9.17,14.83L7.76,16.24Z",
         ["pin"] = "M14,3L21,10L18,11L15,18L13,18L13,12L8,17L7,16L12,11L6,11L6,9L13,8L14,3Z",
-        ["plus"] = "M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"
+        ["plus"] = "M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z",
+        ["refresh"] = "M21,12C21,16.97 16.97,21 12,21C7.03,21 3,16.97 3,12C3,7.03 7.03,3 12,3C14.76,3 17.22,4.25 18.86,6.21 M21,3V8H16",
+        ["sync"] = "M12,6V9L16,5L12,1V4A8,8 0 0,0 4,12C4,13.43 4.37,14.77 5.03,15.94L6.47,14.5C6.17,13.73 6,12.89 6,12A6,6 0 0,1 12,6M18.97,8.06L17.53,9.5C17.83,10.27 18,11.11 18,12A6,6 0 0,1 12,18V15L8,19L12,23V20A8,8 0 0,0 20,12C20,10.57 19.63,9.23 18.97,8.06Z",
+        ["pause"] = "M14,19H18V5H14M6,19H10V5H6V19Z",
+        ["logout"] = "M19,3H5C3.89,3 3,3.89 3,5V9H5V5H19V19H5V15H3V19C3,20.11 3.89,21 5,21H19C20.11,21 21,20.11 21,19V5C21,3.89 20.11,3 19,3M10.08,15.58L11.5,17L16.5,12L11.5,7L10.08,8.41L12.67,11H3V13H12.67L10.08,15.58Z",
+        ["shortcut"] = "M19,10H17V8H19M19,13H17V11H19M16,10H14V8H16M16,13H14V11H16M16,17H8V15H16M7,10H5V8H7M7,13H5V11H7M8,11H10V13H8M8,8H10V10H8M11,11H13V13H11M11,8H13V10H11M20,5H4C2.89,5 2,5.89 2,7V17A2,2 0 0,0 4,19H20A2,2 0 0,0 22,17V7C22,5.89 21.1,5 20,5Z",
+        ["desktop-shortcut"] = "M4,2H20A2,2 0 0,1 22,4V16A2,2 0 0,1 20,18H16L12,22L8,18H4A2,2 0 0,1 2,16V4A2,2 0 0,1 4,2M4,4V16H8.83L12,19.17L15.17,16H20V4H4M13,14V10H15V14H18L14,18L10,14H13Z",
+        ["cut"] = "M9.64,7.64C11.19,6.09 13.7,6.09 15.24,7.64L16.66,9.05L18.07,7.64L16.66,6.22C14.34,3.91 10.55,3.91 8.22,6.22C6.23,8.21 5.95,11.32 7.38,13.62L4,17V15H2V21H8V19H6L8.79,16.21L12.38,19.79C10.08,21.23 6.96,20.95 4.97,18.96L3.56,17.54L2.14,18.96L3.56,20.37C6.67,23.49 11.72,23.49 14.83,20.37L16.24,18.96L20.5,23.22L21.91,21.81L17.66,17.56L19.07,16.15C22.18,13.03 22.18,7.98 19.07,4.86L17.66,3.45L16.24,4.86L17.66,6.27C19.98,8.59 19.98,12.38 17.66,14.7L16.24,16.12L9.64,9.52C8.48,8.36 8.48,6.48 9.64,5.31",
+        ["paste"] = "M19,20H5V4H7V2H17V6H19M19,8H5C3.89,8 3,8.89 3,10V20A2,2 0 0,0 5,22H19A2,2 0 0,0 21,20V10C21,8.89 20.11,8 19,8Z",
+        ["skill-export"] = "M12,3 L20,7 V17 L12,21 L4,17 V7 Z M12,3 V21 M4,7 L12,11 L20,7"
+    };
+
+    private static readonly IReadOnlyDictionary<string, string> SvgAssetIcons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["folder"] = "folder.svg",
+        ["clipboard"] = "copy-success.svg",
+        ["copy"] = "copy-success.svg",
+        ["note"] = "comment.svg",
+        ["file"] = "form.svg",
+        ["window"] = "dashboard.svg",
+        ["search"] = "search.svg",
+        ["clock"] = "clock.svg",
+        ["timer"] = "timer.svg",
+        ["chat"] = "comment.svg",
+        ["ai"] = "ai.svg",
+        ["settings"] = "settings.svg",
+        ["star"] = "star.svg",
+        ["pin"] = "pin.svg",
+        ["pin-off"] = "pin-off.svg",
+        ["plus"] = "add.svg",
+        ["delete"] = "circle-delete.svg",
+        ["check"] = "circle-check.svg",
+        ["close"] = "close.svg",
+        ["arrow-left"] = "arrow-left-solid.svg",
+        ["warning"] = "circle-warning.svg",
+        ["user"] = "user.svg",
+        ["users"] = "users.svg",
+        ["calendar"] = "calendar.svg",
+        ["lock"] = "lock.svg",
+        ["info"] = "info.svg",
+        ["more"] = "circle-more.svg",
+        ["dashboard"] = "dashboard.svg",
+        ["pen"] = "pen.svg",
+        ["form"] = "form.svg",
+        ["task"] = "task-done.svg",
+        ["flag"] = "flag.svg",
+        ["refresh"] = "refresh.svg",
+        ["sync"] = "sync.svg",
+        ["pause"] = "pause.svg",
+        ["logout"] = "exit.svg",
+        ["shortcut"] = "shortcut.svg",
+        ["desktop-shortcut"] = "desktop-shortcut.svg",
+        ["cut"] = "cut.svg",
+        ["paste"] = "paste.svg",
+        ["publish"] = "circle-arrow-up.svg",
+        ["open-folder"] = "folder.svg",
+        ["menu"] = "drawer.svg",
+        ["about"] = "info.svg",
+        ["show-main"] = "dashboard.svg",
+        ["mouse-panel"] = "mouse-panel.svg",
+        ["recycle"] = "recycle.svg",
+        ["running"] = "timer.svg",
+        ["help-docs"] = "form.svg",
+        ["skill-export"] = "skill-export.svg",
+        ["minimize"] = "minimize.svg",
+        ["phone"] = "phone.svg",
+        ["mobile"] = "phone-mobile.svg",
+        ["briefcase"] = "briefcase.svg",
+        ["location"] = "location.svg"
+    };
+
+    private static readonly IReadOnlyDictionary<string, string> IconAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["notebook-outline"] = "note",
+        ["notebook-edit-outline"] = "pen",
+        ["note-text-outline"] = "note",
+        ["text-box-edit-outline"] = "pen",
+        ["text-box-search-outline"] = "note",
+        ["monitor-dashboard"] = "dashboard",
+        ["view-dashboard-outline"] = "dashboard",
+        ["application-outline"] = "dashboard",
+        ["cog-outline"] = "settings",
+        ["folder-search-outline"] = "folder",
+        ["folder-cog-outline"] = "folder",
+        ["file-search-outline"] = "file",
+        ["code-json"] = "form",
+        ["code-tags"] = "code",
+        ["console"] = "terminal",
+        ["counter"] = "timer",
+        ["compass-outline"] = "location",
+        ["notebook"] = "note",
+        ["magnify"] = "search"
     };
 
     private static readonly IReadOnlyDictionary<string, string> AppIcons = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -54,7 +147,12 @@ internal static class ExtensionIconLibrary
         ["file"] = "file",
         ["settings"] = "settings",
         ["image"] = "image",
-        ["window"] = "window"
+        ["window"] = "window",
+        ["user"] = "user",
+        ["users"] = "users",
+        ["calendar"] = "calendar",
+        ["lock"] = "lock",
+        ["dashboard"] = "dashboard"
     };
 
     private static readonly Dictionary<string, Geometry> GeometryCache = new(StringComparer.OrdinalIgnoreCase);
@@ -86,7 +184,15 @@ internal static class ExtensionIconLibrary
             CreateOption("mdi:star", "收藏"),
             CreateOption("mdi:link", "链接"),
             CreateOption("mdi:pin", "固定"),
-            CreateOption("mdi:plus", "新增")
+            CreateOption("mdi:plus", "新增"),
+            CreateOption("mdi:calendar", "日历"),
+            CreateOption("mdi:lock", "锁定"),
+            CreateOption("mdi:user", "用户"),
+            CreateOption("mdi:users", "多人"),
+            CreateOption("mdi:dashboard", "工作台"),
+            CreateOption("mdi:pen", "编辑"),
+            CreateOption("mdi:task", "完成事项"),
+            CreateOption("mdi:flag", "旗帜")
         ];
     }
 
@@ -102,7 +208,9 @@ internal static class ExtensionIconLibrary
             return cachedGeometry;
         }
 
-        var geometry = Geometry.Parse(MdiIcons[iconKey]);
+        var geometry = SvgAssetIcons.TryGetValue(iconKey, out var fileName)
+            ? LoadSvgAssetGeometry(fileName)
+            : Geometry.Parse(MdiIcons[iconKey]);
         if (geometry.CanFreeze)
         {
             geometry.Freeze();
@@ -130,26 +238,34 @@ internal static class ExtensionIconLibrary
             var localPath = resolvedPath.StartsWith("file://", StringComparison.OrdinalIgnoreCase)
                 ? new Uri(resolvedPath, UriKind.Absolute).LocalPath
                 : null;
-            if (!string.IsNullOrWhiteSpace(localPath) && CanExtractAssociatedIcon(localPath))
+            if (!string.IsNullOrWhiteSpace(localPath) && (File.Exists(localPath) || Directory.Exists(localPath)))
             {
-                var extracted = TryExtractAssociatedIcon(localPath);
-                if (extracted != null)
+                if (ShouldPreferBitmapContent(localPath))
                 {
-                    ImageCache[resolvedPath] = extracted;
-                    return extracted;
+                    var bitmapImage = LoadBitmapImage(resolvedPath);
+                    ImageCache[resolvedPath] = bitmapImage;
+                    return bitmapImage;
+                }
+
+                var systemIcon = NativeFileIconService.GetIcon(localPath, Directory.Exists(localPath));
+                if (systemIcon != null)
+                {
+                    ImageCache[resolvedPath] = systemIcon;
+                    return systemIcon;
+                }
+
+                if (CanExtractAssociatedIcon(localPath))
+                {
+                    var extracted = TryExtractAssociatedIcon(localPath);
+                    if (extracted != null)
+                    {
+                        ImageCache[resolvedPath] = extracted;
+                        return extracted;
+                    }
                 }
             }
 
-            var bitmap = new BitmapImage();
-            bitmap.BeginInit();
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
-            bitmap.UriSource = new Uri(resolvedPath, UriKind.Absolute);
-            bitmap.EndInit();
-            if (bitmap.CanFreeze)
-            {
-                bitmap.Freeze();
-            }
-
+            var bitmap = LoadBitmapImage(resolvedPath);
             ImageCache[resolvedPath] = bitmap;
             return bitmap;
         }
@@ -206,6 +322,33 @@ internal static class ExtensionIconLibrary
         return null;
     }
 
+    private static bool ShouldPreferBitmapContent(string localPath)
+    {
+        var extension = Path.GetExtension(localPath);
+        return extension.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".gif", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".webp", StringComparison.OrdinalIgnoreCase) ||
+               extension.Equals(".ico", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static BitmapImage LoadBitmapImage(string resolvedPath)
+    {
+        var bitmap = new BitmapImage();
+        bitmap.BeginInit();
+        bitmap.CacheOption = BitmapCacheOption.OnLoad;
+        bitmap.UriSource = new Uri(resolvedPath, UriKind.Absolute);
+        bitmap.EndInit();
+        if (bitmap.CanFreeze)
+        {
+            bitmap.Freeze();
+        }
+
+        return bitmap;
+    }
+
     public static bool IsBuiltInReference(string? iconReference) => TryResolveVectorKey(iconReference, out _);
 
     private static bool TryResolveVectorKey(string? iconReference, out string iconKey)
@@ -218,12 +361,11 @@ internal static class ExtensionIconLibrary
 
         if (string.Equals(library, "mdi", StringComparison.OrdinalIgnoreCase))
         {
-            if (!MdiIcons.ContainsKey(name))
+            if (!TryResolveCanonicalIconKey(name, out iconKey))
             {
                 return false;
             }
 
-            iconKey = name;
             return true;
         }
 
@@ -234,23 +376,68 @@ internal static class ExtensionIconLibrary
                 return false;
             }
 
-            iconKey = mappedIcon;
-            return true;
+            return TryResolveCanonicalIconKey(mappedIcon, out iconKey);
         }
 
-        if (MdiIcons.ContainsKey(name))
+        if (TryResolveCanonicalIconKey(name, out iconKey))
         {
-            iconKey = name;
             return true;
         }
 
         if (AppIcons.TryGetValue(name, out var fallbackIcon))
         {
-            iconKey = fallbackIcon;
-            return true;
+            return TryResolveCanonicalIconKey(fallbackIcon, out iconKey);
         }
 
         return false;
+    }
+
+    private static bool TryResolveCanonicalIconKey(string name, out string iconKey)
+    {
+        if (IconAliases.TryGetValue(name, out var alias))
+        {
+            iconKey = alias;
+            return MdiIcons.ContainsKey(iconKey) || SvgAssetIcons.ContainsKey(iconKey);
+        }
+
+        if (MdiIcons.ContainsKey(name) || SvgAssetIcons.ContainsKey(name))
+        {
+            iconKey = name;
+            return true;
+        }
+
+        iconKey = string.Empty;
+        return false;
+    }
+
+    private static Geometry LoadSvgAssetGeometry(string fileName)
+    {
+        var resource = System.Windows.Application.GetResourceStream(new Uri($"pack://application:,,,/Assets/Icons/{fileName}", UriKind.Absolute))
+            ?? throw new InvalidOperationException($"Icon resource not found: {fileName}");
+
+        using var stream = resource.Stream;
+        var document = XDocument.Load(stream);
+        var pathData = document
+            .Descendants()
+            .FirstOrDefault(static element => string.Equals(element.Name.LocalName, "path", StringComparison.OrdinalIgnoreCase))
+            ?.Attribute("d")
+            ?.Value;
+
+        if (string.IsNullOrWhiteSpace(pathData))
+        {
+            throw new InvalidOperationException($"Icon resource has no path data: {fileName}");
+        }
+
+        var geometry = Geometry.Parse(pathData);
+        var bounds = geometry.Bounds;
+        if (!bounds.IsEmpty && (Math.Abs(bounds.X) > double.Epsilon || Math.Abs(bounds.Y) > double.Epsilon))
+        {
+            var normalizedGeometry = geometry.CloneCurrentValue();
+            normalizedGeometry.Transform = new TranslateTransform(-bounds.X, -bounds.Y);
+            geometry = normalizedGeometry;
+        }
+
+        return geometry;
     }
 
     private static ExtensionIconOption CreateOption(string reference, string label)
