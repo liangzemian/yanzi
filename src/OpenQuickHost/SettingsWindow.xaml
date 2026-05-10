@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:OpenQuickHost"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
         Title="Settings"
         Width="1024"
@@ -12,8 +13,17 @@
         MinHeight="620"
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
-        Background="Transparent"
-        AllowsTransparency="True">
+        Background="#FF1A1A1A"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="6"
+                            CornerRadius="12"
+                            GlassFrameThickness="0" />
+    </shell:WindowChrome.WindowChrome>
     
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
@@ -138,16 +148,12 @@
     </Window.Resources>
 
     <Border x:Name="WindowFrame"
-            Margin="10"
+            Margin="1"
             CornerRadius="12"
-            Background="#FF161616"
-            BorderBrush="#FF2A2A2A"
+            Background="#F2161616"
+            BorderBrush="#22FFFFFF"
             BorderThickness="1"
             PreviewMouseLeftButtonDown="WindowFrame_PreviewMouseLeftButtonDown">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="15" Direction="270" ShadowDepth="2" Opacity="0.5"/>
-        </Border.Effect>
-        
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="260" />
@@ -590,6 +596,225 @@
                                 </StackPanel>
                             </Border>
 
+                            <TextBlock Text="燕环" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
+                                <StackPanel>
+                                    <Grid>
+                                        <StackPanel>
+                                            <TextBlock Text="游戏轮盘模式" Foreground="White" FontSize="13"/>
+                                            <TextBlock Text="{Binding RadialMenuSummary}" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                            <TextBlock Text="右键按住并移动触发燕环；右键按住不动仍触发鼠标面板。滚轮切页，子环可无限嵌套。" Foreground="#FF666666" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                                            <CheckBox Content="按住 CapsLock 呼出燕环，松开执行"
+                                                      Foreground="#FFE5E5E5"
+                                                      FontSize="12"
+                                                      Margin="0,10,0,0"
+                                                      IsChecked="{Binding EnableRadialCapsLockHold, Mode=TwoWay}"
+                                                      Click="SaveQuickPanelTrigger_Click"/>
+                                        </StackPanel>
+                                        <CheckBox HorizontalAlignment="Right" Style="{StaticResource RaycastSwitchStyle}" IsChecked="{Binding EnableRadialMenu, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
+                                    </Grid>
+
+                                    <Grid Margin="0,16,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="当前轮盘" Foreground="#FFB8B8B8" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <ComboBox Width="180"
+                                                      Height="30"
+                                                      ItemsSource="{Binding RadialMenuPages}"
+                                                      DisplayMemberPath="Name"
+                                                      SelectedValuePath="Id"
+                                                      SelectedValue="{Binding SelectedRadialMenuPageId, Mode=TwoWay}"
+                                                      ToolTip="滚轮会在这些轮盘页面之间切换"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                            <Button Content="新增页面" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" Click="AddRadialMenuPageButton_Click"/>
+                                            <Button Content="删除页面" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Click="DeleteRadialMenuPageButton_Click"/>
+                                        </StackPanel>
+                                    </Grid>
+
+                                    <Grid Margin="0,14,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="390"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Border Width="360"
+                                                Height="360"
+                                                HorizontalAlignment="Left"
+                                                Background="#99101010"
+                                                BorderBrush="#22FFFFFF"
+                                                BorderThickness="1"
+                                                CornerRadius="180">
+                                            <Canvas Width="360" Height="360">
+                                                <ItemsControl ItemsSource="{Binding RadialMenuPreviewSeparators}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <Canvas/>
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}" Stroke="#2DFFFFFF" StrokeThickness="1"/>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                                <Border Width="90"
+                                                        Height="90"
+                                                        Canvas.Left="135"
+                                                        Canvas.Top="135"
+                                                        Background="#01000000"
+                                                        CornerRadius="45"
+                                                        ToolTip="右键或双击重命名当前轮盘"
+                                                        MouseLeftButtonDown="RadialMenuCenter_MouseLeftButtonDown"
+                                                        MouseRightButtonDown="RadialMenuCenter_MouseRightButtonDown">
+                                                    <Border.ContextMenu>
+                                                        <ContextMenu>
+                                                            <MenuItem Header="重命名当前轮盘" Click="RenameRadialMenuPageMenuItem_Click"/>
+                                                        </ContextMenu>
+                                                    </Border.ContextMenu>
+                                                    <Grid>
+                                                        <Ellipse Fill="#F2161616"
+                                                                 Stroke="#33FFFFFF"
+                                                                 StrokeThickness="1"
+                                                                 IsHitTestVisible="False"/>
+                                                        <TextBlock Text="{Binding SelectedRadialMenuPageName}"
+                                                                   TextAlignment="Center"
+                                                                   Foreground="White"
+                                                                   FontSize="16"
+                                                                   FontWeight="SemiBold"
+                                                                   VerticalAlignment="Center"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   Margin="8,0"
+                                                                   IsHitTestVisible="False"/>
+                                                    </Grid>
+                                                </Border>
+                                                <ItemsControl ItemsSource="{Binding RadialMenuSlots}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <Canvas/>
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemContainerStyle>
+                                                        <Style TargetType="ContentPresenter">
+                                                            <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                                                            <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                                                        </Style>
+                                                    </ItemsControl.ItemContainerStyle>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border Width="112"
+                                                                    Height="82"
+                                                                    Background="Transparent"
+                                                                    BorderThickness="0"
+                                                                    Padding="8"
+                                                                    AllowDrop="True"
+                                                                    MouseLeftButtonDown="RadialSlot_MouseLeftButtonDown"
+                                                                    MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
+                                                                    DragOver="RadialSlot_DragOver"
+                                                                    Drop="RadialSlot_Drop">
+                                                                <Border.ContextMenu>
+                                                                    <ContextMenu>
+                                                                        <MenuItem Header="添加扩展/应用/系统项" Click="RadialSlotAddCommandMenuItem_Click"/>
+                                                                        <MenuItem Header="设置模拟按键" Click="RadialSlotSetSimulatedKeyMenuItem_Click"/>
+                                                                        <MenuItem Header="删除扩展/应用/系统项" Click="RadialSlotClearCommandMenuItem_Click"/>
+                                                                        <Separator/>
+                                                                        <MenuItem Header="添加子环" Click="RadialSlotAddChildPageMenuItem_Click"/>
+                                                                        <MenuItem Header="删除子环" Click="RadialSlotClearChildPageMenuItem_Click"/>
+                                                                    </ContextMenu>
+                                                                </Border.ContextMenu>
+                                                                <StackPanel>
+                                                                    <TextBlock Text="{Binding Label}"
+                                                                               Foreground="#FF60A5FA"
+                                                                               FontWeight="SemiBold"
+                                                                               HorizontalAlignment="Center"
+                                                                               FontSize="11"/>
+                                                                    <TextBlock Text="{Binding ExtensionTitle}"
+                                                                               Foreground="#FFE5E5E5"
+                                                                               FontSize="10"
+                                                                               Margin="0,5,0,0"
+                                                                               TextAlignment="Center"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               ToolTip="把右侧扩展拖到这里"/>
+                                                                    <TextBlock Text="{Binding ChildPageTitle}"
+                                                                               Foreground="#FF8E8E8E"
+                                                                               FontSize="10"
+                                                                               Margin="0,3,0,0"
+                                                                               TextAlignment="Center"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               ToolTip="子环入口"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </Canvas>
+                                        </Border>
+
+                                        <Border Grid.Column="1" Background="#FF161616" BorderBrush="#22FFFFFF" BorderThickness="1" CornerRadius="10" Padding="10">
+                                            <Grid>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <StackPanel>
+                                                    <TextBlock Text="搜索添加到方向槽位" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                                    <TextBlock Text="{Binding RadialMenuSelectedSlotSummary}" Foreground="#FF8E8E8E" FontSize="11" Margin="0,4,0,10" TextWrapping="Wrap"/>
+                                                    <TextBox Text="{Binding RadialMenuSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                             Height="30"
+                                                             Margin="0,0,0,8"
+                                                             ToolTip="搜索扩展、应用、系统设置项。按 ↓ 选择，Enter 添加到当前槽位。"
+                                                             PreviewKeyDown="RadialMenuSearchBox_PreviewKeyDown"/>
+                                                </StackPanel>
+                                                <ScrollViewer Grid.Row="1" MaxHeight="310" VerticalScrollBarVisibility="Auto">
+                                                    <ListBox ItemsSource="{Binding FilteredRadialMenuCommandOptions}"
+                                                             Background="Transparent"
+                                                             BorderThickness="0"
+                                                             Foreground="White"
+                                                             PreviewKeyDown="RadialMenuCommandListBox_PreviewKeyDown"
+                                                             MouseDoubleClick="RadialMenuCommandListBox_MouseDoubleClick">
+                                                        <ListBox.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Border Background="#FF202020"
+                                                                        BorderBrush="#1AFFFFFF"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="8"
+                                                                        Padding="8"
+                                                                        Margin="0,0,0,6"
+                                                                        Cursor="Hand"
+                                                                        PreviewMouseMove="RadialExtensionDragStart_MouseMove">
+                                                                    <Grid>
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="Auto"/>
+                                                                            <ColumnDefinition Width="*"/>
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <Border Width="28" Height="28" CornerRadius="7" Background="{Binding AccentBrush}" Margin="0,0,8,0">
+                                                                            <Grid>
+                                                                                <Image Source="{Binding IconSource}" Width="22" Height="22" Stretch="Uniform" Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                                <Viewbox Width="18" Height="18" Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                                    <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
+                                                                                </Viewbox>
+                                                                                <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                            </Grid>
+                                                                        </Border>
+                                                                        <StackPanel Grid.Column="1">
+                                                                            <TextBlock Text="{Binding Title}" Foreground="White" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                                            <TextBlock Text="{Binding Detail}" Foreground="#FF8E8E8E" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                                                        </StackPanel>
+                                                                    </Grid>
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ListBox.ItemTemplate>
+                                                    </ListBox>
+                                                </ScrollViewer>
+                                            </Grid>
+                                        </Border>
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+
                             <TextBlock Text="配置指南" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
                             <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
                                 <StackPanel>
@@ -599,6 +824,157 @@
                                     <TextBlock Text="4. 长按或拖动触发时，如果启用“松开后执行”，移动到扩展上松开即可自动运行。" Foreground="#FFE5E5E5" FontSize="13"/>
                                 </StackPanel>
                             </Border>
+                        </StackPanel>
+
+                        <!-- Yarn Select View -->
+                        <StackPanel Visibility="{Binding IsYarnSelectSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="燕选" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
+
+                            <Grid Margin="0,5">
+                                <StackPanel>
+                                    <TextBlock Text="选中即操作" Foreground="White" FontSize="13"/>
+                                    <TextBlock Text="{Binding YarnSelectSummary}" Foreground="#FF666666" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Button Content="保存" Style="{StaticResource PrimaryBtn}" HorizontalAlignment="Right" Click="SaveYarnSelectSettings_Click"/>
+                            </Grid>
+                            <Rectangle Height="1" Fill="#FF222222" Margin="0,12"/>
+
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <TextBlock Text="启用燕选" Foreground="White" FontSize="13"/>
+                                            <TextBlock Text="按住鼠标左键选择内容时，继续按字母或鼠标键触发动作。" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <CheckBox HorizontalAlignment="Right" Style="{StaticResource RaycastSwitchStyle}" IsChecked="{Binding EnableYarnSelect, Mode=TwoWay}" Click="SaveYarnSelectSettings_Click"/>
+                                    </Grid>
+
+                                    <Rectangle Height="1" Fill="#FF2A2A2A" Margin="0,0,0,12"/>
+                                    <Grid Margin="0,0,0,10">
+                                        <TextBlock Text="规则列表" Foreground="#FFB8B8B8" FontSize="12" VerticalAlignment="Center"/>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <Button Content="新增规则" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" Click="AddYarnSelectRuleButton_Click"/>
+                                            <Button Content="恢复默认" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Click="ResetYarnSelectRulesButton_Click"/>
+                                        </StackPanel>
+                                    </Grid>
+                                    <ItemsControl ItemsSource="{Binding YarnSelectRules}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border BorderBrush="#FF2A2A2A" BorderThickness="0,1,0,0" Padding="0,10">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="52"/>
+                                                            <ColumnDefinition Width="86"/>
+                                                            <ColumnDefinition Width="130"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="1.2*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <CheckBox IsChecked="{Binding Enabled, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                                        <TextBox Grid.Column="1"
+                                                                 Text="{Binding TriggerKey, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                                 Height="30"
+                                                                 Margin="0,0,8,0"
+                                                                 ToolTip="填写单个字母/数字，或 Right、X1、X2"/>
+                                                        <ComboBox Grid.Column="2"
+                                                                  Height="30"
+                                                                  Margin="0,0,8,0"
+                                                                  ItemsSource="{Binding DataContext.YarnSelectActionOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                  DisplayMemberPath="Label"
+                                                                  SelectedValuePath="Value"
+                                                                  SelectedValue="{Binding ActionType, Mode=TwoWay}"/>
+                                                        <StackPanel Grid.Column="3" Margin="0,0,8,0">
+                                                            <TextBox Text="{Binding ExtensionSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                     Height="30"
+                                                                     ToolTip="搜索并选择扩展。动作类型为运行扩展时，会把选中文本作为参数传入"
+                                                                     GotKeyboardFocus="YarnSelectExtensionSearchBox_GotKeyboardFocus"
+                                                                     TextChanged="YarnSelectExtensionSearchBox_TextChanged"
+                                                                     PreviewKeyDown="YarnSelectExtensionSearchBox_PreviewKeyDown"/>
+                                                            <ListBox ItemsSource="{Binding FilteredExtensionOptions}"
+                                                                     MaxHeight="126"
+                                                                     Margin="0,6,0,0"
+                                                                     Visibility="{Binding FilteredExtensionListVisibility}"
+                                                                     Background="#FF171717"
+                                                                     BorderBrush="#FF2A2A2A"
+                                                                     BorderThickness="1"
+                                                                     Foreground="White"
+                                                                     PreviewKeyDown="YarnSelectExtensionListBox_PreviewKeyDown"
+                                                                     MouseDoubleClick="YarnSelectExtensionListBox_MouseDoubleClick">
+                                                                <ListBox.ItemTemplate>
+                                                                    <DataTemplate>
+                                                                        <Grid Margin="0,2">
+                                                                            <Grid.ColumnDefinitions>
+                                                                                <ColumnDefinition Width="30"/>
+                                                                                <ColumnDefinition Width="*"/>
+                                                                            </Grid.ColumnDefinitions>
+                                                                            <Border Width="24"
+                                                                                    Height="24"
+                                                                                    CornerRadius="6"
+                                                                                    Background="{Binding AccentBrush}"
+                                                                                    ClipToBounds="True"
+                                                                                    VerticalAlignment="Center">
+                                                                                <Grid>
+                                                                                    <Image Source="{Binding IconSource}"
+                                                                                           Stretch="UniformToFill"
+                                                                                           Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                                    <Viewbox Width="14"
+                                                                                             Height="14"
+                                                                                             Stretch="Uniform"
+                                                                                             Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                                        <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
+                                                                                    </Viewbox>
+                                                                                    <TextBlock Text="{Binding DisplayGlyph}"
+                                                                                               Foreground="White"
+                                                                                               FontSize="11"
+                                                                                               FontWeight="SemiBold"
+                                                                                               HorizontalAlignment="Center"
+                                                                                               VerticalAlignment="Center"
+                                                                                               Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                                </Grid>
+                                                                            </Border>
+                                                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                                                <TextBlock Text="{Binding Title}" Foreground="White" FontSize="12"/>
+                                                                                <TextBlock Text="{Binding Detail}" Foreground="#FF8E8E8E" FontSize="10" TextTrimming="CharacterEllipsis"/>
+                                                                            </StackPanel>
+                                                                        </Grid>
+                                                                    </DataTemplate>
+                                                                </ListBox.ItemTemplate>
+                                                            </ListBox>
+                                                        </StackPanel>
+                                                        <TextBox Grid.Column="4"
+                                                                 Text="{Binding Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                 Height="30"
+                                                                 Margin="0,0,8,0"
+                                                                 ToolTip="备注"/>
+                                                        <Button Grid.Column="5"
+                                                                Content="删除"
+                                                                Style="{StaticResource SecondaryBtn}"
+                                                                Height="28"
+                                                                Padding="10,0"
+                                                                Click="DeleteYarnSelectRuleButton_Click"/>
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="进程黑名单" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
+                                <StackPanel>
+                                    <TextBlock Text="在这些进程中禁用燕选，多个进程用逗号或换行分隔。可填写 code、excel、photoshop 或 xxx.exe。" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap"/>
+                                    <TextBox Text="{Binding YarnSelectBlacklistedProcessesText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Margin="0,10,0,0"
+                                             MinHeight="70"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"/>
+                                    <Button Content="保存黑名单" Style="{StaticResource SecondaryBtn}" HorizontalAlignment="Left" Margin="0,12,0,0" Click="SaveYarnSelectSettings_Click"/>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="使用方式：拖拽选中文字后不要松开左键，直接按 C / S / R 等按键。第一次使用建议先在普通文本框中测试。" Foreground="#FF666666" FontSize="12" TextWrapping="Wrap" Margin="0,14,0,0"/>
                         </StackPanel>
 
                         <!-- Extensions View -->

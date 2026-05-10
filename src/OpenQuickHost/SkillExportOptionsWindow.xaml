@@ -45,16 +45,12 @@
         </Style>
     </Window.Resources>
 
-    <Border Margin="15"
+    <Border Margin="1"
             CornerRadius="14"
-            Background="#FF161616"
-            BorderBrush="#FF2A2A2A"
+            Background="#F2161616"
+            BorderBrush="#22FFFFFF"
             BorderThickness="1"
             MouseLeftButtonDown="Window_MouseLeftButtonDown">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="25" Direction="270" ShadowDepth="4" Opacity="0.5"/>
-        </Border.Effect>
-        
         <Grid Margin="25">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" /> <!-- Header -->

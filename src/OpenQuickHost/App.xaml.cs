@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows;
 using OpenQuickHost.Sync;
 using Forms = System.Windows.Forms;
@@ -20,6 +21,7 @@ public partial class App : WpfApplication
 
     protected override void OnStartup(WpfStartupEventArgs e)
     {
+        TrySetProcessDpiAwareness();
         base.OnStartup(e);
         DispatcherUnhandledException += App_DispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
@@ -65,6 +67,22 @@ public partial class App : WpfApplication
             string.Equals(arg, "/tray", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(arg, "-tray", StringComparison.OrdinalIgnoreCase));
     }
+
+    private static void TrySetProcessDpiAwareness()
+    {
+        try
+        {
+            Forms.Application.SetHighDpiMode(Forms.HighDpiMode.PerMonitorV2);
+            SetProcessDpiAwarenessContext(new IntPtr(-4)); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+        }
+        catch
+        {
+            // The manifest is the primary DPI declaration; this is a startup-time fallback.
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
 
     private static void TryRegisterUriProtocol()
     {
@@ -427,26 +445,37 @@ public partial class App : WpfApplication
             return;
         }
 
-        if (_settingsWindow == null || !_settingsWindow.IsLoaded)
+        try
         {
-            _settingsWindow = new SettingsWindow(mainWindow);
-            _settingsWindow.Owner = mainWindow;
-            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
-        }
+            HostAssets.AppendLog($"Settings window open requested: section={sectionKey ?? "default"}, existing={_settingsWindow != null && _settingsWindow.IsLoaded}.");
+            if (_settingsWindow == null || !_settingsWindow.IsLoaded)
+            {
+                _settingsWindow = new SettingsWindow(mainWindow);
+                _settingsWindow.Owner = mainWindow;
+                _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+                HostAssets.AppendLog("Settings window created.");
+            }
 
-        if (!_settingsWindow.IsVisible)
+            if (!_settingsWindow.IsVisible)
+            {
+                _settingsWindow.Show();
+                HostAssets.AppendLog("Settings window shown.");
+            }
+
+            if (_settingsWindow.WindowState == System.Windows.WindowState.Minimized)
+            {
+                _settingsWindow.WindowState = System.Windows.WindowState.Normal;
+            }
+
+            _settingsWindow.NavigateTo(sectionKey);
+            _settingsWindow.Activate();
+            _settingsWindow.Focus();
+            HostAssets.AppendLog("Settings window activated.");
+        }
+        catch (Exception ex)
         {
-            _settingsWindow.Show();
+            HostAssets.AppendLog($"Settings window open failed: {ex}");
         }
-
-        if (_settingsWindow.WindowState == System.Windows.WindowState.Minimized)
-        {
-            _settingsWindow.WindowState = System.Windows.WindowState.Normal;
-        }
-
-        _settingsWindow.NavigateTo(sectionKey);
-        _settingsWindow.Activate();
-        _settingsWindow.Focus();
     }
 
     public void OpenRunningExtensionsWindow()

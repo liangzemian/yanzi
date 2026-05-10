@@ -4,14 +4,24 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:OpenQuickHost"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
         Title="鼠标面板" Height="620" Width="340"
         WindowStyle="None"
-        AllowsTransparency="True"
-        Background="Transparent"
+        Background="#FF1A1A1A"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType"
         ShowInTaskbar="False"
         WindowStartupLocation="Manual"
         Deactivated="Window_Deactivated">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="4"
+                            CornerRadius="16"
+                            GlassFrameThickness="0" />
+    </shell:WindowChrome.WindowChrome>
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <local:BooleanToColorConverter x:Key="BooleanToColorConverter" />
@@ -78,12 +88,12 @@
         </Style>
     </Window.Resources>
 
-    <Border Background="#F2121212" CornerRadius="20" BorderBrush="#FF333333" BorderThickness="1.5"
+    <Border Margin="1"
+            Background="#F21A1A1A"
+            CornerRadius="20"
+            BorderBrush="#22FFFFFF"
+            BorderThickness="1"
             MouseLeftButtonDown="Window_MouseLeftButtonDown">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="30" Color="Black" Opacity="0.6" ShadowDepth="0"/>
-        </Border.Effect>
-        
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="42"/>

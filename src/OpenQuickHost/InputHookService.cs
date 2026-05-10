@@ -8,6 +8,7 @@ namespace OpenQuickHost;
 public class InputHookService
 {
     private const int WH_MOUSE_LL = 14;
+    private const int WH_KEYBOARD_LL = 13;
     private const int WM_LBUTTONDOWN = 0x0201;
     private const int WM_LBUTTONUP = 0x0202;
     private const int WM_RBUTTONDOWN = 0x0204;
@@ -18,30 +19,47 @@ public class InputHookService
     private const int WM_XBUTTONDOWN = 0x020B;
     private const int WM_XBUTTONUP = 0x020C;
     private const int WM_MOUSEHWHEEL = 0x020E;
+    private const int WM_KEYDOWN = 0x0100;
+    private const int WM_KEYUP = 0x0101;
+    private const int WM_SYSKEYDOWN = 0x0104;
+    private const int WM_SYSKEYUP = 0x0105;
     private const int VK_CONTROL = 0x11;
+    private const int VK_CAPITAL = 0x14;
     private const int XBUTTON1 = 1;
     private const int XBUTTON2 = 2;
     private const uint LLMHF_INJECTED = 0x00000001;
+    private const uint LLKHF_INJECTED = 0x00000010;
     private const uint INPUT_MOUSE = 0;
     private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
     private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
 
-    private static LowLevelMouseProc _proc = HookCallback;
-    private static IntPtr _hookID = IntPtr.Zero;
+    private static LowLevelMouseProc _mouseProc = MouseHookCallback;
+    private static LowLevelKeyboardProc _keyboardProc = KeyboardHookCallback;
+    private static IntPtr _mouseHookID = IntPtr.Zero;
+    private static IntPtr _keyboardHookID = IntPtr.Zero;
     private static DispatcherTimer? _longPressTimer;
     private static Action? _onLongPressRelease;
+    private static Action? _onRadialRelease;
     private static Action? _onShowPanel;
+    private static Action? _onShowRadial;
     private static QuickPanelMouseTriggerSettings _settings = new();
+    private static RadialMenuSettings _radialSettings = new();
     private static bool _isEnabled;
     private static bool _dragTriggered;
     private static bool _releaseShouldExecute;
     private static bool _rightButtonDownSwallowed;
+    private static ActiveTriggerTarget _activeTriggerTarget = ActiveTriggerTarget.None;
+    private static bool _capsRadialActive;
     private static TrackedMouseButton _trackedButton = TrackedMouseButton.None;
     private static POINT _downPoint;
 
     public static bool IsRunning => _isEnabled;
 
-    public static void Start(Action onLongPress, Action? onLongPressRelease = null)
+    public static void Start(
+        Action onLongPress,
+        Action? onLongPressRelease = null,
+        Action? onRadial = null,
+        Action? onRadialRelease = null)
     {
         if (_isEnabled)
         {
@@ -51,13 +69,21 @@ public class InputHookService
         
         _onShowPanel = onLongPress;
         _onLongPressRelease = onLongPressRelease;
+        _onShowRadial = onRadial;
+        _onRadialRelease = onRadialRelease;
         ReloadSettings();
-        _hookID = SetHook(_proc);
-        if (_hookID == IntPtr.Zero)
+        _mouseHookID = SetMouseHook(_mouseProc);
+        if (_mouseHookID == IntPtr.Zero)
         {
             var error = Marshal.GetLastWin32Error();
             HostAssets.AppendLog($"Input hook: failed to install low level mouse hook, lastError={error}.");
             return;
+        }
+
+        _keyboardHookID = SetKeyboardHook(_keyboardProc);
+        if (_keyboardHookID == IntPtr.Zero)
+        {
+            HostAssets.AppendLog($"Input hook: failed to install low level keyboard hook, lastError={Marshal.GetLastWin32Error()}; CapsLock radial trigger disabled for this session.");
         }
         
         _longPressTimer = new DispatcherTimer();
@@ -65,28 +91,34 @@ public class InputHookService
         _longPressTimer.Tick += (s, e) =>
         {
             _longPressTimer.Stop();
+            _dragTriggered = true;
             _releaseShouldExecute = true;
+            _activeTriggerTarget = ActiveTriggerTarget.Panel;
             HostAssets.AppendLog($"Input hook: {_trackedButton} long press triggered.");
             InvokeShowPanel();
         };
 
         _isEnabled = true;
-        HostAssets.AppendLog($"Input hook: started. hook=0x{_hookID.ToInt64():X}, triggers={DescribeSettings()}.");
+        HostAssets.AppendLog($"Input hook: started. mouseHook=0x{_mouseHookID.ToInt64():X}, keyboardHook=0x{_keyboardHookID.ToInt64():X}, triggers={DescribeSettings()}.");
     }
 
     public static void Stop()
     {
         if (!_isEnabled) return;
-        var unhooked = UnhookWindowsHookEx(_hookID);
-        HostAssets.AppendLog($"Input hook: stopped. unhooked={unhooked}.");
+        var mouseUnhooked = _mouseHookID == IntPtr.Zero || UnhookWindowsHookEx(_mouseHookID);
+        var keyboardUnhooked = _keyboardHookID == IntPtr.Zero || UnhookWindowsHookEx(_keyboardHookID);
+        HostAssets.AppendLog($"Input hook: stopped. mouseUnhooked={mouseUnhooked}, keyboardUnhooked={keyboardUnhooked}.");
         _longPressTimer?.Stop();
-        _hookID = IntPtr.Zero;
+        _mouseHookID = IntPtr.Zero;
+        _keyboardHookID = IntPtr.Zero;
+        _capsRadialActive = false;
         _isEnabled = false;
     }
 
     public static void ReloadSettings()
     {
         _settings = AppSettingsStore.Load().QuickPanelMouseTriggers ?? new QuickPanelMouseTriggerSettings();
+        _radialSettings = AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings();
         if (!_settings.MiddleButtonDown &&
             !_settings.X1ButtonDown &&
             !_settings.X2ButtonDown &&
@@ -106,21 +138,31 @@ public class InputHookService
         }
     }
 
-    private static IntPtr SetHook(LowLevelMouseProc proc)
+    private static IntPtr SetMouseHook(LowLevelMouseProc proc)
+    {
+        return SetHook(WH_MOUSE_LL, proc);
+    }
+
+    private static IntPtr SetKeyboardHook(LowLevelKeyboardProc proc)
+    {
+        return SetHook(WH_KEYBOARD_LL, proc);
+    }
+
+    private static IntPtr SetHook<TDelegate>(int hookType, TDelegate proc) where TDelegate : Delegate
     {
         using (Process curProcess = Process.GetCurrentProcess())
         using (ProcessModule curModule = curProcess.MainModule!)
         {
             var moduleHandle = GetModuleHandle(curModule.ModuleName);
-            var hook = SetWindowsHookEx(WH_MOUSE_LL, proc, moduleHandle, 0);
+            var hook = SetWindowsHookEx(hookType, proc, moduleHandle, 0);
             if (hook != IntPtr.Zero)
             {
                 return hook;
             }
 
             var firstError = Marshal.GetLastWin32Error();
-            HostAssets.AppendLog($"Input hook: SetWindowsHookEx failed with module handle, module={curModule.ModuleName}, hMod=0x{moduleHandle.ToInt64():X}, lastError={firstError}; retrying with hMod=0.");
-            return SetWindowsHookEx(WH_MOUSE_LL, proc, IntPtr.Zero, 0);
+            HostAssets.AppendLog($"Input hook: SetWindowsHookEx failed with module handle, type={hookType}, module={curModule.ModuleName}, hMod=0x{moduleHandle.ToInt64():X}, lastError={firstError}; retrying with hMod=0.");
+            return SetWindowsHookEx(hookType, proc, IntPtr.Zero, 0);
         }
     }
 
@@ -135,14 +177,17 @@ public class InputHookService
         if (_settings.MiddleButtonLongPress) enabled.Add($"MiddleLong:{_settings.LongPressMilliseconds}ms");
         if (_settings.RightButtonLongPress) enabled.Add($"RightLong:{_settings.LongPressMilliseconds}ms");
         if (_settings.RightButtonDrag) enabled.Add($"RightDrag:{_settings.DragThresholdPixels}px");
+        if (_radialSettings.Enabled && _radialSettings.TriggerRightButtonDrag) enabled.Add($"RadialRightDrag:{_radialSettings.DragThresholdPixels}px");
+        if (IsRadialCapsLockHoldEnabled()) enabled.Add("RadialCapsHold");
         if (_settings.HorizontalWheel) enabled.Add("HorizontalWheel");
         if (_settings.ExecuteOnButtonRelease) enabled.Add("ReleaseExec");
         return enabled.Count == 0 ? "none" : string.Join(",", enabled);
     }
 
     private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+    private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
-    private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    private static IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
         if (nCode >= 0)
         {
@@ -150,7 +195,7 @@ public class InputHookService
             var mouse = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
             if ((mouse.flags & LLMHF_INJECTED) != 0)
             {
-                return CallNextHookEx(_hookID, nCode, wParam, lParam);
+                return CallNextHookEx(_mouseHookID, nCode, wParam, lParam);
             }
 
             if (message == WM_LBUTTONDOWN)
@@ -164,11 +209,12 @@ public class InputHookService
             else if (message == WM_RBUTTONDOWN)
             {
                 BeginTracking(TrackedMouseButton.Right, mouse.pt);
-                HostAssets.AppendLog($"Input hook: right button down, rightLong={_settings.RightButtonLongPress}, rightDrag={_settings.RightButtonDrag}, ctrlRight={_settings.CtrlRightClick}, ctrlDown={IsControlDown()}, pt=({mouse.pt.x},{mouse.pt.y}).");
+                HostAssets.AppendLog($"Input hook: right button down, rightLong={_settings.RightButtonLongPress}, rightDrag={_settings.RightButtonDrag}, radialRightDrag={IsRadialRightDragEnabled()}, ctrlRight={_settings.CtrlRightClick}, ctrlDown={IsControlDown()}, pt=({mouse.pt.x},{mouse.pt.y}).");
                 _rightButtonDownSwallowed = ShouldDelayRightButtonClick();
                 if (_settings.CtrlRightClick && IsControlDown())
                 {
                     _releaseShouldExecute = true;
+                    _activeTriggerTarget = ActiveTriggerTarget.Panel;
                     HostAssets.AppendLog("Input hook: Ctrl+right click triggered.");
                     InvokeShowPanel();
                 }
@@ -189,6 +235,7 @@ public class InputHookService
                 if (_settings.MiddleButtonDown)
                 {
                     _releaseShouldExecute = true;
+                    _activeTriggerTarget = ActiveTriggerTarget.Panel;
                     HostAssets.AppendLog("Input hook: middle button down triggered.");
                     InvokeShowPanel();
                 }
@@ -206,6 +253,7 @@ public class InputHookService
                     if (_settings.X1ButtonDown)
                     {
                         _releaseShouldExecute = true;
+                        _activeTriggerTarget = ActiveTriggerTarget.Panel;
                         HostAssets.AppendLog("Input hook: X1 button down triggered.");
                         InvokeShowPanel();
                     }
@@ -216,6 +264,7 @@ public class InputHookService
                     if (_settings.X2ButtonDown)
                     {
                         _releaseShouldExecute = true;
+                        _activeTriggerTarget = ActiveTriggerTarget.Panel;
                         HostAssets.AppendLog("Input hook: X2 button down triggered.");
                         InvokeShowPanel();
                     }
@@ -262,7 +311,50 @@ public class InputHookService
                 InvokeShowPanel();
             }
         }
-        return CallNextHookEx(_hookID, nCode, wParam, lParam);
+        return CallNextHookEx(_mouseHookID, nCode, wParam, lParam);
+    }
+
+    private static IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0)
+        {
+            var message = wParam.ToInt32();
+            var keyboard = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+            if ((keyboard.flags & LLKHF_INJECTED) != 0)
+            {
+                return CallNextHookEx(_keyboardHookID, nCode, wParam, lParam);
+            }
+
+            if ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN) &&
+                keyboard.vkCode == VK_CAPITAL &&
+                IsRadialCapsLockHoldEnabled())
+            {
+                if (!_capsRadialActive)
+                {
+                    _capsRadialActive = true;
+                    _releaseShouldExecute = true;
+                    _activeTriggerTarget = ActiveTriggerTarget.Radial;
+                    HostAssets.AppendLog("Input hook: CapsLock hold radial triggered.");
+                    InvokeShowRadial();
+                }
+
+                return (IntPtr)1;
+            }
+
+            if ((message == WM_KEYUP || message == WM_SYSKEYUP) &&
+                keyboard.vkCode == VK_CAPITAL &&
+                _capsRadialActive)
+            {
+                _capsRadialActive = false;
+                _releaseShouldExecute = false;
+                HostAssets.AppendLog("Input hook: CapsLock hold radial released.");
+                System.Windows.Application.Current.Dispatcher.Invoke(() => _onRadialRelease?.Invoke());
+                _activeTriggerTarget = ActiveTriggerTarget.None;
+                return (IntPtr)1;
+            }
+        }
+
+        return CallNextHookEx(_keyboardHookID, nCode, wParam, lParam);
     }
 
     private static void BeginTracking(TrackedMouseButton button, POINT point)
@@ -281,6 +373,7 @@ public class InputHookService
     {
         return _settings.RightButtonLongPress ||
                _settings.RightButtonDrag ||
+               IsRadialRightDragEnabled() ||
                (_settings.CtrlRightClick && IsControlDown());
     }
 
@@ -294,12 +387,20 @@ public class InputHookService
 
     private static void HandleMouseMove(POINT point)
     {
-        if (_trackedButton != TrackedMouseButton.Right || !_settings.RightButtonDrag || _dragTriggered)
+        if (_trackedButton != TrackedMouseButton.Right || _dragTriggered || _activeTriggerTarget != ActiveTriggerTarget.None)
         {
             return;
         }
 
-        var threshold = Math.Clamp(_settings.DragThresholdPixels, 8, 120);
+        var radialDrag = IsRadialRightDragEnabled();
+        if (!radialDrag && !_settings.RightButtonDrag)
+        {
+            return;
+        }
+
+        var threshold = radialDrag
+            ? Math.Clamp(_radialSettings.DragThresholdPixels, 8, 120)
+            : Math.Clamp(_settings.DragThresholdPixels, 8, 120);
         var dx = point.x - _downPoint.x;
         var dy = point.y - _downPoint.y;
         if ((dx * dx) + (dy * dy) < threshold * threshold)
@@ -310,8 +411,18 @@ public class InputHookService
         _dragTriggered = true;
         _releaseShouldExecute = true;
         _longPressTimer?.Stop();
-        HostAssets.AppendLog("Input hook: right button drag triggered.");
-        InvokeShowPanel();
+        if (radialDrag)
+        {
+            _activeTriggerTarget = ActiveTriggerTarget.Radial;
+            HostAssets.AppendLog("Input hook: radial right button drag triggered.");
+            InvokeShowRadial();
+        }
+        else
+        {
+            _activeTriggerTarget = ActiveTriggerTarget.Panel;
+            HostAssets.AppendLog("Input hook: right button drag triggered.");
+            InvokeShowPanel();
+        }
     }
 
     private static bool EndTracking(TrackedMouseButton button)
@@ -326,11 +437,22 @@ public class InputHookService
         if (_releaseShouldExecute && _settings.ExecuteOnButtonRelease)
         {
             HostAssets.AppendLog($"Input hook: {button} released after trigger.");
-            System.Windows.Application.Current.Dispatcher.Invoke(() => _onLongPressRelease?.Invoke());
+            System.Windows.Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (_activeTriggerTarget == ActiveTriggerTarget.Radial)
+                {
+                    _onRadialRelease?.Invoke();
+                }
+                else
+                {
+                    _onLongPressRelease?.Invoke();
+                }
+            });
         }
 
         _dragTriggered = false;
         _releaseShouldExecute = false;
+        _activeTriggerTarget = ActiveTriggerTarget.None;
         if (button == TrackedMouseButton.Right)
         {
             _rightButtonDownSwallowed = false;
@@ -380,12 +502,27 @@ public class InputHookService
         System.Windows.Application.Current.Dispatcher.Invoke(() => _onShowPanel?.Invoke());
     }
 
+    private static void InvokeShowRadial()
+    {
+        System.Windows.Application.Current.Dispatcher.Invoke(() => _onShowRadial?.Invoke());
+    }
+
+    private static bool IsRadialRightDragEnabled() =>
+        _radialSettings.Enabled &&
+        _radialSettings.TriggerRightButtonDrag &&
+        _onShowRadial != null;
+
+    private static bool IsRadialCapsLockHoldEnabled() =>
+        _radialSettings.Enabled &&
+        _radialSettings.TriggerCapsLockHold &&
+        _onShowRadial != null;
+
     private static bool IsControlDown() => (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
 
     private static int GetXButton(uint mouseData) => (int)((mouseData >> 16) & 0xffff);
 
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-    private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+    private static extern IntPtr SetWindowsHookEx(int idHook, Delegate lpfn, IntPtr hMod, uint dwThreadId);
 
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -412,6 +549,13 @@ public class InputHookService
         X2
     }
 
+    private enum ActiveTriggerTarget
+    {
+        None,
+        Panel,
+        Radial
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT
     {
@@ -426,6 +570,16 @@ public class InputHookService
         public uint mouseData;
         public uint flags;
         public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct KBDLLHOOKSTRUCT
+    {
+        public int vkCode;
+        public int scanCode;
+        public uint flags;
+        public int time;
         public IntPtr dwExtraInfo;
     }
 

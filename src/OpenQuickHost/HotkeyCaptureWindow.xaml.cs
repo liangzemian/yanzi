@@ -8,16 +8,18 @@ public partial class HotkeyCaptureWindow : Window
 {
     private readonly bool _allowEmpty;
     private readonly bool _allowDoubleTap;
+    private readonly bool _allowModifierless;
     private Key? _pendingModifierKey;
     private long _lastModifierTapTimestamp;
     private string? _lastModifierShortcut;
     private bool _capturedChordDuringModifierPress;
 
-    public HotkeyCaptureWindow(string title, string description, string? initialValue = null, bool allowEmpty = false, bool allowDoubleTap = false)
+    public HotkeyCaptureWindow(string title, string description, string? initialValue = null, bool allowEmpty = false, bool allowDoubleTap = false, bool allowModifierless = false)
     {
         InitializeComponent();
         _allowEmpty = allowEmpty;
         _allowDoubleTap = allowDoubleTap;
+        _allowModifierless = allowModifierless;
         Title = title;
         TitleText.Text = title;
         DescriptionText.Text = description;
@@ -57,9 +59,20 @@ public partial class HotkeyCaptureWindow : Window
         var modifiers = Keyboard.Modifiers;
         if (modifiers == ModifierKeys.None)
         {
-            ErrorText.Text = "请至少包含 Ctrl、Alt、Shift 或 Win 中的一个修饰键。";
-            ErrorText.Visibility = Visibility.Visible;
-            ConfirmButton.IsEnabled = false;
+            if (_allowModifierless)
+            {
+                ShortcutText = BuildShortcutText(modifiers, key);
+                CapturedHotkeyText.Text = ShortcutText;
+                ConfirmButton.IsEnabled = true;
+                _capturedChordDuringModifierPress = true;
+            }
+            else
+            {
+                ErrorText.Text = "请至少包含 Ctrl、Alt、Shift 或 Win 中的一个修饰键。";
+                ErrorText.Visibility = Visibility.Visible;
+                ConfirmButton.IsEnabled = false;
+            }
+
             e.Handled = true;
             return;
         }
@@ -237,7 +250,7 @@ public partial class HotkeyCaptureWindow : Window
         }
 
         parts.Add(FormatKey(key));
-        return string.Join("+", parts);
+        return parts.Count == 1 ? parts[0] : string.Join("+", parts);
     }
 
     private static string FormatKey(Key key)

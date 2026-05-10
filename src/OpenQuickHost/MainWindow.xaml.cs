@@ -36,6 +36,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const uint ModWin = 0x0008;
     private const uint ModNoRepeat = 0x4000;
     private const int WmHotKey = 0x0312;
+    private const int WmDpiChanged = 0x02E0;
     private const string CloudWebDavConfigId = "yanzi-webdav-settings";
     private const string CloudQuickPanelConfigId = "yanzi-quickpanel-settings";
     private const string SearchScopeAll = "all";
@@ -43,6 +44,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const string SearchScopeApplication = "application";
     private const string SearchScopeFile = "file";
     private const string SearchScopeSystem = "system";
+    private const string SearchScopeYanyu = "yanyu";
 
     private readonly List<CommandItem> _allCommands;
     private readonly CloudSyncClient? _cloudSyncClient;
@@ -66,6 +68,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isPinned;
     private int _nextExtensionHotkeyId = 0x5400;
     private QuickPanelWindow? _quickPanel;
+    private RadialMenuWindow? _radialMenu;
     private readonly DispatcherTimer _backgroundWebDavSyncTimer;
     private readonly DispatcherTimer _cloudReconnectTimer;
     private readonly DispatcherTimer _fileSearchDebounceTimer;
@@ -97,10 +100,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private System.Windows.Point? _commandListDragStartPoint;
     private CommandItem? _commandListDragSource;
     private readonly ObservableCollection<AttachedFileItem> _attachedFiles = [];
+    private CommandActionsMenuOrigin _commandActionsMenuOrigin = CommandActionsMenuOrigin.ResultsList;
+    private bool _hasAppliedFilterOnce;
+    private string _lastAppliedFilterText = string.Empty;
+    private string _lastAppliedFilterScopeKey = SearchScopeAll;
+    private uint _lastKnownWindowDpi = 96;
+    private bool _dpiRefreshRequested;
 
     public MainWindow()
     {
         InitializeComponent();
+        UpdateFooterMenuHint(isMenuOpen: false);
         _defaultWindowWidth = Width;
         _defaultWindowHeight = Height;
         _defaultMinWindowWidth = MinWidth;
@@ -153,6 +163,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Loaded += MainWindow_Loaded;
         Activated += MainWindow_Activated;
         IsVisibleChanged += MainWindow_IsVisibleChanged;
+        LocationChanged += MainWindow_PositionChanged;
+        SizeChanged += MainWindow_PositionChanged;
         SourceInitialized += MainWindow_SourceInitialized;
         Closing += MainWindow_Closing;
         StateChanged += MainWindow_StateChanged;
@@ -161,12 +173,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             InputHookService.Stop();
             KeyboardDoubleTapService.Stop();
+            YanyuTriggerService.Stop();
+            YarnSelectService.Stop();
         };
 
         _quickPanel = new QuickPanelWindow(this);
+        _radialMenu = new RadialMenuWindow(this);
 
         NetworkChange.NetworkAvailabilityChanged += NetworkChange_NetworkAvailabilityChanged;
         NetworkChange.NetworkAddressChanged += NetworkChange_NetworkAddressChanged;
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += SystemEvents_DisplaySettingsChanged;
     }
 
     private void ApplyWindowIcon()
@@ -245,6 +261,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         yield return new SearchScopeTab(SearchScopeApplication, "应用", "已安装应用");
         yield return new SearchScopeTab(SearchScopeFile, "文件", "Everything 文件结果");
         yield return new SearchScopeTab(SearchScopeSystem, "系统", "Windows 系统与设置");
+        yield return new SearchScopeTab(SearchScopeYanyu, "燕语", "文本指令与扩展触发词");
         yield return new SearchScopeTab(SearchScopeAi, "AI对话", "切换到 AI 对话模式");
 
         foreach (var pinnedCommand in GetPinnedSearchScopeCommands())
@@ -368,12 +385,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         : Visibility.Visible;
 
     public string FooterHint => SelectedCommand == null
-        ? "Up / Down 切换   Enter 执行   Ctrl+K 动作   Esc 收起"
+        ? "Up / Down 切换   Enter 执行   → 菜单   Esc 收起"
         : SelectedCommand.IsFileSystemResult
             ? "Up / Down 切换   Enter 打开   右键原生菜单   Esc 收起"
         : SelectedCommand.SupportsQueryArgument && !string.IsNullOrWhiteSpace(_activeQueryArgument)
             ? $"{SelectedCommand.Title}   ·   {BuildQueryPreviewText(SelectedCommand, _activeQueryArgument)}"
-            : $"{SelectedCommand.Title}   ·   {SelectedCommand.Category}   ·   Ctrl+K 动作";
+            : $"{SelectedCommand.Title}   ·   {SelectedCommand.Category}   ·   → 菜单";
 
     public bool IsHostedViewOpen => _activeHostedView != null;
 
@@ -570,6 +587,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (e.Key == Key.Down)
         {
             MoveSelection(1);
+            FocusCommandList();
             e.Handled = true;
         }
         else if (e.Key == Key.Up)
@@ -590,6 +608,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             e.Handled = true;
         }
+        else if (e.Key == Key.Right && CanOpenCommandMenuFromSearchBox())
+        {
+            OpenCommandActionsMenu(CommandActionsMenuOrigin.SearchBox);
+            e.Handled = true;
+        }
+    }
+
+    private bool CanOpenCommandMenuFromSearchBox()
+    {
+        if (FilteredCommands.Count == 0 ||
+            SelectedCommand == null ||
+            SearchBox.SelectionLength > 0 ||
+            SearchBox.CaretIndex != SearchBox.Text.Length ||
+            !string.IsNullOrWhiteSpace(SearchInlineCompletionSuffix))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private void CopySearchSelectionToClipboard()
@@ -887,7 +924,47 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             RunSelectedCommand();
             e.Handled = true;
+            return;
         }
+
+        if (e.Key == Key.Down)
+        {
+            MoveSelection(1);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Up)
+        {
+            MoveSelection(-1);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Right)
+        {
+            OpenCommandActionsMenu(CommandActionsMenuOrigin.ResultsList);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Left)
+        {
+            SearchBox.Focus();
+            SearchBox.CaretIndex = SearchBox.Text.Length;
+            e.Handled = true;
+        }
+    }
+
+    private void FocusCommandList()
+    {
+        if (FilteredCommands.Count == 0)
+        {
+            return;
+        }
+
+        CommandList.Focus();
+        Keyboard.Focus(CommandList);
     }
 
     private void CommandList_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -947,6 +1024,19 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void EditExtensionMenuItem_Click(object sender, RoutedEventArgs e)
     {
+        var command = GetCommandFromMenuItem(sender) ?? SelectedCommand;
+        if (IsYanyuRuleCommand(command))
+        {
+            EditYanyuRuleForCommand(command);
+            return;
+        }
+
+        if (command != null)
+        {
+            SelectedCommand = command;
+            CommandList.SelectedItem = command;
+        }
+
         await EditSelectedExtensionAsync();
     }
 
@@ -957,7 +1047,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void DeleteExtensionMenuItem_Click(object sender, RoutedEventArgs e)
     {
+        var command = GetCommandFromMenuItem(sender) ?? SelectedCommand;
+        if (IsYanyuRuleCommand(command))
+        {
+            DeleteYanyuRuleForCommand(command);
+            return;
+        }
+
+        if (command != null)
+        {
+            SelectedCommand = command;
+            CommandList.SelectedItem = command;
+        }
+
         await DeleteSelectedExtensionAsync();
+    }
+
+    private void ToggleYanyuEnabledMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleYanyuRuleForCommand(GetCommandFromMenuItem(sender) ?? SelectedCommand);
     }
 
     private async void PublishExtensionMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1052,9 +1160,81 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (e.Key == Key.K && Keyboard.Modifiers == ModifierKeys.Control)
         {
-            OpenCommandActionsMenu();
+            OpenCommandActionsMenu(SearchBox.IsKeyboardFocusWithin ? CommandActionsMenuOrigin.SearchBox : CommandActionsMenuOrigin.ResultsList);
             e.Handled = true;
         }
+    }
+
+    private void CommandListContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ContextMenu menu)
+        {
+            return;
+        }
+
+        UpdateFooterMenuHint(isMenuOpen: true);
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            var firstEnabledItem = menu.Items
+                .OfType<MenuItem>()
+                .FirstOrDefault(static item => item.IsEnabled && item.Visibility == Visibility.Visible);
+            firstEnabledItem?.Focus();
+        }, System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    private void CommandListContextMenu_Closed(object sender, RoutedEventArgs e)
+    {
+        UpdateFooterMenuHint(isMenuOpen: false);
+
+        if (_commandActionsMenuOrigin == CommandActionsMenuOrigin.SearchBox)
+        {
+            SearchBox.Focus();
+            SearchBox.CaretIndex = SearchBox.Text.Length;
+            return;
+        }
+
+        CommandList.Focus();
+    }
+
+    private void CommandListContextMenu_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == Key.Left || e.Key == Key.Escape)
+        {
+            if (sender is System.Windows.Controls.ContextMenu menu)
+            {
+                menu.IsOpen = false;
+            }
+
+            if (_commandActionsMenuOrigin == CommandActionsMenuOrigin.SearchBox)
+            {
+                SearchBox.Focus();
+                SearchBox.CaretIndex = SearchBox.Text.Length;
+            }
+            else
+            {
+                CommandList.Focus();
+            }
+
+            e.Handled = true;
+        }
+    }
+
+    private enum CommandActionsMenuOrigin
+    {
+        SearchBox,
+        ResultsList
+    }
+
+    private void UpdateFooterMenuHint(bool isMenuOpen)
+    {
+        if (FooterMenuHintText == null || FooterMenuHintKeyText == null)
+        {
+            return;
+        }
+
+        FooterMenuHintText.Text = isMenuOpen ? "左箭头返回" : "右箭头菜单";
+        FooterMenuHintKeyText.Text = isMenuOpen ? "←" : "→";
     }
 
     private void FooterQuickMenuButton_Click(object sender, RoutedEventArgs e)
@@ -1221,15 +1401,43 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         CreateDesktopShortcutMenuItem.IsEnabled = resolved.OpenTarget is { Length: > 0 } && !IsInternalCommand(resolved);
         var canManageLocalExtension = resolved.Source == CommandSource.LocalExtension;
+        var isYanyuRule = IsYanyuRuleCommand(current);
         SetCommandShortcutMenuItem.IsEnabled = canManageLocalExtension;
         RenameCommandMenuItem.IsEnabled = canManageLocalExtension;
-        EditExtensionMenuItem.IsEnabled = canManageLocalExtension;
+        EditExtensionMenuItem.IsEnabled = canManageLocalExtension || isYanyuRule;
+        EditExtensionMenuItem.Header = isYanyuRule ? "编辑燕语" : "编辑扩展";
         PublishExtensionMenuItem.IsEnabled = canManageLocalExtension && _cloudSyncClient != null;
-        DeleteExtensionMenuItem.IsEnabled = canManageLocalExtension;
+        PublishExtensionMenuItem.Visibility = isYanyuRule ? Visibility.Collapsed : Visibility.Visible;
+        DeleteExtensionMenuItem.IsEnabled = canManageLocalExtension || isYanyuRule;
+        DeleteExtensionMenuItem.Header = isYanyuRule ? "删除燕语" : "删除";
+        ToggleYanyuEnabledMenuItem.Visibility = isYanyuRule ? Visibility.Visible : Visibility.Collapsed;
+        ToggleYanyuEnabledMenuItem.IsEnabled = isYanyuRule;
+        ToggleYanyuEnabledMenuItem.Header = isYanyuRule && IsYanyuRuleEnabled(current) ? "停用燕语" : "启用燕语";
         CopyExtensionMenuItem.IsEnabled = true;
         CutExtensionMenuItem.IsEnabled = true;
         PasteExtensionMenuItem.IsEnabled = true;
+        SetCommandContextMenuCommand(current);
         return true;
+    }
+
+    private void SetCommandContextMenuCommand(CommandItem? command)
+    {
+        CreateDesktopShortcutMenuItem.CommandParameter = command;
+        SetCommandShortcutMenuItem.CommandParameter = command;
+        RenameCommandMenuItem.CommandParameter = command;
+        EditExtensionMenuItem.CommandParameter = command;
+        PublishExtensionMenuItem.CommandParameter = command;
+        DeleteExtensionMenuItem.CommandParameter = command;
+        ToggleYanyuEnabledMenuItem.CommandParameter = command;
+        CopyExtensionMenuItem.CommandParameter = command;
+        CutExtensionMenuItem.CommandParameter = command;
+        PasteExtensionMenuItem.CommandParameter = command;
+        AddToQuickPanelMenuItem.CommandParameter = command;
+    }
+
+    private static CommandItem? GetCommandFromMenuItem(object? sender)
+    {
+        return sender is MenuItem { CommandParameter: CommandItem command } ? command : null;
     }
 
 
@@ -1270,6 +1478,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         if (HandleInternalCommand(runnable))
+        {
+            return;
+        }
+
+        if (TryExecuteSimulatedKeystroke(runnable))
         {
             return;
         }
@@ -2337,6 +2550,8 @@ public sealed class CommandItem : INotifyPropertyChanged
             ? "文件"
         : Source == CommandSource.WebSearch
             ? "网页"
+        : Category.Contains("燕语", StringComparison.OrdinalIgnoreCase)
+            ? "燕语"
         : Category.Contains("系统", StringComparison.OrdinalIgnoreCase)
             ? "系统"
             : "扩展";

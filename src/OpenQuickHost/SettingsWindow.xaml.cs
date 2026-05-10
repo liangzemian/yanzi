@@ -18,6 +18,7 @@ namespace OpenQuickHost;
 
 public partial class SettingsWindow : Window, INotifyPropertyChanged
 {
+    private const string RadialSimulatedKeyPrefix = "keysim::";
     private readonly MainWindow _mainWindow;
     private AppSettings _settings;
     private SettingsNavigationItem? _selectedNavigation;
@@ -28,6 +29,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private string _localExtensionSummary = "正在统计...";
     private string _settingsSearchText = string.Empty;
     private string _extensionSearchText = string.Empty;
+    private string _radialMenuSearchText = string.Empty;
     private string _launcherHotkey = "Alt+Space";
     private string _syncStatusText = "同步服务状态未知。";
     private string _webDavServerUrl = "https://dav.jianguoyun.com/dav/";
@@ -46,6 +48,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private IReadOnlyList<SettingsExtensionItem> _cachedExtensionItems = [];
     private IReadOnlyList<SettingsRecycleBinItem> _cachedRecycleBinItems = [];
     private bool _suppressWindowBoundsPersistence;
+    private bool _isRefreshingRadialMenu;
+    private bool _isRenamingRadialMenuPage;
+    private RadialMenuSlotEditorItem? _selectedRadialMenuSlot;
 
     public SettingsWindow(MainWindow mainWindow)
     {
@@ -53,6 +58,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         _mainWindow = mainWindow;
         _settings = AppSettingsStore.Load();
         _settings.QuickPanelMouseTriggers ??= new QuickPanelMouseTriggerSettings();
+        _settings.YarnSelect ??= new YarnSelectSettings();
+        _settings.RadialMenu ??= new RadialMenuSettings();
         NavigationItems =
         [
             new SettingsNavigationItem("general", "mdi:settings", "常规", "#FF3B82F6"),
@@ -62,6 +69,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             new SettingsNavigationItem("recycle", "mdi:recycle", "回收站", "#FFEF4444"),
             new SettingsNavigationItem("shortcuts", "mdi:shortcut", "快捷键", "#FFEAB308"),
             new SettingsNavigationItem("quickpanel", "mdi:mouse-panel", "鼠标面板", "#FFEC4899"),
+            new SettingsNavigationItem("yarnselect", "mdi:shortcut", "燕选", "#FF14B8A6"),
             new SettingsNavigationItem("about", "mdi:about", "关于", "#FF8B5CF6")
         ];
         _selectedNavigation = NavigationItems.First();
@@ -83,7 +91,16 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         ShortcutItems = new ObservableCollection<SettingsShortcutItem>();
         ExtensionItems = new ObservableCollection<SettingsExtensionItem>();
         RecycleBinItems = new ObservableCollection<SettingsRecycleBinItem>();
+        YarnSelectRules = new ObservableCollection<YarnSelectRuleItem>();
+        YarnSelectExtensionOptions = new ObservableCollection<YarnSelectExtensionOption>();
+        RadialMenuExtensionOptions = new ObservableCollection<YarnSelectExtensionOption>();
+        FilteredRadialMenuCommandOptions = new ObservableCollection<YarnSelectExtensionOption>();
+        RadialMenuSlots = new ObservableCollection<RadialMenuSlotEditorItem>();
+        RadialMenuPreviewSeparators = new ObservableCollection<RadialSeparatorViewModel>();
+        RadialMenuPages = new ObservableCollection<RadialMenuPageEditorItem>();
+        RadialMenuChildPageOptions = new ObservableCollection<RadialMenuPageEditorItem>();
         DataContext = this;
+        RefreshRadialMenuSlots();
         ApplySavedWindowBounds();
         Loaded += SettingsWindow_Loaded;
         Activated += SettingsWindow_Activated;
@@ -100,6 +117,33 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     public ObservableCollection<SettingsExtensionItem> ExtensionItems { get; }
 
     public ObservableCollection<SettingsRecycleBinItem> RecycleBinItems { get; }
+
+    public ObservableCollection<YarnSelectRuleItem> YarnSelectRules { get; }
+
+    public ObservableCollection<YarnSelectExtensionOption> YarnSelectExtensionOptions { get; }
+
+    public ObservableCollection<YarnSelectExtensionOption> RadialMenuExtensionOptions { get; }
+
+    public ObservableCollection<YarnSelectExtensionOption> FilteredRadialMenuCommandOptions { get; }
+
+    public ObservableCollection<RadialMenuSlotEditorItem> RadialMenuSlots { get; }
+
+    public ObservableCollection<RadialSeparatorViewModel> RadialMenuPreviewSeparators { get; }
+
+    public ObservableCollection<RadialMenuPageEditorItem> RadialMenuPages { get; }
+
+    public ObservableCollection<RadialMenuPageEditorItem> RadialMenuChildPageOptions { get; }
+
+    public IReadOnlyList<YarnSelectActionTypeOption> YarnSelectActionOptions { get; } =
+    [
+        new(YarnSelectActionTypes.Copy, "复制"),
+        new(YarnSelectActionTypes.Cut, "剪切"),
+        new(YarnSelectActionTypes.Paste, "粘贴"),
+        new(YarnSelectActionTypes.Search, "搜索"),
+        new(YarnSelectActionTypes.Run, "运行文本"),
+        new(YarnSelectActionTypes.SmartCopyPaste, "智能复制/粘贴"),
+        new(YarnSelectActionTypes.RunExtension, "运行扩展")
+    ];
 
     public SettingsNavigationItem? SelectedNavigation
     {
@@ -123,6 +167,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(IsRecycleBinSelected));
             OnPropertyChanged(nameof(IsShortcutsSelected));
             OnPropertyChanged(nameof(IsQuickPanelSelected));
+            OnPropertyChanged(nameof(IsYarnSelectSelected));
             OnPropertyChanged(nameof(IsAboutSelected));
             if (IsExtensionsSelected)
             {
@@ -522,6 +567,27 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public string RadialMenuSearchText
+    {
+        get => _radialMenuSearchText;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _radialMenuSearchText)
+            {
+                return;
+            }
+
+            _radialMenuSearchText = value;
+            OnPropertyChanged();
+            RefreshRadialMenuCommandCandidates(value);
+        }
+    }
+
+    public string RadialMenuSelectedSlotSummary => _selectedRadialMenuSlot == null
+        ? "先点击左侧轮盘槽位，再搜索并添加；也可以右键槽位打开菜单。"
+        : $"当前槽位：{_selectedRadialMenuSlot.Label} · 可添加扩展、程序、系统设置项，或右键添加子环。";
+
     public string RecycleBinSearchText
     {
         get => _recycleBinSearchText;
@@ -640,6 +706,141 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         set => UpdateQuickPanelMouseTrigger(value, trigger => trigger.ExecuteOnButtonRelease = value);
     }
 
+    public bool EnableRadialMenu
+    {
+        get => _settings.RadialMenu.Enabled;
+        set => UpdateRadialMenu(value, settings => settings.Enabled = value);
+    }
+
+    public bool EnableRadialCapsLockHold
+    {
+        get => _settings.RadialMenu.TriggerCapsLockHold;
+        set => UpdateRadialMenu(value, settings => settings.TriggerCapsLockHold = value);
+    }
+
+    public string RadialMenuSummary => _settings.RadialMenu.Enabled
+        ? "燕环已启用：右键按住移动或按住 CapsLock 触发，支持滚轮切页、子环和搜索配置。"
+        : "燕环未启用：当前仍使用传统鼠标面板。";
+
+    public string SelectedRadialMenuPageId
+    {
+        get
+        {
+            _settings.RadialMenu ??= new RadialMenuSettings();
+            _settings.RadialMenu.Pages ??= [];
+            if (_settings.RadialMenu.Pages.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            if (_settings.RadialMenu.Pages.Any(page => page.Id.Equals(_settings.RadialMenu.SelectedPageId, StringComparison.OrdinalIgnoreCase)))
+            {
+                return _settings.RadialMenu.SelectedPageId;
+            }
+
+            _settings.RadialMenu.SelectedPageId = _settings.RadialMenu.Pages[0].Id;
+            return _settings.RadialMenu.SelectedPageId;
+        }
+        set
+        {
+            value ??= string.Empty;
+            if (_isRefreshingRadialMenu ||
+                string.IsNullOrWhiteSpace(value) ||
+                value == _settings.RadialMenu.SelectedPageId)
+            {
+                return;
+            }
+
+            SaveRadialMenuSlots();
+            _settings.RadialMenu.SelectedPageId = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(SelectedRadialMenuPageName));
+            RefreshRadialMenuSlots();
+        }
+    }
+
+    public string SelectedRadialMenuPageName =>
+        _settings.RadialMenu?.Pages?.FirstOrDefault(page => page.Id.Equals(SelectedRadialMenuPageId, StringComparison.OrdinalIgnoreCase))?.Name
+        ?? "默认";
+
+    public bool EnableYarnSelect
+    {
+        get => _settings.YarnSelect.Enabled;
+        set => UpdateYarnSelect(value, settings => settings.Enabled = value);
+    }
+
+    public bool YarnSelectCopy
+    {
+        get => _settings.YarnSelect.LeftCToCopy;
+        set => UpdateYarnSelect(value, settings => settings.LeftCToCopy = value);
+    }
+
+    public bool YarnSelectCut
+    {
+        get => _settings.YarnSelect.LeftXToCut;
+        set => UpdateYarnSelect(value, settings => settings.LeftXToCut = value);
+    }
+
+    public bool YarnSelectPaste
+    {
+        get => _settings.YarnSelect.LeftVToPaste;
+        set => UpdateYarnSelect(value, settings => settings.LeftVToPaste = value);
+    }
+
+    public bool YarnSelectSearch
+    {
+        get => _settings.YarnSelect.LeftSToSearch;
+        set => UpdateYarnSelect(value, settings => settings.LeftSToSearch = value);
+    }
+
+    public bool YarnSelectRun
+    {
+        get => _settings.YarnSelect.LeftRToRun;
+        set => UpdateYarnSelect(value, settings => settings.LeftRToRun = value);
+    }
+
+    public bool YarnSelectSmartCopyPaste
+    {
+        get => _settings.YarnSelect.LeftRightSmartCopyPaste;
+        set => UpdateYarnSelect(value, settings => settings.LeftRightSmartCopyPaste = value);
+    }
+
+    public bool YarnSelectSidePaste
+    {
+        get => _settings.YarnSelect.LeftSideButtonPaste;
+        set => UpdateYarnSelect(value, settings => settings.LeftSideButtonPaste = value);
+    }
+
+    public string YarnSelectBlacklistedProcessesText
+    {
+        get => string.Join(", ", _settings.YarnSelect.BlacklistedProcesses ?? []);
+        set
+        {
+            _settings.YarnSelect.BlacklistedProcesses = (value ?? string.Empty)
+                .Split([',', ';', '，', '；', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            OnPropertyChanged();
+        }
+    }
+
+    public string YarnSelectSummary
+    {
+        get
+        {
+            if (!_settings.YarnSelect.Enabled)
+            {
+                return "燕选已关闭。";
+            }
+
+            var labels = (_settings.YarnSelect.Rules ?? [])
+                .Where(static rule => rule.Enabled)
+                .Select(rule => $"左键+{rule.TriggerKey} {GetYarnSelectActionLabel(rule.ActionType)}")
+                .ToList();
+            return labels.Count == 0 ? "燕选已启用，但没有开启任何动作。" : string.Join("、", labels);
+        }
+    }
+
     public string QuickPanelTriggerSummary
     {
         get
@@ -671,6 +872,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         "recycle" => "查看已删除扩展，支持恢复和彻底删除。",
         "shortcuts" => "查看和管理主程序与扩展的全局快捷键。",
         "quickpanel" => "控制悬浮网格的操作面板，包括触发逻辑和槽位预设。",
+        "yarnselect" => "按住左键选中文本时，用字母或鼠标键快速复制、搜索、运行或粘贴。",
         "about" => "查看当前版本与这套设置窗口的结构定位。",
         _ => "燕子设置"
     };
@@ -688,6 +890,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     public bool IsShortcutsSelected => SelectedNavigation?.Key == "shortcuts";
 
     public bool IsQuickPanelSelected => SelectedNavigation?.Key == "quickpanel";
+
+    public bool IsYarnSelectSelected => SelectedNavigation?.Key == "yarnselect";
 
     public bool IsAboutSelected => SelectedNavigation?.Key == "about";
 
@@ -712,18 +916,29 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     {
         RefreshAccountSummary();
         RefreshQuickPanelTriggerBindings();
+        RefreshYarnSelectBindings();
+        RefreshRadialMenuSlots();
         SyncStatusText = _mainWindow.SyncStatus;
         RefreshVisibleSectionData();
     }
 
     private void SettingsWindow_Activated(object? sender, EventArgs e)
     {
+        if (_isRenamingRadialMenuPage)
+        {
+            HostAssets.AppendLog("Settings activated skipped during radial page rename.");
+            return;
+        }
+
         _settings = AppSettingsStore.Load();
+        _settings.YarnSelect ??= new YarnSelectSettings();
         OnPropertyChanged(nameof(LaunchAtStartup));
         OnPropertyChanged(nameof(RefreshCloudOnStartup));
         OnPropertyChanged(nameof(CloseToTray));
         LauncherHotkey = _settings.LauncherHotkey;
         RefreshQuickPanelTriggerBindings();
+        RefreshYarnSelectBindings();
+        RefreshRadialMenuSlots();
         EnableWebDavSync = _settings.EnableWebDavSync;
         WebDavServerUrl = string.IsNullOrWhiteSpace(_settings.WebDavServerUrl) ? "https://dav.jianguoyun.com/dav/" : _settings.WebDavServerUrl;
         WebDavRootPath = _settings.WebDavRootPath;
@@ -1939,6 +2154,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         [
             "鼠标面板", "快捷面板", "面板", "鼠标", "右键", "中键", "x1", "x2", "长按", "滚轮", "松开", "quick panel", "mouse", "middle", "right click"
         ],
+        "yarnselect" =>
+        [
+            "燕选", "左键辅助", "鼠标选中", "选中操作", "复制", "剪切", "粘贴", "搜索选中", "left button", "selection", "copy", "paste"
+        ],
         "about" =>
         [
             "关于", "版本", "协议", "logo", "about", "version", "license"
@@ -1973,14 +2192,916 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(QuickPanelTriggerSummary));
     }
 
+    private void UpdateRadialMenu(bool value, Action<RadialMenuSettings> update)
+    {
+        _settings.RadialMenu ??= new RadialMenuSettings();
+        update(_settings.RadialMenu);
+        OnPropertyChanged();
+        OnPropertyChanged(nameof(RadialMenuSummary));
+    }
+
     private void SaveQuickPanelTriggerSettings()
     {
-
-
+        SaveRadialMenuSlots();
         AppSettingsStore.Save(_settings);
         _mainWindow.RefreshAppSettings();
         _mainWindow.NotifyQuickPanelSettingsChanged("quickpanel-trigger-settings-saved");
         SyncStatusText = $"鼠标面板触发已保存：{QuickPanelTriggerSummary}";
+    }
+
+    private void SaveYarnSelectSettings_Click(object sender, RoutedEventArgs e)
+    {
+        SaveYarnSelectSettings();
+    }
+
+    private void UpdateYarnSelect(bool value, Action<YarnSelectSettings> update)
+    {
+        _settings.YarnSelect ??= new YarnSelectSettings();
+        update(_settings.YarnSelect);
+        OnPropertyChanged();
+        OnPropertyChanged(nameof(YarnSelectSummary));
+    }
+
+    private void SaveYarnSelectSettings()
+    {
+        _settings.YarnSelect ??= new YarnSelectSettings();
+        _settings.YarnSelect.BlacklistedProcesses ??= [];
+        _settings.YarnSelect.Rules = YarnSelectRules
+            .Select(item => YarnSelectSettings.NormalizeRule(new YarnSelectRuleSettings
+            {
+                Enabled = item.Enabled,
+                TriggerKey = item.TriggerKey,
+                ActionType = item.ActionType,
+                ExtensionId = ResolveYarnSelectExtensionId(item),
+                Description = item.Description
+            }))
+            .Where(static rule => !string.IsNullOrWhiteSpace(rule.TriggerKey))
+            .DistinctBy(static rule => rule.TriggerKey, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        AppSettingsStore.Save(_settings);
+        _mainWindow.RefreshAppSettings();
+        SyncStatusText = $"燕选设置已保存：{YarnSelectSummary}";
+        RefreshYarnSelectBindings();
+    }
+
+    private string ResolveYarnSelectExtensionId(YarnSelectRuleItem item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.ExtensionId) &&
+            YarnSelectExtensionOptions.Any(option => option.ExtensionId.Equals(item.ExtensionId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return item.ExtensionId;
+        }
+
+        var searchText = (item.ExtensionSearchText ?? string.Empty).Trim();
+        return YarnSelectExtensionOptions.FirstOrDefault(option =>
+            option.Title.Equals(searchText, StringComparison.OrdinalIgnoreCase) ||
+            option.ExtensionId.Equals(searchText, StringComparison.OrdinalIgnoreCase))
+            ?.ExtensionId ?? string.Empty;
+    }
+
+    private void RefreshYarnSelectBindings()
+    {
+        _settings.YarnSelect ??= new YarnSelectSettings();
+        _settings.YarnSelect.Rules ??= [];
+        if (_settings.YarnSelect.Rules.Count == 0)
+        {
+            _settings.YarnSelect.Rules = YarnSelectSettings.CreateDefaultRulesFromLegacy(_settings.YarnSelect);
+        }
+
+        RefreshYarnSelectExtensionOptions();
+        YarnSelectRules.Clear();
+        foreach (var rule in _settings.YarnSelect.Rules.Select(YarnSelectSettings.NormalizeRule))
+        {
+            var item = new YarnSelectRuleItem(rule);
+            ApplyYarnSelectExtensionSelection(item);
+            YarnSelectRules.Add(item);
+        }
+
+        OnPropertyChanged(nameof(EnableYarnSelect));
+        OnPropertyChanged(nameof(YarnSelectCopy));
+        OnPropertyChanged(nameof(YarnSelectCut));
+        OnPropertyChanged(nameof(YarnSelectPaste));
+        OnPropertyChanged(nameof(YarnSelectSearch));
+        OnPropertyChanged(nameof(YarnSelectRun));
+        OnPropertyChanged(nameof(YarnSelectSmartCopyPaste));
+        OnPropertyChanged(nameof(YarnSelectSidePaste));
+        OnPropertyChanged(nameof(YarnSelectBlacklistedProcessesText));
+        OnPropertyChanged(nameof(YarnSelectSummary));
+    }
+
+    private void RefreshYarnSelectExtensionOptions()
+    {
+        YarnSelectExtensionOptions.Clear();
+        RadialMenuExtensionOptions.Clear();
+        YarnSelectExtensionOptions.Add(new YarnSelectExtensionOption(string.Empty, "不绑定扩展"));
+        foreach (var command in _mainWindow.GetLocalExtensionsForSettings())
+        {
+            var option = new YarnSelectExtensionOption(command);
+            YarnSelectExtensionOptions.Add(option);
+        }
+
+        foreach (var command in _mainWindow.GetAllCommands()
+                     .Where(IsRadialMenuCommandCandidate)
+                     .DistinctBy(static command => command.ExtensionId, StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(static command => command.ItemKindLabel, StringComparer.OrdinalIgnoreCase)
+                     .ThenBy(static command => command.Title, StringComparer.OrdinalIgnoreCase))
+        {
+            RadialMenuExtensionOptions.Add(new YarnSelectExtensionOption(command));
+        }
+
+        RefreshRadialMenuCommandCandidates(RadialMenuSearchText);
+    }
+
+    private void RefreshRadialMenuSlots()
+    {
+        if (_isRefreshingRadialMenu)
+        {
+            return;
+        }
+
+        try
+        {
+            _isRefreshingRadialMenu = true;
+            RefreshYarnSelectExtensionOptions();
+            _settings.RadialMenu ??= new RadialMenuSettings();
+            _settings.RadialMenu.Pages ??= [];
+            if (_settings.RadialMenu.Pages.Count == 0)
+            {
+                _settings.RadialMenu.Pages.Add(new RadialMenuPageSettings { Id = "default", Name = "默认" });
+            }
+
+            if (_settings.RadialMenu.Pages.All(page => !page.Id.Equals(_settings.RadialMenu.SelectedPageId, StringComparison.OrdinalIgnoreCase)))
+            {
+                _settings.RadialMenu.SelectedPageId = _settings.RadialMenu.Pages[0].Id;
+            }
+
+            RadialMenuPages.Clear();
+            foreach (var page in _settings.RadialMenu.Pages)
+            {
+                RadialMenuPages.Add(new RadialMenuPageEditorItem(page.Id, page.Name));
+            }
+
+            RadialMenuChildPageOptions.Clear();
+            RadialMenuChildPageOptions.Add(new RadialMenuPageEditorItem(string.Empty, "不进入子环"));
+            foreach (var page in _settings.RadialMenu.Pages)
+            {
+                RadialMenuChildPageOptions.Add(new RadialMenuPageEditorItem(page.Id, page.Name));
+            }
+
+            var selectedPage = _settings.RadialMenu.Pages.First(page => page.Id.Equals(_settings.RadialMenu.SelectedPageId, StringComparison.OrdinalIgnoreCase));
+            selectedPage.Slots ??= [];
+            selectedPage.ChildPageIds ??= [];
+            while (selectedPage.Slots.Count < 8) selectedPage.Slots.Add(null);
+            while (selectedPage.ChildPageIds.Count < 8) selectedPage.ChildPageIds.Add(null);
+
+            RadialMenuSlots.Clear();
+            BuildRadialPreviewSeparators();
+            var center = 180.0;
+            var radius = 128.0;
+            for (var index = 0; index < 8; index++)
+            {
+                var angle = (-90 + index * 45) * Math.PI / 180.0;
+                RadialMenuSlots.Add(new RadialMenuSlotEditorItem(
+                    index,
+                    selectedPage.Slots.ElementAtOrDefault(index) ?? string.Empty,
+                    selectedPage.ChildPageIds.ElementAtOrDefault(index) ?? string.Empty,
+                    ResolveRadialExtensionTitle(selectedPage.Slots.ElementAtOrDefault(index)),
+                    ResolveRadialChildPageTitle(selectedPage.ChildPageIds.ElementAtOrDefault(index)),
+                    center + Math.Cos(angle) * radius - 52,
+                    center + Math.Sin(angle) * radius - 32));
+            }
+
+            OnPropertyChanged(nameof(SelectedRadialMenuPageId));
+            OnPropertyChanged(nameof(SelectedRadialMenuPageName));
+        }
+        finally
+        {
+            _isRefreshingRadialMenu = false;
+        }
+    }
+
+    private void BuildRadialPreviewSeparators()
+    {
+        RadialMenuPreviewSeparators.Clear();
+        const double center = 180.0;
+        for (var index = 0; index < 8; index++)
+        {
+            var angle = (-112.5 + index * 45) * Math.PI / 180.0;
+            RadialMenuPreviewSeparators.Add(new RadialSeparatorViewModel(
+                center + Math.Cos(angle) * 46,
+                center + Math.Sin(angle) * 46,
+                center + Math.Cos(angle) * 180,
+                center + Math.Sin(angle) * 180));
+        }
+    }
+
+    private void SaveRadialMenuSlots()
+    {
+        _settings.RadialMenu ??= new RadialMenuSettings();
+        _settings.RadialMenu.Pages ??= [];
+        var selectedPage = _settings.RadialMenu.Pages.FirstOrDefault(page => page.Id.Equals(_settings.RadialMenu.SelectedPageId, StringComparison.OrdinalIgnoreCase));
+        if (selectedPage == null)
+        {
+            return;
+        }
+
+        selectedPage.Slots = RadialMenuSlots
+            .OrderBy(static item => item.Index)
+            .Select(static item => string.IsNullOrWhiteSpace(item.ExtensionId) ? null : item.ExtensionId.Trim())
+            .Cast<string?>()
+            .Take(8)
+            .ToList();
+        selectedPage.ChildPageIds = RadialMenuSlots
+            .OrderBy(static item => item.Index)
+            .Select(static item => string.IsNullOrWhiteSpace(item.ChildPageId) ? null : item.ChildPageId.Trim())
+            .Cast<string?>()
+            .Take(8)
+            .ToList();
+        while (selectedPage.Slots.Count < 8)
+        {
+            selectedPage.Slots.Add(null);
+        }
+
+        while (selectedPage.ChildPageIds.Count < 8)
+        {
+            selectedPage.ChildPageIds.Add(null);
+        }
+        var firstPageSlots = _settings.RadialMenu.Pages[0].Slots ?? [];
+        _settings.RadialMenu.Slots = firstPageSlots.Concat(Enumerable.Repeat<string?>(null, 8)).Take(8).ToList();
+    }
+
+    private static bool IsRadialMenuCommandCandidate(CommandItem command)
+    {
+        return command.Source is CommandSource.LocalExtension or CommandSource.WebSearch or CommandSource.Application or CommandSource.Local;
+    }
+
+    private void RefreshRadialMenuCommandCandidates(string? keyword)
+    {
+        FilteredRadialMenuCommandOptions.Clear();
+        keyword = (keyword ?? string.Empty).Trim();
+        var candidates = RadialMenuExtensionOptions.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            candidates = candidates.Where(option =>
+                option.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                option.ExtensionId.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                option.Detail.Contains(keyword, StringComparison.OrdinalIgnoreCase));
+        }
+
+        foreach (var option in candidates.Take(40))
+        {
+            FilteredRadialMenuCommandOptions.Add(option);
+        }
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var fileResults = EverythingSearchService.Search(keyword, 20);
+            if (fileResults.Success)
+            {
+                foreach (var result in fileResults.Results)
+                {
+                    var command = BuildRadialFileCommand(result);
+                    if (FilteredRadialMenuCommandOptions.Any(option =>
+                            option.ExtensionId.Equals(command.ExtensionId, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue;
+                    }
+
+                    FilteredRadialMenuCommandOptions.Add(new YarnSelectExtensionOption(command));
+                }
+            }
+        }
+    }
+
+    private void SelectRadialMenuSlot(RadialMenuSlotEditorItem slot)
+    {
+        _selectedRadialMenuSlot = slot;
+        OnPropertyChanged(nameof(RadialMenuSelectedSlotSummary));
+    }
+
+    private RadialMenuSlotEditorItem? ResolveRadialSlotFromMenuSender(object sender)
+    {
+        DependencyObject? current = sender as DependencyObject;
+        while (current != null)
+        {
+            if (current is ContextMenu { PlacementTarget: FrameworkElement { DataContext: RadialMenuSlotEditorItem slot } })
+            {
+                return slot;
+            }
+
+            current = LogicalTreeHelper.GetParent(current);
+        }
+
+        if (sender is FrameworkElement { Parent: ContextMenu { PlacementTarget: FrameworkElement { DataContext: RadialMenuSlotEditorItem fallbackSlot } } })
+        {
+            return fallbackSlot;
+        }
+
+        return _selectedRadialMenuSlot;
+    }
+
+    private void ApplyRadialMenuCommandToSlot(RadialMenuSlotEditorItem slot, YarnSelectExtensionOption option)
+    {
+        if (string.IsNullOrWhiteSpace(option.ExtensionId))
+        {
+            return;
+        }
+
+        SelectRadialMenuSlot(slot);
+        slot.ExtensionId = option.ExtensionId;
+        slot.ExtensionTitle = option.Title;
+        SaveQuickPanelTriggerSettings();
+    }
+
+    private static CommandItem BuildRadialFileCommand(EverythingSearchResult result)
+    {
+        var subtitle = string.IsNullOrWhiteSpace(result.SizeText)
+            ? result.DirectoryPath
+            : $"{result.DirectoryPath}   ·   {result.SizeText}";
+        return new CommandItem(
+            glyph: result.IsFolder ? "夹" : "文",
+            title: result.Name,
+            subtitle: subtitle,
+            category: result.IsFolder ? "文件夹" : "文件",
+            accentHex: result.IsFolder ? "#FF3B82F6" : "#FF4B5563",
+            openTarget: result.FullPath,
+            keywords: [result.FullPath, result.DirectoryPath, result.Name],
+            source: CommandSource.File,
+            extensionId: $"result::{result.FullPath}",
+            resultKind: result.IsFolder ? ResultItemKind.Folder : ResultItemKind.File,
+            resultProviderTitle: "Everything 文件",
+            iconSourceOverride: NativeFileIconService.GetIcon(result.FullPath, result.IsFolder));
+    }
+
+    private void AddRadialMenuPageButton_Click(object sender, RoutedEventArgs e)
+    {
+        SaveRadialMenuSlots();
+        _settings.RadialMenu ??= new RadialMenuSettings();
+        var page = new RadialMenuPageSettings
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = $"页面 {_settings.RadialMenu.Pages.Count + 1}"
+        };
+        _settings.RadialMenu.Pages.Add(page);
+        _settings.RadialMenu.SelectedPageId = page.Id;
+        RefreshRadialMenuSlots();
+        SaveQuickPanelTriggerSettings();
+    }
+
+    private void DeleteRadialMenuPageButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_settings.RadialMenu.Pages.Count <= 1)
+        {
+            return;
+        }
+
+        var removedId = _settings.RadialMenu.SelectedPageId;
+        _settings.RadialMenu.Pages.RemoveAll(page => page.Id.Equals(removedId, StringComparison.OrdinalIgnoreCase));
+        foreach (var page in _settings.RadialMenu.Pages)
+        {
+            page.ChildPageIds = (page.ChildPageIds ?? [])
+                .Select(id => string.Equals(id, removedId, StringComparison.OrdinalIgnoreCase) ? null : id)
+                .ToList();
+        }
+        _settings.RadialMenu.SelectedPageId = _settings.RadialMenu.Pages[0].Id;
+        RefreshRadialMenuSlots();
+        SaveQuickPanelTriggerSettings();
+    }
+
+    private void RadialMenuCenter_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount < 2)
+        {
+            return;
+        }
+
+        RenameCurrentRadialMenuPage();
+        e.Handled = true;
+    }
+
+    private void RadialMenuCenter_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement element && element.ContextMenu != null)
+        {
+            element.ContextMenu.PlacementTarget = element;
+            element.ContextMenu.IsOpen = true;
+            e.Handled = true;
+        }
+    }
+
+    private void RenameRadialMenuPageMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        RenameCurrentRadialMenuPage();
+    }
+
+    private void RenameCurrentRadialMenuPage()
+    {
+        _settings.RadialMenu ??= new RadialMenuSettings();
+        _settings.RadialMenu.Pages ??= [];
+        var pageId = SelectedRadialMenuPageId;
+        var page = _settings.RadialMenu.Pages.FirstOrDefault(item =>
+            item.Id.Equals(pageId, StringComparison.OrdinalIgnoreCase));
+        if (page == null)
+        {
+            HostAssets.AppendLog($"Radial rename skipped: selected page not found, pageId={pageId}.");
+            return;
+        }
+
+        var oldName = page.Name;
+        var dialog = new SimpleTextInputWindow("重命名轮盘", "输入新的轮盘名称。", page.Name)
+        {
+            Owner = this
+        };
+        bool accepted;
+        try
+        {
+            _isRenamingRadialMenuPage = true;
+            accepted = dialog.ShowDialog() == true;
+        }
+        finally
+        {
+            _isRenamingRadialMenuPage = false;
+        }
+
+        if (!accepted)
+        {
+            HostAssets.AppendLog($"Radial rename cancelled: pageId={pageId}, oldName={oldName}.");
+            return;
+        }
+
+        var trimmedName = dialog.ValueText.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedName))
+        {
+            HostAssets.AppendLog($"Radial rename ignored empty name: pageId={pageId}, oldName={oldName}.");
+            return;
+        }
+
+        _settings.RadialMenu ??= new RadialMenuSettings();
+        _settings.RadialMenu.Pages ??= [];
+        page = _settings.RadialMenu.Pages.FirstOrDefault(item =>
+            item.Id.Equals(pageId, StringComparison.OrdinalIgnoreCase));
+        if (page == null)
+        {
+            HostAssets.AppendLog($"Radial rename failed after dialog: page missing, pageId={pageId}, newName={trimmedName}.");
+            return;
+        }
+
+        page.Name = trimmedName;
+        HostAssets.AppendLog($"Radial rename saving: pageId={pageId}, oldName={oldName}, newName={trimmedName}.");
+        SaveQuickPanelTriggerSettings();
+        RefreshRadialMenuSlots();
+        OnPropertyChanged(nameof(SelectedRadialMenuPageName));
+        var saved = AppSettingsStore.Load().RadialMenu.Pages.FirstOrDefault(item =>
+            item.Id.Equals(pageId, StringComparison.OrdinalIgnoreCase))?.Name ?? string.Empty;
+        HostAssets.AppendLog($"Radial rename saved: pageId={pageId}, savedName={saved}, currentName={SelectedRadialMenuPageName}.");
+    }
+
+    private void RadialExtensionDragStart_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed ||
+            sender is not FrameworkElement { DataContext: YarnSelectExtensionOption option } ||
+            string.IsNullOrWhiteSpace(option.ExtensionId))
+        {
+            return;
+        }
+
+        System.Windows.DragDrop.DoDragDrop((DependencyObject)sender, option.ExtensionId, System.Windows.DragDropEffects.Copy);
+    }
+
+    private void RadialSlot_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RadialMenuSlotEditorItem slot })
+        {
+            SelectRadialMenuSlot(slot);
+        }
+    }
+
+    private void RadialSlot_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RadialMenuSlotEditorItem slot })
+        {
+            SelectRadialMenuSlot(slot);
+        }
+    }
+
+    private void RadialSlot_DragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(System.Windows.DataFormats.StringFormat) ? System.Windows.DragDropEffects.Copy : System.Windows.DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void RadialSlot_Drop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: RadialMenuSlotEditorItem slot } ||
+            !e.Data.GetDataPresent(System.Windows.DataFormats.StringFormat))
+        {
+            return;
+        }
+
+        slot.ExtensionId = e.Data.GetData(System.Windows.DataFormats.StringFormat) as string ?? string.Empty;
+        slot.ExtensionTitle = ResolveRadialExtensionTitle(slot.ExtensionId);
+        e.Handled = true;
+        SaveQuickPanelTriggerSettings();
+    }
+
+    private void RadialSlotAddCommandMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var slot = ResolveRadialSlotFromMenuSender(sender);
+        if (slot == null)
+        {
+            return;
+        }
+
+        SelectRadialMenuSlot(slot);
+        RadialMenuSearchText = string.Empty;
+        RefreshRadialMenuCommandCandidates(string.Empty);
+    }
+
+    private void RadialSlotSetSimulatedKeyMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var slot = ResolveRadialSlotFromMenuSender(sender);
+        if (slot == null)
+        {
+            return;
+        }
+
+        SelectRadialMenuSlot(slot);
+        var initialShortcut = slot.ExtensionId.StartsWith(RadialSimulatedKeyPrefix, StringComparison.OrdinalIgnoreCase)
+            ? slot.ExtensionId[RadialSimulatedKeyPrefix.Length..]
+            : string.Empty;
+        var dialog = new HotkeyCaptureWindow(
+            "模拟按键",
+            "录制要在此槽位执行的组合键。松开燕环时会直接模拟这个按键。",
+            initialShortcut,
+            allowEmpty: false,
+            allowDoubleTap: false,
+            allowModifierless: true)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var shortcut = dialog.ShortcutText.Trim();
+        if (string.IsNullOrWhiteSpace(shortcut))
+        {
+            return;
+        }
+
+        slot.ExtensionId = $"{RadialSimulatedKeyPrefix}{shortcut}";
+        slot.ExtensionTitle = ResolveRadialExtensionTitle(slot.ExtensionId);
+        SaveQuickPanelTriggerSettings();
+    }
+
+    private void RadialSlotClearCommandMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var slot = ResolveRadialSlotFromMenuSender(sender);
+        if (slot == null)
+        {
+            return;
+        }
+
+        SelectRadialMenuSlot(slot);
+        slot.ExtensionId = string.Empty;
+        slot.ExtensionTitle = ResolveRadialExtensionTitle(string.Empty);
+        SaveQuickPanelTriggerSettings();
+    }
+
+    private void RadialSlotAddChildPageMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var slot = ResolveRadialSlotFromMenuSender(sender);
+        if (slot == null)
+        {
+            return;
+        }
+
+        SelectRadialMenuSlot(slot);
+        SaveRadialMenuSlots();
+        _settings.RadialMenu ??= new RadialMenuSettings();
+        _settings.RadialMenu.Pages ??= [];
+        var page = new RadialMenuPageSettings
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = $"子环 {slot.Label}"
+        };
+        _settings.RadialMenu.Pages.Add(page);
+        slot.ChildPageId = page.Id;
+        slot.ChildPageTitle = ResolveRadialChildPageTitle(page.Id);
+        SaveQuickPanelTriggerSettings();
+        RefreshRadialMenuSlots();
+    }
+
+    private void RadialSlotClearChildPageMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var slot = ResolveRadialSlotFromMenuSender(sender);
+        if (slot == null)
+        {
+            return;
+        }
+
+        SelectRadialMenuSlot(slot);
+        var removedId = slot.ChildPageId;
+        slot.ChildPageId = string.Empty;
+        slot.ChildPageTitle = ResolveRadialChildPageTitle(string.Empty);
+        if (!string.IsNullOrWhiteSpace(removedId) &&
+            _settings.RadialMenu?.Pages?.Count > 1)
+        {
+            _settings.RadialMenu.Pages.RemoveAll(page => page.Id.Equals(removedId, StringComparison.OrdinalIgnoreCase));
+            foreach (var page in _settings.RadialMenu.Pages)
+            {
+                page.ChildPageIds = (page.ChildPageIds ?? [])
+                    .Select(id => string.Equals(id, removedId, StringComparison.OrdinalIgnoreCase) ? null : id)
+                    .ToList();
+            }
+        }
+
+        SaveQuickPanelTriggerSettings();
+        RefreshRadialMenuSlots();
+    }
+
+    private void RadialMenuSearchBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != Key.Down || FilteredRadialMenuCommandOptions.Count == 0)
+        {
+            return;
+        }
+
+        if (FindSiblingListBox(sender as DependencyObject) is { } listBox)
+        {
+            listBox.SelectedIndex = 0;
+            listBox.Focus();
+            e.Handled = true;
+        }
+    }
+
+    private void RadialMenuCommandListBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ListBox listBox)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            CommitRadialMenuCommandCandidate(listBox);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            RadialMenuSearchText = string.Empty;
+            e.Handled = true;
+        }
+    }
+
+    private void RadialMenuCommandListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is System.Windows.Controls.ListBox listBox)
+        {
+            CommitRadialMenuCommandCandidate(listBox);
+        }
+    }
+
+    private void CommitRadialMenuCommandCandidate(System.Windows.Controls.ListBox listBox)
+    {
+        if (_selectedRadialMenuSlot == null ||
+            listBox.SelectedItem is not YarnSelectExtensionOption option)
+        {
+            return;
+        }
+
+        ApplyRadialMenuCommandToSlot(_selectedRadialMenuSlot, option);
+    }
+
+    private string ResolveRadialExtensionTitle(string? extensionId)
+    {
+        if (string.IsNullOrWhiteSpace(extensionId))
+        {
+            return "拖入扩展";
+        }
+
+        if (extensionId.StartsWith(RadialSimulatedKeyPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"模拟按键：{extensionId[RadialSimulatedKeyPrefix.Length..]}";
+        }
+
+        if (extensionId.StartsWith("result::", StringComparison.OrdinalIgnoreCase))
+        {
+            var path = extensionId["result::".Length..];
+            var title = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            return string.IsNullOrWhiteSpace(title) ? path : title;
+        }
+
+        return RadialMenuExtensionOptions.FirstOrDefault(option =>
+            option.ExtensionId.Equals(extensionId, StringComparison.OrdinalIgnoreCase))?.Title ?? "未知扩展";
+    }
+
+    private string ResolveRadialChildPageTitle(string? pageId)
+    {
+        if (string.IsNullOrWhiteSpace(pageId))
+        {
+            return "无子环";
+        }
+
+        var name = _settings.RadialMenu?.Pages?.FirstOrDefault(page =>
+            page.Id.Equals(pageId, StringComparison.OrdinalIgnoreCase))?.Name;
+        return string.IsNullOrWhiteSpace(name) ? "未知子环" : $"进入 {name}";
+    }
+
+    private void AddYarnSelectRuleButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = new YarnSelectRuleItem(new YarnSelectRuleSettings
+        {
+            TriggerKey = "A",
+            ActionType = YarnSelectActionTypes.RunExtension,
+            Description = "新燕选规则"
+        });
+        ApplyYarnSelectExtensionSelection(item);
+        YarnSelectRules.Add(item);
+        OnPropertyChanged(nameof(YarnSelectSummary));
+    }
+
+    private void DeleteYarnSelectRuleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: YarnSelectRuleItem item })
+        {
+            return;
+        }
+
+        YarnSelectRules.Remove(item);
+        SaveYarnSelectSettings();
+    }
+
+    private void ResetYarnSelectRulesButton_Click(object sender, RoutedEventArgs e)
+    {
+        YarnSelectRules.Clear();
+        foreach (var rule in YarnSelectSettings.CreateDefaultRulesFromLegacy(new YarnSelectSettings()))
+        {
+            var item = new YarnSelectRuleItem(rule);
+            ApplyYarnSelectExtensionSelection(item);
+            YarnSelectRules.Add(item);
+        }
+
+        SaveYarnSelectSettings();
+    }
+
+    private static string GetYarnSelectActionLabel(string actionType)
+    {
+        return YarnSelectActionTypes.Normalize(actionType) switch
+        {
+            YarnSelectActionTypes.Cut => "剪切",
+            YarnSelectActionTypes.Paste => "粘贴",
+            YarnSelectActionTypes.Search => "搜索",
+            YarnSelectActionTypes.Run => "运行",
+            YarnSelectActionTypes.SmartCopyPaste => "智能复制/粘贴",
+            YarnSelectActionTypes.RunExtension => "运行扩展",
+            _ => "复制"
+        };
+    }
+
+    private void ApplyYarnSelectExtensionSelection(YarnSelectRuleItem item)
+    {
+        var selected = YarnSelectExtensionOptions.FirstOrDefault(option =>
+            option.ExtensionId.Equals(item.ExtensionId ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+        item.ExtensionSearchText = selected?.Title ?? string.Empty;
+        item.FilteredExtensionOptions = [];
+    }
+
+    private void RefreshYarnSelectExtensionCandidates(YarnSelectRuleItem item, string keyword)
+    {
+        keyword = (keyword ?? string.Empty).Trim();
+        if (keyword.Length == 0)
+        {
+            item.FilteredExtensionOptions = [];
+            return;
+        }
+
+        item.FilteredExtensionOptions = new ObservableCollection<YarnSelectExtensionOption>(
+            YarnSelectExtensionOptions
+                .Where(option =>
+                    option.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                    option.ExtensionId.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                    option.Detail.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+                .Take(8));
+    }
+
+    private void YarnSelectExtensionSearchBox_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: YarnSelectRuleItem item })
+        {
+            RefreshYarnSelectExtensionCandidates(item, item.ExtensionSearchText ?? string.Empty);
+        }
+    }
+
+    private void YarnSelectExtensionSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: YarnSelectRuleItem item })
+        {
+            var selected = YarnSelectExtensionOptions.FirstOrDefault(option =>
+                option.ExtensionId.Equals(item.ExtensionId ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+            if (selected == null ||
+                !selected.Title.Equals(item.ExtensionSearchText ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            {
+                item.ExtensionId = string.Empty;
+            }
+
+            RefreshYarnSelectExtensionCandidates(item, item.ExtensionSearchText ?? string.Empty);
+        }
+    }
+
+    private void YarnSelectExtensionSearchBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: YarnSelectRuleItem item } ||
+            e.Key != Key.Down ||
+            item.FilteredExtensionOptions.Count == 0)
+        {
+            return;
+        }
+
+        if (FindDescendantListBox(this, FilteredRadialMenuCommandOptions) is { } listBox)
+        {
+            listBox.SelectedIndex = 0;
+            listBox.Focus();
+            e.Handled = true;
+        }
+    }
+
+    private void YarnSelectExtensionListBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ListBox listBox)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            CommitYarnSelectExtensionCandidate(listBox);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && listBox.DataContext is YarnSelectRuleItem item)
+        {
+            item.FilteredExtensionOptions = [];
+            e.Handled = true;
+        }
+    }
+
+    private void YarnSelectExtensionListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is System.Windows.Controls.ListBox listBox)
+        {
+            CommitYarnSelectExtensionCandidate(listBox);
+        }
+    }
+
+    private void CommitYarnSelectExtensionCandidate(System.Windows.Controls.ListBox listBox)
+    {
+        if (listBox.DataContext is not YarnSelectRuleItem item ||
+            listBox.SelectedItem is not YarnSelectExtensionOption option)
+        {
+            return;
+        }
+
+        item.ExtensionId = option.ExtensionId;
+        item.ExtensionSearchText = option.Title;
+        item.FilteredExtensionOptions = [];
+    }
+
+    private static System.Windows.Controls.ListBox? FindSiblingListBox(DependencyObject? source)
+    {
+        var parent = source == null ? null : VisualTreeHelper.GetParent(source);
+        while (parent != null)
+        {
+            if (parent is StackPanel panel)
+            {
+                return panel.Children.OfType<System.Windows.Controls.ListBox>().FirstOrDefault();
+            }
+
+            parent = VisualTreeHelper.GetParent(parent);
+        }
+
+        return null;
+    }
+
+    private static System.Windows.Controls.ListBox? FindDescendantListBox(DependencyObject source, object itemsSource)
+    {
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(source); i++)
+        {
+            var child = VisualTreeHelper.GetChild(source, i);
+            if (child is System.Windows.Controls.ListBox listBox &&
+                ReferenceEquals(listBox.ItemsSource, itemsSource))
+            {
+                return listBox;
+            }
+
+            var nested = FindDescendantListBox(child, itemsSource);
+            if (nested != null)
+            {
+                return nested;
+            }
+        }
+
+        return null;
     }
 
     private void RefreshQuickPanelTriggerBindings()
@@ -1998,6 +3119,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         OnPropertyChanged(nameof(ExecuteOnButtonRelease));
         OnPropertyChanged(nameof(QuickPanelTriggerSummary));
+        OnPropertyChanged(nameof(EnableRadialMenu));
+        OnPropertyChanged(nameof(EnableRadialCapsLockHold));
+        OnPropertyChanged(nameof(RadialMenuSummary));
+        RefreshRadialMenuSlots();
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
@@ -2049,6 +3174,291 @@ public sealed record SettingsShortcutItem(string ExtensionId, string Title, stri
     public string ShortcutLabel => string.IsNullOrWhiteSpace(Shortcut) ? "未设置" : Shortcut;
 
     public bool HasShortcut => !string.IsNullOrWhiteSpace(Shortcut);
+}
+
+public sealed record YarnSelectActionTypeOption(string Value, string Label)
+{
+    public override string ToString() => Label;
+}
+
+public sealed record YarnSelectExtensionOption(
+    string ExtensionId,
+    string Title,
+    string Detail,
+    ImageSource? IconSource,
+    Geometry? VectorIcon,
+    System.Windows.Media.Brush AccentBrush,
+    string DisplayGlyph)
+{
+    public YarnSelectExtensionOption(CommandItem command)
+        : this(
+            command.ExtensionId,
+            command.Title,
+            string.IsNullOrWhiteSpace(command.OpenTarget)
+                ? command.ItemKindLabel
+                : $"{command.ItemKindLabel} · {command.OpenTarget}",
+            command.IconSource,
+            command.VectorIcon,
+            command.AccentBrush,
+            command.DisplayGlyph)
+    {
+    }
+
+    public YarnSelectExtensionOption(string extensionId, string title)
+        : this(extensionId, title, string.Empty, null, null, System.Windows.Media.Brushes.Transparent, string.Empty)
+    {
+    }
+
+    public bool HasImageIcon => IconSource != null;
+
+    public bool HasVectorIcon => VectorIcon != null;
+
+    public bool UseGlyphIcon => !HasImageIcon && !HasVectorIcon && !string.IsNullOrWhiteSpace(DisplayGlyph);
+
+    public override string ToString() => Title;
+}
+
+public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
+{
+    private string _extensionId;
+    private string _childPageId;
+    private string _extensionTitle;
+    private string _childPageTitle;
+
+    public RadialMenuSlotEditorItem(int index, string extensionId, string childPageId, string extensionTitle, string childPageTitle, double x, double y)
+    {
+        Index = index;
+        _extensionId = extensionId;
+        _childPageId = childPageId;
+        _extensionTitle = extensionTitle;
+        _childPageTitle = childPageTitle;
+        X = x;
+        Y = y;
+    }
+
+    public int Index { get; }
+
+    public string Label => (Index + 1).ToString(CultureInfo.InvariantCulture);
+
+    public double X { get; }
+
+    public double Y { get; }
+
+    public string ExtensionId
+    {
+        get => _extensionId;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _extensionId)
+            {
+                return;
+            }
+
+            _extensionId = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string ExtensionTitle
+    {
+        get => _extensionTitle;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _extensionTitle)
+            {
+                return;
+            }
+
+            _extensionTitle = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string ChildPageId
+    {
+        get => _childPageId;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _childPageId)
+            {
+                return;
+            }
+
+            _childPageId = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string ChildPageTitle
+    {
+        get => _childPageTitle;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _childPageTitle)
+            {
+                return;
+            }
+
+            _childPageTitle = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+}
+
+public sealed record RadialMenuPageEditorItem(string Id, string Name);
+
+public sealed class YarnSelectRuleItem : INotifyPropertyChanged
+{
+    private bool _enabled;
+    private string _triggerKey;
+    private string _actionType;
+    private string _extensionId;
+    private string _extensionSearchText;
+    private string _description;
+    private ObservableCollection<YarnSelectExtensionOption> _filteredExtensionOptions = [];
+
+    public YarnSelectRuleItem(YarnSelectRuleSettings rule)
+    {
+        _enabled = rule.Enabled;
+        _triggerKey = rule.TriggerKey;
+        _actionType = rule.ActionType;
+        _extensionId = rule.ExtensionId;
+        _extensionSearchText = string.Empty;
+        _description = rule.Description;
+    }
+
+    public bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            if (value == _enabled)
+            {
+                return;
+            }
+
+            _enabled = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string TriggerKey
+    {
+        get => _triggerKey;
+        set
+        {
+            value = YarnSelectSettings.NormalizeTriggerKey(value);
+            if (value == _triggerKey)
+            {
+                return;
+            }
+
+            _triggerKey = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string ActionType
+    {
+        get => _actionType;
+        set
+        {
+            value = YarnSelectActionTypes.Normalize(value);
+            if (value == _actionType)
+            {
+                return;
+            }
+
+            _actionType = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string ExtensionId
+    {
+        get => _extensionId;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _extensionId)
+            {
+                return;
+            }
+
+            _extensionId = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string ExtensionSearchText
+    {
+        get => _extensionSearchText;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _extensionSearchText)
+            {
+                return;
+            }
+
+            _extensionSearchText = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public ObservableCollection<YarnSelectExtensionOption> FilteredExtensionOptions
+    {
+        get => _filteredExtensionOptions;
+        set
+        {
+            if (ReferenceEquals(value, _filteredExtensionOptions))
+            {
+                return;
+            }
+
+            _filteredExtensionOptions = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(FilteredExtensionListVisibility));
+        }
+    }
+
+    public Visibility FilteredExtensionListVisibility => FilteredExtensionOptions.Count == 0
+        ? Visibility.Collapsed
+        : Visibility.Visible;
+
+    public string Description
+    {
+        get => _description;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _description)
+            {
+                return;
+            }
+
+            _description = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
 }
 
 public sealed class SettingsExtensionItem : INotifyPropertyChanged

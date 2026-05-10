@@ -1244,6 +1244,12 @@ public partial class MainWindow
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();
+            YarnSelectService.ReloadSettings();
+            if (!YarnSelectService.IsRunning && settings.YarnSelect?.Enabled == true)
+            {
+                YarnSelectService.Start(HandleYarnSelectAction);
+            }
+
             RefreshLauncherHotkeyRegistration();
             RefreshExtensionHotkeys();
         }
@@ -1303,6 +1309,11 @@ public partial class MainWindow
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();
+            YarnSelectService.ReloadSettings();
+            if (!YarnSelectService.IsRunning && _appSettings.YarnSelect?.Enabled == true)
+            {
+                YarnSelectService.Start(HandleYarnSelectAction);
+            }
         }
 
         QueueCloudQuickPanelConfigSync(reason);

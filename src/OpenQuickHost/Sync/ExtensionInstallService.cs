@@ -37,10 +37,24 @@ public static class ExtensionInstallService
             }
 
             var manifestJson = await File.ReadAllTextAsync(manifestPath, cancellationToken);
-            var manifest = JsonSerializer.Deserialize<LocalExtensionManifest>(manifestJson, JsonOptions);
-            if (manifest == null || string.IsNullOrWhiteSpace(manifest.Id) || string.IsNullOrWhiteSpace(manifest.Name))
+            LocalExtensionManifest? manifest;
+            try
+            {
+                manifest = JsonSerializer.Deserialize<LocalExtensionManifest>(manifestJson, JsonOptions);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException($"扩展包中的 manifest.json 不是有效 JSON：{ex.Message}", ex);
+            }
+
+            if (manifest == null)
             {
                 throw new InvalidOperationException("扩展包中的 manifest.json 无效。");
+            }
+
+            if (string.IsNullOrWhiteSpace(manifest.Id) || string.IsNullOrWhiteSpace(manifest.Name))
+            {
+                throw new InvalidOperationException("扩展包中的 manifest.json 缺少 id 或 name。");
             }
 
             if (!string.IsNullOrWhiteSpace(requestedExtensionId) &&

@@ -36,6 +36,15 @@ public partial class SimpleTextInputWindow : Window
         DialogResult = true;
     }
 
+    private void ValueBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Enter)
+        {
+            OkButton_Click(sender, new RoutedEventArgs());
+            e.Handled = true;
+        }
+    }
+
     private void CancelButton_Click(object sender, RoutedEventArgs e)
     {
         DialogResult = false;

@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace OpenQuickHost.Sync;
@@ -100,16 +101,20 @@ public static class ExtensionPackageService
             throw new FileNotFoundException("扩展目录里缺少 manifest.json。", manifestPath);
         }
 
-        if (string.IsNullOrWhiteSpace(iconOverride))
-        {
-            archive.CreateEntryFromFile(manifestPath, "manifest.json", CompressionLevel.Optimal);
-            return;
-        }
-
         var manifestJson = File.ReadAllText(manifestPath);
         var manifest = JsonSerializer.Deserialize<LocalExtensionManifest>(manifestJson, JsonOptions)
             ?? throw new InvalidOperationException("扩展目录中的 manifest.json 无效。");
-        WriteJsonEntry(archive, "manifest.json", manifest with { Icon = iconOverride });
+        if (string.IsNullOrWhiteSpace(manifest.Id) || string.IsNullOrWhiteSpace(manifest.Name))
+        {
+            throw new InvalidOperationException("扩展目录中的 manifest.json 缺少 id 或 name。");
+        }
+
+        WriteJsonEntry(
+            archive,
+            "manifest.json",
+            string.IsNullOrWhiteSpace(iconOverride)
+                ? manifest
+                : manifest with { Icon = iconOverride });
     }
 
     private static bool ShouldIncludeInPackage(string rootDirectory, string filePath)
@@ -138,6 +143,9 @@ public static class ExtensionPackageService
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented = true
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 }

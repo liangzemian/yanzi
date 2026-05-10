@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:OpenQuickHost"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         mc:Ignorable="d"
         Title="燕子"
         Width="700"
@@ -13,11 +14,20 @@
         WindowStartupLocation="CenterScreen"
         WindowStyle="None"
         ResizeMode="CanResizeWithGrip"
-        Background="Transparent"
-        AllowsTransparency="True"
+        Background="#FF1A1A1A"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType"
         Deactivated="Window_Deactivated"
         PreviewKeyDown="Window_PreviewKeyDown"
         KeyDown="Window_KeyDown">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="6"
+                            CornerRadius="16"
+                            GlassFrameThickness="0" />
+    </shell:WindowChrome.WindowChrome>
     
     <Window.Resources>
         <!-- Colors -->
@@ -69,11 +79,18 @@
             <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.2" />
         </Storyboard>
 
-        <ContextMenu x:Key="FileResultContextMenu">
+        <ContextMenu x:Key="FileResultContextMenu"
+                     Opened="CommandListContextMenu_Opened"
+                     Closed="CommandListContextMenu_Closed"
+                     PreviewKeyDown="CommandListContextMenu_PreviewKeyDown">
             <MenuItem Header="打开"
                       Click="OpenFileResultMenuItem_Click" />
             <MenuItem Header="打开路径"
                       Click="OpenFileResultDirectoryMenuItem_Click" />
+            <MenuItem Header="打开终端"
+                      Click="OpenFileResultTerminalMenuItem_Click" />
+            <MenuItem Header="预览"
+                      Click="PreviewFileResultMenuItem_Click" />
             <Separator />
             <MenuItem Header="复制"
                       Click="CopyFileResultMenuItem_Click" />
@@ -81,11 +98,18 @@
                       Click="CopyFileResultFullPathMenuItem_Click" />
             <MenuItem Header="剪切"
                       Click="CutFileResultMenuItem_Click" />
+            <MenuItem Header="移动到..."
+                      Click="MoveFileResultMenuItem_Click" />
+            <MenuItem Header="收藏"
+                      Click="FavoriteFileResultMenuItem_Click" />
             <MenuItem Header="删除"
                       Click="DeleteFileResultMenuItem_Click" />
         </ContextMenu>
 
-        <ContextMenu x:Key="GenericResultContextMenu">
+        <ContextMenu x:Key="GenericResultContextMenu"
+                     Opened="CommandListContextMenu_Opened"
+                     Closed="CommandListContextMenu_Closed"
+                     PreviewKeyDown="CommandListContextMenu_PreviewKeyDown">
             <MenuItem Header="执行默认动作"
                       Click="OpenGenericResultMenuItem_Click" />
             <MenuItem Header="查看详情"
@@ -100,16 +124,12 @@
         </ContextMenu>
     </Window.Resources>
 
-    <Border Margin="15"
+    <Border Margin="1"
             CornerRadius="16"
-            Background="#E61C1C1C"
-            BorderBrush="#FF333333"
+            Background="#F21A1A1A"
+            BorderBrush="#22FFFFFF"
             BorderThickness="1"
             MouseLeftButtonDown="Window_MouseLeftButtonDown">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="15" Direction="270" ShadowDepth="2" Opacity="0.5"/>
-        </Border.Effect>
-        
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" /> <!-- Search -->
@@ -508,7 +528,9 @@
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     
                     <ListBox.ContextMenu>
-                        <ContextMenu>
+                        <ContextMenu Opened="CommandListContextMenu_Opened"
+                                     Closed="CommandListContextMenu_Closed"
+                                     PreviewKeyDown="CommandListContextMenu_PreviewKeyDown">
                             <MenuItem x:Name="CreateDesktopShortcutMenuItem"
                                       Header="添加桌面快捷方式"
                                       Click="CreateDesktopShortcutMenuItem_Click">
@@ -550,6 +572,13 @@
                                       Click="DeleteExtensionMenuItem_Click">
                                 <MenuItem.Icon>
                                     <Path Data="{local:IconGeometry delete}" Fill="#EF4444" Stretch="Uniform" Width="16" Height="16" />
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem x:Name="ToggleYanyuEnabledMenuItem"
+                                      Header="启用燕语"
+                                      Click="ToggleYanyuEnabledMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <Path Data="{local:IconGeometry power}" Fill="#22C55E" Stretch="Uniform" Width="16" Height="16" />
                                 </MenuItem.Icon>
                             </MenuItem>
                             <Separator />
@@ -641,9 +670,11 @@
                                                Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}" />
                                         <Viewbox Margin="6"
                                                  Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                            <Canvas Width="24" Height="24">
-                                                <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform" />
-                                            </Canvas>
+                                            <Path Width="24"
+                                                  Height="24"
+                                                  Data="{Binding VectorIcon}"
+                                                  Fill="White"
+                                                  Stretch="Uniform" />
                                         </Viewbox>
                                         <TextBlock Text="{Binding DisplayGlyph}"
                                                FontSize="14"
@@ -1460,15 +1491,21 @@
                     </StackPanel>
                     
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <TextBlock Text="更多菜单" Foreground="#FF888888" FontSize="12" VerticalAlignment="Center"/>
-                        <StackPanel Orientation="Horizontal" Margin="8,0,0,0">
-                            <Border Background="#FF282828" CornerRadius="3" Padding="4,2" Margin="0,0,4,0" VerticalAlignment="Center">
-                                <TextBlock Text="Ctrl" Foreground="#FF888888" FontSize="10"/>
-                            </Border>
-                            <Border Background="#FF282828" CornerRadius="3" Padding="4,2" VerticalAlignment="Center">
-                                <TextBlock Text="K" Foreground="#FF888888" FontSize="10"/>
-                            </Border>
-                        </StackPanel>
+                        <TextBlock x:Name="FooterMenuHintText"
+                                   Text="右箭头菜单"
+                                   Foreground="#FF888888"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"/>
+                        <Border Background="#FF282828"
+                                CornerRadius="3"
+                                Padding="6,2"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center">
+                            <TextBlock x:Name="FooterMenuHintKeyText"
+                                       Text="→"
+                                       Foreground="#FF888888"
+                                       FontSize="10"/>
+                        </Border>
                     </StackPanel>
 
                     <Popup x:Name="FooterQuickMenuPopup"
