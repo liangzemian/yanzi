@@ -62,24 +62,33 @@ public static class RunningExtensionRegistry
             return;
         }
 
+        var processId = TryGetProcessId(process);
         var entry = new RunningExtensionEntry(
             Guid.NewGuid(),
-            command.ExtensionId ?? $"pid-{process.Id}",
+            command.ExtensionId ?? $"pid-{processId}",
             string.IsNullOrWhiteSpace(command.Title) ? command.ExtensionId ?? "未命名扩展" : command.Title,
             string.IsNullOrWhiteSpace(command.Runtime) ? "csharp" : command.Runtime,
             string.IsNullOrWhiteSpace(launchSource) ? "unknown" : launchSource,
             DateTimeOffset.Now,
             process);
 
-        process.EnableRaisingEvents = true;
-        process.Exited += (_, _) => Remove(entry.InstanceId, "process exited");
+        try
+        {
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) => Remove(entry.InstanceId, "process exited");
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"RunningExtensionRegistry register skipped: id={entry.ExtensionId}, title={entry.Title}, pid={processId}, error={ex.Message}");
+            return;
+        }
 
         lock (Gate)
         {
             Entries[entry.InstanceId] = entry;
         }
 
-        HostAssets.AppendLog($"RunningExtensionRegistry registered: id={entry.ExtensionId}, title={entry.Title}, pid={process.Id}, launchSource={entry.LaunchSource}");
+        HostAssets.AppendLog($"RunningExtensionRegistry registered: id={entry.ExtensionId}, title={entry.Title}, pid={processId}, launchSource={entry.LaunchSource}");
         RaiseChanged();
     }
 

@@ -1563,7 +1563,7 @@ public partial class AddJsonExtensionWindow : Window
         builder.AppendLine("   - script.source 里声明 public static class YanziAction");
         builder.AppendLine("   - script.source 里实现 public static Task<string> RunAsync(YanziActionContext context)");
         builder.AppendLine("   - 输入内容从 context.InputText 读取");
-        builder.AppendLine("5.1 如果 script.source 里出现 using System.Windows、System.Windows.Controls、System.Windows.Media、new Window、ShowDialog()、TextBox、Button、SolidColorBrush、Brushes 等 WPF 原生窗口代码，必须同时输出 \"uiMode\": \"native-window\"");
+        builder.AppendLine("5.1 只有脚本真正创建 WPF 原生窗口时才输出 \"uiMode\": \"native-window\"，典型特征是 new Window、ShowDialog、WindowStartupLocation 或 WindowStyle。仅使用 System.Windows.Clipboard 不属于原生窗口扩展。");
         builder.AppendLine("5.2 只要是 native-window 扩展，就不要再同时输出 hostedViewXaml 或 hostedViewV2");
         builder.AppendLine("5.3 如果需求是独立弹窗小工具、原生窗口小应用、独立编辑器，而不是寄生在宿主里的工作区，优先输出 native-window，而不是 hostedViewXaml");
         builder.AppendLine();
@@ -2008,7 +2008,7 @@ public partial class AddJsonExtensionWindow : Window
         builder.AppendLine("6. 如果是脚本扩展，优先使用 csharp；内联脚本用 entryMode = inline 和 script.source");
         builder.AppendLine("6.0 如果需求要求用户在主界面输入“前缀 + 内容”后触发脚本或工作区，必须提供 queryPrefixes；脚本通过 context.InputText 读取前缀后面的内容");
         builder.AppendLine("6.1 如果是 C# 内联脚本，必须严格使用宿主约定：runtime = csharp，using OpenQuickHost.CSharpRuntime，public static class YanziAction，public static Task<string> RunAsync(YanziActionContext context)，输入从 context.InputText 读取");
-        builder.AppendLine("6.2 如果 script.source 里出现 using System.Windows、System.Windows.Controls、System.Windows.Media、new Window、ShowDialog()、TextBox、Button、SolidColorBrush、Brushes 等 WPF 原生窗口代码，必须补上 \"uiMode\": \"native-window\"");
+        builder.AppendLine("6.2 如果 script.source 里真正创建 WPF 窗口（new Window、ShowDialog、WindowStartupLocation 或 WindowStyle），必须补上 \"uiMode\": \"native-window\"；仅使用 System.Windows.Clipboard 不需要。");
         builder.AppendLine("7. 如果需要宿主内置界面，请优先使用 hostedViewXaml，不要输出 @view:textarea 或其他未定义协议");
         builder.AppendLine("8. hostedViewXaml 里不要输出 x:Class，不要假设宿主会自动解析你手写的事件处理函数；按钮动作请通过 oqh:HostedViewBridge.Action 声明");
         builder.AppendLine("9. hostedViewXaml.xaml 必须是可直接解析的 WPF XAML 字符串，必须放在合法 JSON 字符串里，内部双引号必须正确转义");

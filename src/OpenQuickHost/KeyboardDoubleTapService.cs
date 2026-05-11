@@ -19,6 +19,7 @@ public static class KeyboardDoubleTapService
     private const int VkRShift = 0xA1;
     private const int VkLWin = 0x5B;
     private const int VkRWin = 0x5C;
+    private const uint LlkhfInjected = 0x00000010;
 
     private static readonly LowLevelKeyboardProc Proc = HookCallback;
     private static IntPtr _hookId = IntPtr.Zero;
@@ -107,6 +108,11 @@ public static class KeyboardDoubleTapService
         {
             var message = wParam.ToInt32();
             var info = Marshal.PtrToStructure<KbdLlHookStruct>(lParam);
+            if ((info.flags & LlkhfInjected) != 0)
+            {
+                return CallNextHookEx(_hookId, nCode, wParam, lParam);
+            }
+
             var vkCode = (int)info.vkCode;
             var suppress = false;
 

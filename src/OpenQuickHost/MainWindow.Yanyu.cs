@@ -510,6 +510,7 @@ public partial class MainWindow
         ApplyFilter(SearchBox.Text);
         LastRunMessage = successMessage;
         SyncStatus = successMessage;
+        NotifyQuickPanelSettingsChanged("yanyu-settings-saved");
     }
 
     private void RefreshYanyuRules()

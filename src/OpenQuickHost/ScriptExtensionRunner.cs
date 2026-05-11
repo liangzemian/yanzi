@@ -886,10 +886,18 @@ public static class ScriptExtensionRunner
                 {
                     if (trackedCommand != null)
                     {
-                        RunningExtensionRegistry.RegisterNativeWindowProcess(
-                            trackedCommand,
-                            process,
-                            trackedLaunchSource ?? "unknown");
+                        try
+                        {
+                            RunningExtensionRegistry.RegisterNativeWindowProcess(
+                                trackedCommand,
+                                process,
+                                trackedLaunchSource ?? "unknown");
+                        }
+                        catch (Exception ex)
+                        {
+                            HostAssets.AppendLog(
+                                $"ScriptRunner native-window registration skipped: label={label}, pid={TryGetProcessId(process)}, error={ex.Message}");
+                        }
                     }
 
                     _ = ObserveProcessAfterEarlySuccessAsync(process, label, stateUpdatePath, outputTask, errorTask);
@@ -970,14 +978,12 @@ public static class ScriptExtensionRunner
             return false;
         }
 
-        return source.Contains("using System.Windows", StringComparison.Ordinal) ||
-               source.Contains("System.Windows.", StringComparison.Ordinal) ||
-               source.Contains("new Window", StringComparison.Ordinal) ||
+        return source.Contains("new Window", StringComparison.Ordinal) ||
+               source.Contains("new System.Windows.Window", StringComparison.Ordinal) ||
                source.Contains("ShowDialog()", StringComparison.Ordinal) ||
-               source.Contains("TextBox", StringComparison.Ordinal) ||
-               source.Contains("Button", StringComparison.Ordinal) ||
-               source.Contains("SolidColorBrush", StringComparison.Ordinal) ||
-               source.Contains("Brushes.", StringComparison.Ordinal);
+               source.Contains(".ShowDialog(", StringComparison.Ordinal) ||
+               source.Contains("WindowStartupLocation", StringComparison.Ordinal) ||
+               source.Contains("WindowStyle", StringComparison.Ordinal);
     }
 
     private static async Task ObserveProcessAfterEarlySuccessAsync(

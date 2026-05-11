@@ -2165,36 +2165,46 @@ public partial class MainWindow
             SyncStatus = nativeWindowStarted ? "原生窗口已启动。" : "脚本执行完成。";
             HostAssets.AppendLog(
                 $"Main execute script success: id={runnable.ExtensionId}, title={runnable.Title}, launchSource={launchSource}, nativeWindowStarted={nativeWindowStarted}, elapsedMs={executionStopwatch.ElapsedMilliseconds}, outputLength={result.Output.Length}, errorLength={result.Error.Length}");
-            if (!nativeWindowStarted &&
-                (!string.IsNullOrWhiteSpace(result.Output) || !string.IsNullOrWhiteSpace(result.Error)))
-            {
-                var logWindow = new ExecutionLogWindow(
-                    runnable.Title,
-                    success: true,
-                    output: result.Output,
-                    error: result.Error,
-                    exitCode: result.ExitCode,
-                    extraMeta: $"来源：{launchSource}")
-                {
-                    Owner = this
-                };
-                logWindow.Show();
-                logWindow.Activate();
-            }
+            AppendScriptExecutionDetailLog(runnable, success: true, result.Output, result.Error, result.ExitCode, launchSource);
             return;
         }
 
         HostAssets.AppendLog($"Script extension failed: {runnable.Title} -> {result.Error}");
         HostAssets.AppendLog(
             $"Main execute script failed: id={runnable.ExtensionId}, title={runnable.Title}, launchSource={launchSource}, elapsedMs={executionStopwatch.ElapsedMilliseconds}, exitCode={result.ExitCode}");
+        AppendScriptExecutionDetailLog(runnable, success: false, result.Output, result.Error, result.ExitCode, launchSource);
         LastRunMessage = $"脚本执行失败：{runnable.Title}";
         SyncStatus = $"脚本执行失败：{result.Error}";
-        System.Windows.MessageBox.Show(
-            this,
-            string.IsNullOrWhiteSpace(result.Error) ? "脚本执行失败。" : result.Error.Trim(),
-            $"{runnable.Title} 执行失败",
-            MessageBoxButton.OK,
-            MessageBoxImage.Error);
+        var errorWindow = new ExecutionLogWindow(
+            runnable.Title,
+            success: false,
+            output: result.Output,
+            error: string.IsNullOrWhiteSpace(result.Error) ? "脚本执行失败。" : result.Error,
+            exitCode: result.ExitCode,
+            extraMeta: $"来源：{launchSource}")
+        {
+            Owner = this
+        };
+        errorWindow.Show();
+        errorWindow.Activate();
+    }
+
+    private static void AppendScriptExecutionDetailLog(
+        CommandItem command,
+        bool success,
+        string output,
+        string error,
+        int exitCode,
+        string launchSource)
+    {
+        var normalizedOutput = string.IsNullOrWhiteSpace(output)
+            ? "(empty)"
+            : output.Trim().ReplaceLineEndings(" | ");
+        var normalizedError = string.IsNullOrWhiteSpace(error)
+            ? "(empty)"
+            : error.Trim().ReplaceLineEndings(" | ");
+        HostAssets.AppendLog(
+            $"Script execution detail: id={command.ExtensionId}, title={command.Title}, success={success}, exitCode={exitCode}, launchSource={launchSource}, output={normalizedOutput}, error={normalizedError}");
     }
 
     // --- Quick Panel Support ---

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using System.Net.NetworkInformation;
+using System.Text.Json;
 using System.Windows;
 using OpenQuickHost.Sync;
 using Forms = System.Windows.Forms;
@@ -733,7 +734,7 @@ public partial class MainWindow
         {
             var service = new WebDavSyncService(settings);
             var result = await service.SyncExtensionsAsync();
-            ReloadLocalExtensionsFromWebDav();
+            ApplyWebDavSyncResult(result);
             LastRunMessage = $"个人扩展同步完成：上传 {result.UploadedCount} 个，拉取 {result.PulledCount} 个。";
         }
         catch (Exception ex)
@@ -777,9 +778,9 @@ public partial class MainWindow
             HostAssets.AppendLog($"WebDAV background sync started: {reason}");
             var service = new WebDavSyncService(AppSettingsStore.Load());
             var result = await service.SyncExtensionsAsync();
-            ReloadLocalExtensionsFromWebDav();
+            ApplyWebDavSyncResult(result);
             SyncStatus = $"个人扩展后台同步完成：上传 {result.UploadedCount} 个，拉取 {result.PulledCount} 个。";
-            HostAssets.AppendLog($"WebDAV background sync completed: {reason}, uploaded={result.UploadedCount}, pulled={result.PulledCount}");
+            HostAssets.AppendLog($"WebDAV background sync completed: {reason}, uploaded={result.UploadedCount}, pulled={result.PulledCount}, configUploaded={result.ConfigUploaded}, configPulled={result.ConfigPulled}");
         }
         catch (Exception ex)
         {
@@ -796,6 +797,19 @@ public partial class MainWindow
                 QueueBackgroundWebDavSync("queued");
             }
         }
+    }
+
+    private void ApplyWebDavSyncResult(WebDavSyncResult result)
+    {
+        ReloadLocalExtensionsFromWebDav();
+        if (!result.ConfigPulled)
+        {
+            return;
+        }
+
+        RefreshAppSettings();
+        _quickPanel?.RefreshSettingsFromStore();
+        ApplyFilter(SearchBox.Text);
     }
 
     private async Task<bool> PullWebDavConfigFromCloudAsync()
@@ -974,7 +988,10 @@ public partial class MainWindow
             !string.Equals(settings.SelectedQuickPanelContextGroupId, incoming.SelectedQuickPanelContextGroupId, StringComparison.Ordinal) ||
             !AreQuickPanelGroupsEqual(settings.QuickPanelGlobalGroups, incoming.QuickPanelGlobalGroups) ||
             !AreQuickPanelGroupsEqual(settings.QuickPanelContextGroups, incoming.QuickPanelContextGroups) ||
-            !AreQuickPanelMouseTriggersEqual(settings.QuickPanelMouseTriggers, incoming.QuickPanelMouseTriggers);
+            !AreQuickPanelMouseTriggersEqual(settings.QuickPanelMouseTriggers, incoming.QuickPanelMouseTriggers) ||
+            snapshot.YarnSelect != null && !AreJsonPayloadsEqual(settings.YarnSelect, incoming.YarnSelect) ||
+            snapshot.RadialMenu != null && !AreJsonPayloadsEqual(settings.RadialMenu, incoming.RadialMenu) ||
+            snapshot.YanyuRules != null && !AreJsonPayloadsEqual(settings.YanyuRules, incoming.YanyuRules);
         if (!changed)
         {
             HostAssets.AppendLog("Quick panel cloud pull: no local changes detected.");
@@ -989,16 +1006,32 @@ public partial class MainWindow
         settings.GlobalFavoriteExtensionIds = incoming.GlobalFavoriteExtensionIds;
         settings.ContextFavoriteExtensionIds = incoming.ContextFavoriteExtensionIds;
         settings.QuickPanelMouseTriggers = incoming.QuickPanelMouseTriggers;
+        if (snapshot.YarnSelect != null)
+        {
+            settings.YarnSelect = incoming.YarnSelect;
+        }
+
+        if (snapshot.RadialMenu != null)
+        {
+            settings.RadialMenu = incoming.RadialMenu;
+        }
+
+        if (snapshot.YanyuRules != null)
+        {
+            settings.YanyuRules = incoming.YanyuRules;
+        }
+
         AppSettingsStore.Save(settings);
         _appSettings = AppSettingsStore.Load();
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();
+            RefreshYanyuRules();
         }
 
         _quickPanel?.RefreshSettingsFromStore();
         HostAssets.AppendLog(
-            $"Quick panel cloud pull applied: globalGroups={settings.QuickPanelGlobalGroups.Count}, contextGroups={settings.QuickPanelContextGroups.Count}, globalFavs={settings.GlobalFavoriteExtensionIds.Count}, contextFavs={settings.ContextFavoriteExtensionIds.Count}");
+            $"Quick panel cloud pull applied: globalGroups={settings.QuickPanelGlobalGroups.Count}, contextGroups={settings.QuickPanelContextGroups.Count}, globalFavs={settings.GlobalFavoriteExtensionIds.Count}, contextFavs={settings.ContextFavoriteExtensionIds.Count}, yanyu={settings.YanyuRules.Count}, radialPages={settings.RadialMenu?.Pages?.Count ?? 0}");
         return true;
     }
 
@@ -1029,7 +1062,18 @@ public partial class MainWindow
         return settings.QuickPanelGlobalGroups.Any(group => group.SlotItems.Any(static slot => slot != null)) ||
                settings.QuickPanelContextGroups.Any(group => group.SlotItems.Any(static slot => slot != null)) ||
                settings.GlobalFavoriteExtensionIds.Count > 0 ||
-               settings.ContextFavoriteExtensionIds.Count > 0;
+               settings.ContextFavoriteExtensionIds.Count > 0 ||
+               settings.YanyuRules.Count > 0 ||
+               settings.YarnSelect.Rules.Count > 0 ||
+               settings.RadialMenu.Enabled ||
+               settings.RadialMenu.Pages.Any(static page =>
+                   page.Slots.Any(static slot => !string.IsNullOrWhiteSpace(slot)) ||
+                   page.ChildPageIds.Any(static childPageId => !string.IsNullOrWhiteSpace(childPageId)));
+    }
+
+    private static bool AreJsonPayloadsEqual<T>(T left, T right)
+    {
+        return string.Equals(JsonSerializer.Serialize(left), JsonSerializer.Serialize(right), StringComparison.Ordinal);
     }
 
     private static bool AreStringListsEqual(IReadOnlyList<string> left, IReadOnlyList<string> right)
@@ -1250,6 +1294,7 @@ public partial class MainWindow
                 YarnSelectService.Start(HandleYarnSelectAction);
             }
 
+            RefreshYanyuRules();
             RefreshLauncherHotkeyRegistration();
             RefreshExtensionHotkeys();
         }
@@ -1317,6 +1362,7 @@ public partial class MainWindow
         }
 
         QueueCloudQuickPanelConfigSync(reason);
+        QueueBackgroundWebDavSync($"config-{reason}");
     }
 
     public bool HasWebDavCredential()

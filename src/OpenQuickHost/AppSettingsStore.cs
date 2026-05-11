@@ -145,7 +145,7 @@ public static class AppSettingsStore
             {
                 Id = "default",
                 Name = "默认",
-                Slots = settings.RadialMenu.Slots?.ToList() ?? Enumerable.Repeat<string?>(null, 8).ToList()
+                Slots = settings.RadialMenu.Slots?.ToList() ?? Enumerable.Repeat<string?>(null, RadialMenuSettings.TotalSlotCount).ToList()
             });
         }
 
@@ -154,28 +154,42 @@ public static class AppSettingsStore
             page.Id = string.IsNullOrWhiteSpace(page.Id) ? Guid.NewGuid().ToString("N") : page.Id.Trim();
             page.Name = string.IsNullOrWhiteSpace(page.Name) ? "未命名" : page.Name.Trim();
             page.Slots ??= [];
-            while (page.Slots.Count < 8)
+            while (page.Slots.Count < RadialMenuSettings.TotalSlotCount)
             {
                 page.Slots.Add(null);
             }
 
-            if (page.Slots.Count > 8)
+            if (page.Slots.Count > RadialMenuSettings.TotalSlotCount)
             {
-                page.Slots = page.Slots.Take(8).ToList();
+                page.Slots = page.Slots.Take(RadialMenuSettings.TotalSlotCount).ToList();
             }
 
             page.Slots = page.Slots
                 .Select(static id => string.IsNullOrWhiteSpace(id) ? null : id.Trim())
                 .ToList();
+            page.SlotTitles ??= [];
+            while (page.SlotTitles.Count < RadialMenuSettings.TotalSlotCount)
+            {
+                page.SlotTitles.Add(null);
+            }
+
+            if (page.SlotTitles.Count > RadialMenuSettings.TotalSlotCount)
+            {
+                page.SlotTitles = page.SlotTitles.Take(RadialMenuSettings.TotalSlotCount).ToList();
+            }
+
+            page.SlotTitles = page.SlotTitles
+                .Select(static title => string.IsNullOrWhiteSpace(title) ? null : title.Trim())
+                .ToList();
             page.ChildPageIds ??= [];
-            while (page.ChildPageIds.Count < 8)
+            while (page.ChildPageIds.Count < RadialMenuSettings.TotalSlotCount)
             {
                 page.ChildPageIds.Add(null);
             }
 
-            if (page.ChildPageIds.Count > 8)
+            if (page.ChildPageIds.Count > RadialMenuSettings.TotalSlotCount)
             {
-                page.ChildPageIds = page.ChildPageIds.Take(8).ToList();
+                page.ChildPageIds = page.ChildPageIds.Take(RadialMenuSettings.TotalSlotCount).ToList();
             }
 
             page.ChildPageIds = page.ChildPageIds
@@ -497,6 +511,12 @@ public sealed class YarnSelectSettings
 
 public sealed class RadialMenuSettings
 {
+    public const int InnerSlotCount = 8;
+
+    public const int OuterSlotCount = 16;
+
+    public const int TotalSlotCount = InnerSlotCount + OuterSlotCount;
+
     public bool Enabled { get; set; } = false;
 
     public bool TriggerRightButtonDrag { get; set; } = true;
@@ -509,7 +529,7 @@ public sealed class RadialMenuSettings
 
     public int DragThresholdPixels { get; set; } = 24;
 
-    public List<string?> Slots { get; set; } = Enumerable.Repeat<string?>(null, 8).ToList();
+    public List<string?> Slots { get; set; } = Enumerable.Repeat<string?>(null, TotalSlotCount).ToList();
 
     public string SelectedPageId { get; set; } = "default";
 
@@ -522,9 +542,11 @@ public sealed class RadialMenuPageSettings
 
     public string Name { get; set; } = "未命名";
 
-    public List<string?> Slots { get; set; } = Enumerable.Repeat<string?>(null, 8).ToList();
+    public List<string?> Slots { get; set; } = Enumerable.Repeat<string?>(null, RadialMenuSettings.TotalSlotCount).ToList();
 
-    public List<string?> ChildPageIds { get; set; } = Enumerable.Repeat<string?>(null, 8).ToList();
+    public List<string?> SlotTitles { get; set; } = Enumerable.Repeat<string?>(null, RadialMenuSettings.TotalSlotCount).ToList();
+
+    public List<string?> ChildPageIds { get; set; } = Enumerable.Repeat<string?>(null, RadialMenuSettings.TotalSlotCount).ToList();
 }
 
 public sealed class YarnSelectRuleSettings

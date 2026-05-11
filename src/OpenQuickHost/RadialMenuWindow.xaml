@@ -3,8 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:OpenQuickHost"
         Title="燕环"
-        Width="1040"
-        Height="1040"
+        Width="1400"
+        Height="1400"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
@@ -18,6 +18,27 @@
     </Window.Resources>
 
     <Grid>
+        <Ellipse Width="430"
+                 Height="430"
+                 Fill="#AA101010"
+                 Stroke="#22FFFFFF"
+                 StrokeThickness="1"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center"/>
+
+        <ItemsControl ItemsSource="{Binding OuterSeparators}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <Canvas/>
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}" Stroke="#22FFFFFF" StrokeThickness="1"/>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
         <Ellipse Width="270"
                  Height="270"
                  Fill="#CC101010"
@@ -48,19 +69,73 @@
                  VerticalAlignment="Center"/>
 
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-            <TextBlock Text="{Binding PageTitle}"
+            <TextBlock Text="{Binding CenterPrimaryText}"
                        Foreground="White"
                        FontSize="16"
                        FontWeight="SemiBold"
                        HorizontalAlignment="Center"/>
-            <TextBlock Text="{Binding ActiveTitle}"
-                       Foreground="#FF8E8E8E"
-                       FontSize="11"
-                       Width="120"
-                       TextAlignment="Center"
-                       TextTrimming="CharacterEllipsis"
-                       Margin="0,4,0,0"/>
         </StackPanel>
+
+        <TextBlock Text="{Binding ActiveTitle}"
+                   Foreground="#FF8E8E8E"
+                   FontSize="11"
+                   Width="220"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   TextAlignment="Center"
+                   TextTrimming="CharacterEllipsis">
+            <TextBlock.RenderTransform>
+                <TranslateTransform Y="156"/>
+            </TextBlock.RenderTransform>
+        </TextBlock>
+
+        <ItemsControl ItemsSource="{Binding OuterItems}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <Canvas/>
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemContainerStyle>
+                <Style TargetType="ContentPresenter">
+                    <Setter Property="Canvas.Left" Value="{Binding X}"/>
+                    <Setter Property="Canvas.Top" Value="{Binding Y}"/>
+                </Style>
+            </ItemsControl.ItemContainerStyle>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Border Width="62"
+                            Height="50"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            AllowDrop="True"
+                            MouseMove="RadialSlot_MouseMove"
+                            MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
+                            DragOver="RadialSlot_DragOver"
+                            Drop="RadialSlot_Drop"
+                            RenderTransformOrigin="0.5,0.5">
+                        <Border.RenderTransform>
+                            <ScaleTransform ScaleX="{Binding Scale}" ScaleY="{Binding Scale}"/>
+                        </Border.RenderTransform>
+                        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <Grid Width="23" Height="23" HorizontalAlignment="Center" ClipToBounds="True">
+                                <Image Source="{Binding IconSource}" Stretch="UniformToFill" Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                <Viewbox Width="14" Height="14" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
+                                </Viewbox>
+                                <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                            </Grid>
+                            <TextBlock Text="{Binding Title}"
+                                       Foreground="{Binding IsSelected, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#FF60A5FA|#FFFFFFFF'}"
+                                       FontSize="9"
+                                       Width="50"
+                                       TextAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"
+                                       Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
 
         <ItemsControl ItemsSource="{Binding Items}">
             <ItemsControl.ItemsPanel>
@@ -76,24 +151,29 @@
             </ItemsControl.ItemContainerStyle>
             <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                    <Border Width="84"
-                            Height="66"
+                    <Border Width="76"
+                            Height="60"
                             Background="Transparent"
                             BorderThickness="0"
+                            AllowDrop="True"
+                            MouseMove="RadialSlot_MouseMove"
+                            MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
+                            DragOver="RadialSlot_DragOver"
+                            Drop="RadialSlot_Drop"
                             RenderTransformOrigin="0.5,0.5">
                         <Border.RenderTransform>
                             <ScaleTransform ScaleX="{Binding Scale}" ScaleY="{Binding Scale}"/>
                         </Border.RenderTransform>
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <Grid Width="38"
-                                  Height="38"
+                            <Grid Width="32"
+                                  Height="32"
                                   HorizontalAlignment="Center"
                                   ClipToBounds="True">
                                 <Image Source="{Binding IconSource}"
                                        Stretch="UniformToFill"
                                        Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                                <Viewbox Width="22"
-                                         Height="22"
+                                <Viewbox Width="19"
+                                         Height="19"
                                          Stretch="Uniform"
                                          HorizontalAlignment="Center"
                                          VerticalAlignment="Center"
@@ -102,7 +182,7 @@
                                 </Viewbox>
                                 <TextBlock Text="{Binding DisplayGlyph}"
                                            Foreground="White"
-                                           FontSize="15"
+                                           FontSize="13"
                                            FontWeight="SemiBold"
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Center"
@@ -110,8 +190,8 @@
                             </Grid>
                             <TextBlock Text="{Binding Title}"
                                        Foreground="{Binding IsSelected, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#FF60A5FA|#FFFFFFFF'}"
-                                       FontSize="11"
-                                       Width="66"
+                                       FontSize="10"
+                                       Width="60"
                                        TextAlignment="Center"
                                        TextTrimming="CharacterEllipsis"
                                        Margin="0,4,0,0"/>
@@ -170,24 +250,29 @@
                 </ItemsControl.ItemContainerStyle>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border Width="76"
-                                Height="60"
+                        <Border Width="68"
+                                Height="54"
                                 Background="Transparent"
                                 BorderThickness="0"
+                                AllowDrop="True"
+                                MouseMove="RadialSlot_MouseMove"
+                                MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
+                                DragOver="RadialSlot_DragOver"
+                                Drop="RadialSlot_Drop"
                                 RenderTransformOrigin="0.5,0.5">
                             <Border.RenderTransform>
                                 <ScaleTransform ScaleX="{Binding Scale}" ScaleY="{Binding Scale}"/>
                             </Border.RenderTransform>
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <Grid Width="30"
-                                      Height="30"
+                                <Grid Width="26"
+                                      Height="26"
                                       HorizontalAlignment="Center"
                                       ClipToBounds="True">
                                     <Image Source="{Binding IconSource}"
                                            Stretch="UniformToFill"
                                            Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                                    <Viewbox Width="18"
-                                             Height="18"
+                                    <Viewbox Width="16"
+                                             Height="16"
                                              Stretch="Uniform"
                                              HorizontalAlignment="Center"
                                              VerticalAlignment="Center"
@@ -196,7 +281,7 @@
                                     </Viewbox>
                                     <TextBlock Text="{Binding DisplayGlyph}"
                                                Foreground="White"
-                                               FontSize="13"
+                                               FontSize="12"
                                                FontWeight="SemiBold"
                                                HorizontalAlignment="Center"
                                                VerticalAlignment="Center"
@@ -204,8 +289,8 @@
                                 </Grid>
                                 <TextBlock Text="{Binding Title}"
                                            Foreground="{Binding IsSelected, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#FF60A5FA|#FFFFFFFF'}"
-                                           FontSize="10"
-                                           Width="60"
+                                           FontSize="9"
+                                           Width="54"
                                            TextAlignment="Center"
                                            TextTrimming="CharacterEllipsis"
                                            Margin="0,4,0,0"/>
@@ -217,8 +302,8 @@
         </Canvas>
 
         <Canvas Visibility="{Binding HasGrandChildRing, Converter={StaticResource BooleanToVisibilityConverter}}">
-            <Ellipse Width="220"
-                     Height="220"
+            <Ellipse Width="196"
+                     Height="196"
                      Canvas.Left="{Binding GrandChildRingEllipseX}"
                      Canvas.Top="{Binding GrandChildRingEllipseY}"
                      Fill="#B3101010"
@@ -236,8 +321,8 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
-            <Ellipse Width="58"
-                     Height="58"
+            <Ellipse Width="54"
+                     Height="54"
                      Canvas.Left="{Binding GrandChildRingCenterEllipseX}"
                      Canvas.Top="{Binding GrandChildRingCenterEllipseY}"
                      Fill="#F2161616"
@@ -246,7 +331,7 @@
             <TextBlock Text="{Binding GrandChildRingTitle}"
                        Canvas.Left="{Binding GrandChildRingTitleX}"
                        Canvas.Top="{Binding GrandChildRingTitleY}"
-                       Width="140"
+                       Width="128"
                        TextAlignment="Center"
                        Foreground="White"
                        FontSize="14"
@@ -265,26 +350,31 @@
                 </ItemsControl.ItemContainerStyle>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border Width="72"
-                                Height="56"
+                        <Border Width="62"
+                                Height="50"
                                 Background="Transparent"
                                 BorderThickness="0"
+                                AllowDrop="True"
+                                MouseMove="RadialSlot_MouseMove"
+                                MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
+                                DragOver="RadialSlot_DragOver"
+                                Drop="RadialSlot_Drop"
                                 RenderTransformOrigin="0.5,0.5">
                             <Border.RenderTransform>
                                 <ScaleTransform ScaleX="{Binding Scale}" ScaleY="{Binding Scale}"/>
                             </Border.RenderTransform>
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <Grid Width="28" Height="28" HorizontalAlignment="Center" ClipToBounds="True">
+                                <Grid Width="23" Height="23" HorizontalAlignment="Center" ClipToBounds="True">
                                     <Image Source="{Binding IconSource}" Stretch="UniformToFill" Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-                                    <Viewbox Width="17" Height="17" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <Viewbox Width="14" Height="14" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
                                         <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
                                     </Viewbox>
-                                    <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                    <TextBlock Text="{Binding DisplayGlyph}" Foreground="White" FontSize="11" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                 </Grid>
                                 <TextBlock Text="{Binding Title}"
                                            Foreground="{Binding IsSelected, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#FF60A5FA|#FFFFFFFF'}"
-                                           FontSize="10"
-                                           Width="58"
+                                           FontSize="9"
+                                           Width="50"
                                            TextAlignment="Center"
                                            TextTrimming="CharacterEllipsis"
                                            Margin="0,4,0,0"/>

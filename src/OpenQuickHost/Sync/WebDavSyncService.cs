@@ -222,7 +222,113 @@ public sealed class WebDavSyncService
 
         SaveLocalIndex(ClearLocalPendingFlags(mergedIndex));
         await SyncSearchMemoryAsync(cancellationToken);
-        return new WebDavSyncResult(uploaded, pulled, SyncRootDisplay);
+        var (configUploaded, configPulled) = await SyncLauncherConfigAsync(cancellationToken);
+        return new WebDavSyncResult(uploaded, pulled, SyncRootDisplay, configUploaded, configPulled);
+    }
+
+    private async Task<(bool uploaded, bool pulled)> SyncLauncherConfigAsync(CancellationToken cancellationToken)
+    {
+        await EnsureCollectionAsync("state", cancellationToken);
+
+        var localSettings = AppSettingsStore.Load();
+        var localConfig = CloudQuickPanelConfigSnapshot.FromSettings(localSettings);
+        var localUpdatedAtUtc = File.Exists(AppSettingsStore.SettingsPath)
+            ? File.GetLastWriteTimeUtc(AppSettingsStore.SettingsPath)
+            : DateTime.UtcNow;
+        var remoteBytes = await TryGetBytesAsync("state/launcher-config.json", cancellationToken);
+        var remote = remoteBytes is { Length: > 0 }
+            ? JsonSerializer.Deserialize<WebDavLauncherConfigSnapshot>(Encoding.UTF8.GetString(remoteBytes), JsonOptions)
+            : null;
+
+        if (remote?.Config == null)
+        {
+            await UploadLauncherConfigAsync(localConfig, DateTime.UtcNow, cancellationToken);
+            HostAssets.AppendLog("WebDAV launcher config uploaded: remote missing.");
+            return (true, false);
+        }
+
+        var remoteUpdatedAtUtc = TryParseUtc(remote.UpdatedAtUtc) ?? DateTime.MinValue;
+        var equivalent = AreJsonPayloadsEqual(localConfig, remote.Config);
+        if (equivalent)
+        {
+            HostAssets.AppendLog("WebDAV launcher config sync: no changes detected.");
+            return (false, false);
+        }
+
+        if (remoteUpdatedAtUtc > localUpdatedAtUtc.AddSeconds(1))
+        {
+            ApplyLauncherConfigSnapshot(remote.Config);
+            HostAssets.AppendLog(
+                $"WebDAV launcher config pulled: remoteUpdated={remoteUpdatedAtUtc:O}, localUpdated={localUpdatedAtUtc:O}.");
+            return (false, true);
+        }
+
+        await UploadLauncherConfigAsync(localConfig, DateTime.UtcNow, cancellationToken);
+        HostAssets.AppendLog(
+            $"WebDAV launcher config uploaded: localUpdated={localUpdatedAtUtc:O}, remoteUpdated={remoteUpdatedAtUtc:O}.");
+        return (true, false);
+    }
+
+    private async Task UploadLauncherConfigAsync(
+        CloudQuickPanelConfigSnapshot config,
+        DateTime updatedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = new WebDavLauncherConfigSnapshot
+        {
+            UpdatedAtUtc = updatedAtUtc.ToString("O"),
+            Config = config
+        };
+        var json = JsonSerializer.Serialize(snapshot, JsonOptions);
+        using var request = CreateRequest(HttpMethod.Put, "state/launcher-config.json");
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            await ThrowWebDavFailureAsync(request, response, cancellationToken);
+        }
+    }
+
+    private static void ApplyLauncherConfigSnapshot(CloudQuickPanelConfigSnapshot snapshot)
+    {
+        var settings = AppSettingsStore.Load();
+        var incoming = snapshot.ToAppSettings();
+        settings.QuickPanelSlots = incoming.QuickPanelSlots;
+        settings.QuickPanelGlobalGroups = incoming.QuickPanelGlobalGroups;
+        settings.QuickPanelContextGroups = incoming.QuickPanelContextGroups;
+        settings.SelectedQuickPanelGlobalGroupId = incoming.SelectedQuickPanelGlobalGroupId;
+        settings.SelectedQuickPanelContextGroupId = incoming.SelectedQuickPanelContextGroupId;
+        settings.GlobalFavoriteExtensionIds = incoming.GlobalFavoriteExtensionIds;
+        settings.ContextFavoriteExtensionIds = incoming.ContextFavoriteExtensionIds;
+        settings.QuickPanelMouseTriggers = incoming.QuickPanelMouseTriggers;
+        if (snapshot.YarnSelect != null)
+        {
+            settings.YarnSelect = incoming.YarnSelect;
+        }
+
+        if (snapshot.RadialMenu != null)
+        {
+            settings.RadialMenu = incoming.RadialMenu;
+        }
+
+        if (snapshot.YanyuRules != null)
+        {
+            settings.YanyuRules = incoming.YanyuRules;
+        }
+
+        AppSettingsStore.Save(settings);
+    }
+
+    private static DateTime? TryParseUtc(string? value)
+    {
+        return DateTime.TryParse(value, null, System.Globalization.DateTimeStyles.AdjustToUniversal, out var parsed)
+            ? parsed.ToUniversalTime()
+            : null;
+    }
+
+    private static bool AreJsonPayloadsEqual<T>(T left, T right)
+    {
+        return string.Equals(JsonSerializer.Serialize(left, JsonOptions), JsonSerializer.Serialize(right, JsonOptions), StringComparison.Ordinal);
     }
 
     private async Task SyncSearchMemoryAsync(CancellationToken cancellationToken)
@@ -959,7 +1065,21 @@ public sealed class WebDavSyncService
         IReadOnlyDictionary<string, byte[]> PackageBytesByExtensionId);
 }
 
-public sealed record WebDavSyncResult(int UploadedCount, int PulledCount, string RemoteRoot);
+public sealed record WebDavSyncResult(
+    int UploadedCount,
+    int PulledCount,
+    string RemoteRoot,
+    bool ConfigUploaded = false,
+    bool ConfigPulled = false);
+
+public sealed class WebDavLauncherConfigSnapshot
+{
+    public int SchemaVersion { get; set; } = 1;
+
+    public string UpdatedAtUtc { get; set; } = string.Empty;
+
+    public CloudQuickPanelConfigSnapshot? Config { get; set; }
+}
 
 public sealed class WebDavSyncIndex
 {

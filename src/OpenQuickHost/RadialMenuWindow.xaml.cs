@@ -1,10 +1,15 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using Forms = System.Windows.Forms;
 
 namespace OpenQuickHost;
@@ -31,6 +36,12 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
     private double _grandChildRingCenterX;
     private double _grandChildRingCenterY;
     private bool _hasGrandChildRing;
+    private IntPtr _previousForegroundWindow;
+    private bool _editModeLocked;
+    private bool _editInteractionActive;
+    private string _centerPrimaryText = "燕环";
+    private RadialSlotPayload? _cutSlotPayload;
+    private RadialMenuItemViewModel? _dragSourceItem;
 
     public RadialMenuWindow(MainWindow mainWindow)
     {
@@ -46,20 +57,26 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         {
             if (e.Key == Key.Escape)
             {
+                _editModeLocked = false;
                 Hide();
             }
         };
         MouseWheel += RadialMenuWindow_MouseWheel;
-        MouseLeftButtonDown += (_, _) => ReturnToParentPage();
+        MouseLeftButtonDown += RadialMenuWindow_MouseLeftButtonDown;
+        MouseRightButtonDown += RadialMenuWindow_MouseRightButtonDown;
     }
 
     public ObservableCollection<RadialMenuItemViewModel> Items { get; } = [];
+
+    public ObservableCollection<RadialMenuItemViewModel> OuterItems { get; } = [];
 
     public ObservableCollection<RadialMenuItemViewModel> ChildItems { get; } = [];
 
     public ObservableCollection<RadialMenuItemViewModel> GrandChildItems { get; } = [];
 
     public ObservableCollection<RadialSeparatorViewModel> MainSeparators { get; } = [];
+
+    public ObservableCollection<RadialSeparatorViewModel> OuterSeparators { get; } = [];
 
     public ObservableCollection<RadialSeparatorViewModel> ChildSeparators { get; } = [];
 
@@ -137,15 +154,15 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
 
     public double ChildRingTitleY => _childRingCenterY - 10;
 
-    public double GrandChildRingEllipseX => _grandChildRingCenterX - 110;
+    public double GrandChildRingEllipseX => _grandChildRingCenterX - 98;
 
-    public double GrandChildRingEllipseY => _grandChildRingCenterY - 110;
+    public double GrandChildRingEllipseY => _grandChildRingCenterY - 98;
 
-    public double GrandChildRingCenterEllipseX => _grandChildRingCenterX - 29;
+    public double GrandChildRingCenterEllipseX => _grandChildRingCenterX - 27;
 
-    public double GrandChildRingCenterEllipseY => _grandChildRingCenterY - 29;
+    public double GrandChildRingCenterEllipseY => _grandChildRingCenterY - 27;
 
-    public double GrandChildRingTitleX => _grandChildRingCenterX - 70;
+    public double GrandChildRingTitleX => _grandChildRingCenterX - 64;
 
     public double GrandChildRingTitleY => _grandChildRingCenterY - 10;
 
@@ -179,11 +196,29 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public string CenterPrimaryText
+    {
+        get => _centerPrimaryText;
+        private set
+        {
+            if (value == _centerPrimaryText)
+            {
+                return;
+            }
+
+            _centerPrimaryText = value;
+            OnPropertyChanged();
+        }
+    }
+
     public void ShowAtMouse()
     {
         _isExecuting = false;
+        _editModeLocked = false;
+        _editInteractionActive = false;
         var settings = AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings();
         _pages = _mainWindow.GetRadialMenuPages().ToList();
+        _previousForegroundWindow = RadialMenuNativeMethods.GetForegroundWindow();
         _currentPageId = string.IsNullOrWhiteSpace(settings.SelectedPageId)
             ? _pages.FirstOrDefault()?.Id ?? string.Empty
             : settings.SelectedPageId;
@@ -197,6 +232,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
 
         Left = centerDips.X - Width / 2;
         Top = centerDips.Y - Height / 2;
+        UpdateCenterText();
         ActiveTitle = "取消";
         if (!IsVisible)
         {
@@ -215,16 +251,33 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        if (_editModeLocked || Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            _editModeLocked = true;
+            _selectionTimer.Stop();
+            UpdateEditModeState();
+            OpenEditMenuForCurrentSelection();
+            return;
+        }
+
         _selectionTimer.Stop();
         var selected = _selectedItem;
         var selectedChild = _selectedChildItem;
         var selectedGrandChild = _selectedGrandChildItem;
+
+        if (TryHandleEmptySlotRelease(selectedGrandChild) ||
+            TryHandleEmptySlotRelease(selectedChild) ||
+            TryHandleEmptySlotRelease(selected))
+        {
+            return;
+        }
+
         Hide();
         if (selectedGrandChild?.Command != null)
         {
             _isExecuting = true;
             HostAssets.AppendLog($"Radial menu executing grandchild: index={selectedGrandChild.Index}, command={selectedGrandChild.Command.Title}.");
-            _mainWindow.ExecuteCommandExternally(selectedGrandChild.Command, string.Empty, "radial-menu-grandchild");
+            _ = ExecuteCommandAfterForegroundRestoreAsync(selectedGrandChild.Command, "radial-menu-grandchild");
             return;
         }
 
@@ -232,7 +285,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         {
             _isExecuting = true;
             HostAssets.AppendLog($"Radial menu executing child: index={selectedChild.Index}, command={selectedChild.Command.Title}.");
-            _mainWindow.ExecuteCommandExternally(selectedChild.Command, string.Empty, "radial-menu-child");
+            _ = ExecuteCommandAfterForegroundRestoreAsync(selectedChild.Command, "radial-menu-child");
             return;
         }
 
@@ -256,12 +309,48 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
 
         _isExecuting = true;
         HostAssets.AppendLog($"Radial menu executing: index={selected.Index}, command={selected.Command.Title}.");
-        _mainWindow.ExecuteCommandExternally(selected.Command, string.Empty, "radial-menu");
+        _ = ExecuteCommandAfterForegroundRestoreAsync(selected.Command, "radial-menu");
+    }
+
+    private async Task ExecuteCommandAfterForegroundRestoreAsync(CommandItem command, string launchSource)
+    {
+        await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+
+        if (_previousForegroundWindow != IntPtr.Zero)
+        {
+            var restored = RadialMenuNativeMethods.SetForegroundWindow(_previousForegroundWindow);
+            HostAssets.AppendLog($"Radial menu restore foreground: restored={restored}, {DescribeWindow(_previousForegroundWindow)}.");
+        }
+
+        await Task.Delay(120);
+        var currentForeground = RadialMenuNativeMethods.GetForegroundWindow();
+        HostAssets.AppendLog($"Radial menu execute ready: foreground={DescribeWindow(currentForeground)}, source={launchSource}, command={command.Title}.");
+        var input = await SelectionCaptureService.CaptureSelectedInputAsync();
+        HostAssets.AppendLog($"Radial menu execute captured input length={input.Length}.");
+        _mainWindow.ExecuteCommandExternally(command, input, launchSource);
+    }
+
+    private static string DescribeWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return "hwnd=0x0";
+        }
+
+        var titleBuilder = new StringBuilder(256);
+        _ = RadialMenuNativeMethods.GetWindowText(hwnd, titleBuilder, titleBuilder.Capacity);
+        _ = RadialMenuNativeMethods.GetWindowThreadProcessId(hwnd, out var processId);
+        return $"hwnd=0x{hwnd.ToInt64():X}, pid={processId}, title=\"{titleBuilder}\"";
     }
 
     protected override void OnDeactivated(EventArgs e)
     {
         base.OnDeactivated(e);
+        if (_editModeLocked || _editInteractionActive)
+        {
+            return;
+        }
+
         _selectionTimer.Stop();
         Hide();
     }
@@ -270,6 +359,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
     {
         var effectiveRadius = Math.Clamp(radius - 10, 82, 96);
         Items.Clear();
+        OuterItems.Clear();
         ChildItems.Clear();
         GrandChildItems.Clear();
         ClearChildSelection();
@@ -280,17 +370,32 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         var items = _mainWindow.GetRadialMenuItems(_currentPageId);
         var page = _pages.FirstOrDefault(item => item.Id.Equals(_currentPageId, StringComparison.OrdinalIgnoreCase));
         PageTitle = page?.Name ?? "燕环";
+        UpdateCenterText();
         var center = new System.Windows.Point(Width / 2, Height / 2);
-        BuildSeparators(MainSeparators, center.X, center.Y, 34, 135);
-        for (var index = 0; index < 8; index++)
+        BuildSeparators(MainSeparators, center.X, center.Y, 34, 135, RadialMenuSettings.InnerSlotCount);
+        BuildSeparators(OuterSeparators, center.X, center.Y, 135, 222, RadialMenuSettings.OuterSlotCount);
+        for (var index = 0; index < RadialMenuSettings.InnerSlotCount; index++)
         {
             var angle = (-90 + index * 45) * Math.PI / 180.0;
-            var x = center.X + Math.Cos(angle) * effectiveRadius - 42;
-            var y = center.Y + Math.Sin(angle) * effectiveRadius - 33;
+            var x = center.X + Math.Cos(angle) * effectiveRadius - 38;
+            var y = center.Y + Math.Sin(angle) * effectiveRadius - 30;
             var item = items.ElementAtOrDefault(index);
             var command = item?.Command;
             var childPageId = item?.ChildPageId ?? string.Empty;
-            Items.Add(new RadialMenuItemViewModel(index, command, childPageId, ResolvePageName(childPageId), x, y));
+            Items.Add(new RadialMenuItemViewModel(_currentPageId, index, command, childPageId, ResolvePageName(childPageId), x, y, angle * 180.0 / Math.PI, RadialMenuRing.Inner));
+        }
+
+        for (var offset = 0; offset < RadialMenuSettings.OuterSlotCount; offset++)
+        {
+            var index = RadialMenuSettings.InnerSlotCount + offset;
+            var angleDegrees = -90 + offset * 22.5;
+            var angle = angleDegrees * Math.PI / 180.0;
+            var x = center.X + Math.Cos(angle) * 178 - 31;
+            var y = center.Y + Math.Sin(angle) * 178 - 25;
+            var item = items.ElementAtOrDefault(index);
+            var command = item?.Command;
+            var childPageId = item?.ChildPageId ?? string.Empty;
+            OuterItems.Add(new RadialMenuItemViewModel(_currentPageId, index, command, childPageId, ResolvePageName(childPageId), x, y, angleDegrees, RadialMenuRing.Outer));
         }
     }
 
@@ -311,23 +416,43 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         var dx = cursorPoint.X - center.X;
         var dy = cursorPoint.Y - center.Y;
         var settings = AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings();
+        UpdateEditModeState();
         var distance = Math.Sqrt(dx * dx + dy * dy);
         if (distance < settings.DeadZonePixels)
         {
             SetSelectedItem(null);
             ClearChildRing();
-            ActiveTitle = "取消";
+            ActiveTitle = _editModeLocked ? "点击中心 X 关闭" : "取消";
             return;
         }
 
         var angle = Math.Atan2(dy, dx) * 180.0 / Math.PI;
+        if (distance > 135)
+        {
+            var outerIndex = ((int)Math.Round((angle + 90) / 22.5) % RadialMenuSettings.OuterSlotCount + RadialMenuSettings.OuterSlotCount) % RadialMenuSettings.OuterSlotCount;
+            var outerItem = OuterItems.ElementAtOrDefault(outerIndex);
+            SetSelectedItem(outerItem);
+            ActiveTitle = ResolveActiveTitle(outerItem?.Command?.Title, outerItem?.Command == null);
+            if (!string.IsNullOrWhiteSpace(outerItem?.ChildPageId))
+            {
+                ActiveTitle = _editModeLocked ? $"松开可编辑：{outerItem.ChildPageTitle}" : $"展开：{outerItem.ChildPageTitle}";
+                BuildChildRing(outerItem);
+            }
+            else
+            {
+                ClearChildRing();
+            }
+
+            return;
+        }
+
         var index = ((int)Math.Round((angle + 90) / 45.0) % 8 + 8) % 8;
         var item = Items.ElementAtOrDefault(index);
         SetSelectedItem(item);
-        ActiveTitle = item?.Command?.Title ?? "空槽位";
+        ActiveTitle = ResolveActiveTitle(item?.Command?.Title, item?.Command == null);
         if (!string.IsNullOrWhiteSpace(item?.ChildPageId))
         {
-            ActiveTitle = $"展开：{item.ChildPageTitle}";
+            ActiveTitle = _editModeLocked ? $"松开可编辑：{item.ChildPageTitle}" : $"展开：{item.ChildPageTitle}";
             BuildChildRing(item);
         }
         else
@@ -360,7 +485,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         if (distance < 26)
         {
             ClearChildSelection();
-            ActiveTitle = $"{ChildRingTitle} · 中心取消";
+            ActiveTitle = _editModeLocked ? "点击中心 X 关闭" : "返回上一级";
             return true;
         }
 
@@ -368,10 +493,10 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         var index = ((int)Math.Round((angle + 90) / 45.0) % 8 + 8) % 8;
         var item = ChildItems.ElementAtOrDefault(index);
         SetSelectedChildItem(item);
-        ActiveTitle = item?.Command?.Title ?? "子环空槽位";
+        ActiveTitle = ResolveActiveTitle(item?.Command?.Title, item?.Command == null, isChildRing: true);
         if (!string.IsNullOrWhiteSpace(item?.ChildPageId))
         {
-            ActiveTitle = $"展开：{item.ChildPageTitle}";
+            ActiveTitle = _editModeLocked ? $"松开可编辑：{item.ChildPageTitle}" : $"展开：{item.ChildPageTitle}";
             BuildGrandChildRing(item);
         }
         else
@@ -395,7 +520,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         if (distance < 24)
         {
             ClearGrandChildSelection();
-            ActiveTitle = $"{GrandChildRingTitle} · 中心取消";
+            ActiveTitle = _editModeLocked ? "点击中心 X 关闭" : "返回上一级";
             return true;
         }
 
@@ -403,7 +528,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         var index = ((int)Math.Round((angle + 90) / 45.0) % 8 + 8) % 8;
         var item = GrandChildItems.ElementAtOrDefault(index);
         SetSelectedGrandChildItem(item);
-        ActiveTitle = item?.Command?.Title ?? "二级子环空槽位";
+        ActiveTitle = ResolveActiveTitle(item?.Command?.Title, item?.Command == null, isGrandChildRing: true);
         return true;
     }
 
@@ -476,6 +601,23 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void SetSelectedForItem(RadialMenuItemViewModel item)
+    {
+        if (item.Ring is RadialMenuRing.Child)
+        {
+            SetSelectedChildItem(item);
+            return;
+        }
+
+        if (item.Ring is RadialMenuRing.GrandChild)
+        {
+            SetSelectedGrandChildItem(item);
+            return;
+        }
+
+        SetSelectedItem(item);
+    }
+
     private void BuildChildRing(RadialMenuItemViewModel parent)
     {
         if (string.IsNullOrWhiteSpace(parent.ChildPageId))
@@ -485,7 +627,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         }
 
         var items = _mainWindow.GetRadialMenuItems(parent.ChildPageId);
-        var angle = (-90 + parent.Index * 45) * Math.PI / 180.0;
+        var angle = parent.AngleDegrees * Math.PI / 180.0;
         var center = new System.Windows.Point(Width / 2, Height / 2);
         _childRingCenterX = center.X + Math.Cos(angle) * 250;
         _childRingCenterY = center.Y + Math.Sin(angle) * 250;
@@ -497,19 +639,19 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(ChildRingCenterEllipseY));
         OnPropertyChanged(nameof(ChildRingTitleX));
         OnPropertyChanged(nameof(ChildRingTitleY));
-        BuildSeparators(ChildSeparators, _childRingCenterX, _childRingCenterY, 32, 120);
+        BuildSeparators(ChildSeparators, _childRingCenterX, _childRingCenterY, 32, 120, RadialMenuSettings.InnerSlotCount);
 
         ChildItems.Clear();
         const double radius = 78;
         for (var index = 0; index < 8; index++)
         {
             var childAngle = (-90 + index * 45) * Math.PI / 180.0;
-            var x = _childRingCenterX + Math.Cos(childAngle) * radius - 38;
-            var y = _childRingCenterY + Math.Sin(childAngle) * radius - 30;
+            var x = _childRingCenterX + Math.Cos(childAngle) * radius - 34;
+            var y = _childRingCenterY + Math.Sin(childAngle) * radius - 27;
             var item = items.ElementAtOrDefault(index);
             var command = item?.Command;
             var childPageId = item?.ChildPageId ?? string.Empty;
-            ChildItems.Add(new RadialMenuItemViewModel(index, command, childPageId, ResolvePageName(childPageId), x, y));
+            ChildItems.Add(new RadialMenuItemViewModel(parent.ChildPageId, index, command, childPageId, ResolvePageName(childPageId), x, y, childAngle * 180.0 / Math.PI, RadialMenuRing.Child));
         }
 
         HasChildRing = true;
@@ -524,10 +666,10 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         }
 
         var items = _mainWindow.GetRadialMenuItems(parent.ChildPageId);
-        var angle = (-90 + parent.Index * 45) * Math.PI / 180.0;
-        _grandChildRingCenterX = _childRingCenterX + Math.Cos(angle) * 220;
-        _grandChildRingCenterY = _childRingCenterY + Math.Sin(angle) * 220;
-        ClampRingCenter(ref _grandChildRingCenterX, ref _grandChildRingCenterY, 124);
+        var angle = parent.AngleDegrees * Math.PI / 180.0;
+        _grandChildRingCenterX = _childRingCenterX + Math.Cos(angle) * 216;
+        _grandChildRingCenterY = _childRingCenterY + Math.Sin(angle) * 216;
+        ClampRingCenter(ref _grandChildRingCenterX, ref _grandChildRingCenterY, 112);
         GrandChildRingTitle = parent.ChildPageTitle;
         OnPropertyChanged(nameof(GrandChildRingEllipseX));
         OnPropertyChanged(nameof(GrandChildRingEllipseY));
@@ -535,19 +677,19 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(GrandChildRingCenterEllipseY));
         OnPropertyChanged(nameof(GrandChildRingTitleX));
         OnPropertyChanged(nameof(GrandChildRingTitleY));
-        BuildSeparators(GrandChildSeparators, _grandChildRingCenterX, _grandChildRingCenterY, 29, 110);
+        BuildSeparators(GrandChildSeparators, _grandChildRingCenterX, _grandChildRingCenterY, 27, 98, RadialMenuSettings.InnerSlotCount);
 
         GrandChildItems.Clear();
-        const double radius = 72;
+        const double radius = 64;
         for (var index = 0; index < 8; index++)
         {
             var childAngle = (-90 + index * 45) * Math.PI / 180.0;
-            var x = _grandChildRingCenterX + Math.Cos(childAngle) * radius - 36;
-            var y = _grandChildRingCenterY + Math.Sin(childAngle) * radius - 28;
+            var x = _grandChildRingCenterX + Math.Cos(childAngle) * radius - 31;
+            var y = _grandChildRingCenterY + Math.Sin(childAngle) * radius - 25;
             var item = items.ElementAtOrDefault(index);
             var command = item?.Command;
             var childPageId = item?.ChildPageId ?? string.Empty;
-            GrandChildItems.Add(new RadialMenuItemViewModel(index, command, childPageId, ResolvePageName(childPageId), x, y));
+            GrandChildItems.Add(new RadialMenuItemViewModel(parent.ChildPageId, index, command, childPageId, ResolvePageName(childPageId), x, y, childAngle * 180.0 / Math.PI, RadialMenuRing.GrandChild));
         }
 
         HasGrandChildRing = true;
@@ -620,12 +762,13 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private static void BuildSeparators(ObservableCollection<RadialSeparatorViewModel> target, double centerX, double centerY, double innerRadius, double outerRadius)
+    private static void BuildSeparators(ObservableCollection<RadialSeparatorViewModel> target, double centerX, double centerY, double innerRadius, double outerRadius, int count)
     {
         target.Clear();
-        for (var index = 0; index < 8; index++)
+        var step = 360.0 / count;
+        for (var index = 0; index < count; index++)
         {
-            var angle = (-112.5 + index * 45) * Math.PI / 180.0;
+            var angle = (-90 - step / 2 + index * step) * Math.PI / 180.0;
             target.Add(new RadialSeparatorViewModel(
                 centerX + Math.Cos(angle) * innerRadius,
                 centerY + Math.Sin(angle) * innerRadius,
@@ -640,6 +783,668 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         y = Math.Clamp(y, radius + 8, Height - radius - 8);
     }
 
+    private void RadialMenuWindow_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_editModeLocked && IsPointInCenter(e.GetPosition(this)))
+        {
+            _editModeLocked = false;
+            _selectionTimer.Stop();
+            Hide();
+            e.Handled = true;
+            return;
+        }
+
+        ReturnToParentPage();
+    }
+
+    private void RadialMenuWindow_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_editModeLocked)
+        {
+            return;
+        }
+
+        if (TryRenameChildPageCenter(e.GetPosition(this)))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        OpenEditMenuForCurrentSelection();
+        e.Handled = true;
+    }
+
+    private void RadialSlot_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_editModeLocked || sender is not FrameworkElement { DataContext: RadialMenuItemViewModel item })
+        {
+            return;
+        }
+
+        SetSelectedForItem(item);
+        OpenEditMenuForTarget(new RadialEditTarget(item.OwnerPageId, item.Index, item));
+        e.Handled = true;
+    }
+
+    private void RadialSlot_MouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_editModeLocked ||
+            e.LeftButton != MouseButtonState.Pressed ||
+            sender is not FrameworkElement { DataContext: RadialMenuItemViewModel item })
+        {
+            return;
+        }
+
+        _dragSourceItem = item;
+        DragDrop.DoDragDrop((DependencyObject)sender, item, System.Windows.DragDropEffects.Move);
+    }
+
+    private void RadialSlot_DragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!_editModeLocked)
+        {
+            e.Effects = System.Windows.DragDropEffects.None;
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Data.GetDataPresent(typeof(RadialMenuItemViewModel)))
+        {
+            e.Effects = System.Windows.DragDropEffects.Move;
+            e.Handled = true;
+            return;
+        }
+
+        e.Effects = TryGetDroppedFilePaths(e, out _)
+            ? System.Windows.DragDropEffects.Copy
+            : System.Windows.DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void RadialSlot_Drop(object sender, System.Windows.DragEventArgs e)
+    {
+        if (!_editModeLocked ||
+            sender is not FrameworkElement { DataContext: RadialMenuItemViewModel target })
+        {
+            return;
+        }
+
+        if (e.Data.GetData(typeof(RadialMenuItemViewModel)) is RadialMenuItemViewModel source)
+        {
+            MoveRadialSlot(new RadialEditTarget(source.OwnerPageId, source.Index, source), new RadialEditTarget(target.OwnerPageId, target.Index, target));
+            _dragSourceItem = null;
+            e.Handled = true;
+            return;
+        }
+
+        if (TryGetDroppedFilePaths(e, out var filePaths))
+        {
+            AddDroppedPathToRadialSlot(new RadialEditTarget(target.OwnerPageId, target.Index, target), filePaths);
+        }
+
+        e.Handled = true;
+    }
+
+    private static bool TryGetDroppedFilePaths(System.Windows.DragEventArgs e, out string[] filePaths)
+    {
+        filePaths = [];
+        if (!e.Data.GetDataPresent(System.Windows.DataFormats.FileDrop))
+        {
+            return false;
+        }
+
+        if (e.Data.GetData(System.Windows.DataFormats.FileDrop) is not string[] droppedPaths || droppedPaths.Length == 0)
+        {
+            return false;
+        }
+
+        filePaths = droppedPaths
+            .Where(path => !string.IsNullOrWhiteSpace(path) && (File.Exists(path) || Directory.Exists(path)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return filePaths.Length > 0;
+    }
+
+    private bool IsPointInCenter(System.Windows.Point point)
+    {
+        var center = new System.Windows.Point(Width / 2, Height / 2);
+        var dx = point.X - center.X;
+        var dy = point.Y - center.Y;
+        return Math.Sqrt(dx * dx + dy * dy) <= 40;
+    }
+
+    private bool TryRenameChildPageCenter(System.Windows.Point point)
+    {
+        if (HasGrandChildRing && IsPointNear(point, _grandChildRingCenterX, _grandChildRingCenterY, 34) && _selectedChildItem?.HasChildPage == true)
+        {
+            RenameRadialPage(_selectedChildItem.ChildPageId);
+            return true;
+        }
+
+        if (HasChildRing && IsPointNear(point, _childRingCenterX, _childRingCenterY, 40) && _selectedItem?.HasChildPage == true)
+        {
+            RenameRadialPage(_selectedItem.ChildPageId);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsPointNear(System.Windows.Point point, double centerX, double centerY, double radius)
+    {
+        var dx = point.X - centerX;
+        var dy = point.Y - centerY;
+        return Math.Sqrt(dx * dx + dy * dy) <= radius;
+    }
+
+    private void RenameRadialPage(string pageId)
+    {
+        var settings = AppSettingsStore.Load();
+        settings.RadialMenu ??= new RadialMenuSettings();
+        settings.RadialMenu.Pages ??= [];
+        var page = settings.RadialMenu.Pages.FirstOrDefault(item => item.Id.Equals(pageId, StringComparison.OrdinalIgnoreCase));
+        if (page == null)
+        {
+            return;
+        }
+
+        var dialog = new SimpleTextInputWindow("重命名子环", "输入新的子环名称。", page.Name)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var name = dialog.ValueText.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        page.Name = name;
+        PersistRadialSettings(settings);
+        BuildItems((settings.RadialMenu ?? new RadialMenuSettings()).RadiusPixels);
+        ActiveTitle = $"已重命名：{name}";
+    }
+
+    private void UpdateEditModeState()
+    {
+        if (!_editModeLocked && !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            CenterPrimaryText = PageTitle;
+            return;
+        }
+
+        CenterPrimaryText = "X";
+    }
+
+    private void UpdateCenterText()
+    {
+        CenterPrimaryText = _editModeLocked ? "X" : PageTitle;
+    }
+
+    private string ResolveActiveTitle(string? commandTitle, bool isEmptySlot, bool isChildRing = false, bool isGrandChildRing = false)
+    {
+        if (!_editModeLocked && !Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            return commandTitle ?? (isGrandChildRing ? "松开可新建" : isChildRing ? "松开可新建" : "松开可新建");
+        }
+
+        if (isEmptySlot)
+        {
+            return "松开可新建";
+        }
+
+        return $"松开可修改：{commandTitle}";
+    }
+
+    private void OpenEditMenuForCurrentSelection()
+    {
+        var target = ResolveCurrentEditTarget();
+        if (target == null)
+        {
+            ActiveTitle = "点击中心 X 关闭";
+            _selectionTimer.Start();
+            return;
+        }
+
+        OpenEditMenuForTarget(target);
+    }
+
+    private void OpenEditMenuForTarget(RadialEditTarget target)
+    {
+        _editInteractionActive = true;
+        var menu = BuildEditContextMenu(target);
+        menu.Closed += (_, _) =>
+        {
+            _editInteractionActive = false;
+            if (IsVisible)
+            {
+                Activate();
+                _selectionTimer.Start();
+            }
+        };
+
+        menu.Placement = PlacementMode.AbsolutePoint;
+        var cursor = Forms.Cursor.Position;
+        menu.HorizontalOffset = cursor.X;
+        menu.VerticalOffset = cursor.Y;
+        menu.IsOpen = true;
+        ActiveTitle = "编辑当前槽位";
+        HostAssets.AppendLog($"Radial edit menu opened: page={target.PageId}, index={target.Index + 1}, hasCommand={target.Item.Command != null}, hasChild={target.Item.HasChildPage}.");
+    }
+
+    private ContextMenu BuildEditContextMenu(RadialEditTarget target)
+    {
+        var menu = new ContextMenu();
+
+        var addCommandItem = new MenuItem { Header = "添加扩展/应用/系统项" };
+        addCommandItem.Click += (_, _) => AddCommandToTarget(target);
+        menu.Items.Add(addCommandItem);
+
+        var setSimulatedKeyItem = new MenuItem { Header = "设置模拟按键" };
+        setSimulatedKeyItem.Click += (_, _) => SetSimulatedKeyForTarget(target);
+        menu.Items.Add(setSimulatedKeyItem);
+
+        var clearCommandItem = new MenuItem
+        {
+            Header = "删除扩展/应用/系统项",
+            IsEnabled = target.Item.Command != null
+        };
+        clearCommandItem.Click += (_, _) => ClearCommandFromTarget(target);
+        menu.Items.Add(clearCommandItem);
+
+        var cutItem = new MenuItem
+        {
+            Header = "剪切槽位",
+            IsEnabled = target.Item.Command != null || target.Item.HasChildPage
+        };
+        cutItem.Click += (_, _) => CutRadialSlot(target);
+        menu.Items.Add(cutItem);
+
+        var pasteItem = new MenuItem
+        {
+            Header = "粘贴到此槽位",
+            IsEnabled = _cutSlotPayload != null
+        };
+        pasteItem.Click += (_, _) => PasteRadialSlot(target);
+        menu.Items.Add(pasteItem);
+
+        menu.Items.Add(new Separator());
+
+        var addChildItem = new MenuItem
+        {
+            Header = "添加子环",
+            IsEnabled = !target.Item.HasChildPage
+        };
+        addChildItem.Click += (_, _) => AddChildPageToTarget(target);
+        menu.Items.Add(addChildItem);
+
+        var clearChildItem = new MenuItem
+        {
+            Header = "删除子环",
+            IsEnabled = target.Item.HasChildPage
+        };
+        clearChildItem.Click += (_, _) => ClearChildPageFromTarget(target);
+        menu.Items.Add(clearChildItem);
+
+        return menu;
+    }
+
+    private void AddCommandToTarget(RadialEditTarget target)
+    {
+        var picker = new RadialSlotPickerWindow(
+            keyword => _mainWindow.GetRadialMenuCommandCandidates(keyword),
+            allowAddChildPage: !target.Item.HasChildPage,
+            createExtension: owner => _mainWindow.OpenAddExtensionForSlot(owner))
+        {
+            Owner = this
+        };
+        if (picker.ShowDialog() != true)
+        {
+            return;
+        }
+
+        if (picker.SelectedAction == RadialSlotPickerWindow.PickerAction.AddChildPage)
+        {
+            AddChildPageToTarget(target);
+            return;
+        }
+
+        if (picker.SelectedCommand == null)
+        {
+            return;
+        }
+
+        SaveRadialSlotCommand(target.PageId, target.Index, picker.SelectedCommand.ExtensionId, string.Empty);
+        HostAssets.AppendLog($"Radial edit assigned command: page={target.PageId}, index={target.Index + 1}, command={picker.SelectedCommand.Title}.");
+    }
+
+    private void SetSimulatedKeyForTarget(RadialEditTarget target)
+    {
+        const string simulatedPrefix = "keysim::";
+        var currentExtensionId = target.Item.Command?.ExtensionId ?? string.Empty;
+        var initialShortcut = currentExtensionId.StartsWith(simulatedPrefix, StringComparison.OrdinalIgnoreCase)
+            ? currentExtensionId[simulatedPrefix.Length..]
+            : string.Empty;
+        var initialDisplayName = target.Item.Command?.Title ?? string.Empty;
+        var dialog = new HotkeyCaptureWindow(
+            "模拟按键",
+            "录制要在此槽位执行的组合键，并设置轮盘里显示的名称。",
+            initialShortcut,
+            initialDisplayName,
+            allowEmpty: false,
+            allowDoubleTap: false,
+            allowModifierless: true)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var shortcut = dialog.ShortcutText.Trim();
+        if (string.IsNullOrWhiteSpace(shortcut))
+        {
+            return;
+        }
+
+        var displayTitle = string.IsNullOrWhiteSpace(dialog.DisplayNameText) ? shortcut : dialog.DisplayNameText.Trim();
+        SaveRadialSlotCommand(target.PageId, target.Index, $"{simulatedPrefix}{shortcut}", displayTitle);
+        HostAssets.AppendLog($"Radial edit assigned simulated key: page={target.PageId}, index={target.Index + 1}, shortcut={shortcut}, displayTitle={displayTitle}.");
+    }
+
+    private void ClearCommandFromTarget(RadialEditTarget target)
+    {
+        SaveRadialSlotCommand(target.PageId, target.Index, null, null);
+    }
+
+    private void CutRadialSlot(RadialEditTarget target)
+    {
+        var payload = ReadRadialSlotPayload(target.PageId, target.Index);
+        if (payload == null)
+        {
+            return;
+        }
+
+        _cutSlotPayload = payload;
+        WriteRadialSlotPayload(target.PageId, target.Index, new RadialSlotPayload(null, null, null));
+        ActiveTitle = "已剪切槽位，右键目标槽位粘贴";
+    }
+
+    private void PasteRadialSlot(RadialEditTarget target)
+    {
+        if (_cutSlotPayload == null)
+        {
+            return;
+        }
+
+        WriteRadialSlotPayload(target.PageId, target.Index, _cutSlotPayload);
+        _cutSlotPayload = null;
+        ActiveTitle = "已粘贴槽位";
+    }
+
+    private void MoveRadialSlot(RadialEditTarget source, RadialEditTarget target)
+    {
+        if (source.PageId.Equals(target.PageId, StringComparison.OrdinalIgnoreCase) && source.Index == target.Index)
+        {
+            return;
+        }
+
+        var sourcePayload = ReadRadialSlotPayload(source.PageId, source.Index);
+        var targetPayload = ReadRadialSlotPayload(target.PageId, target.Index);
+        if (sourcePayload == null)
+        {
+            return;
+        }
+
+        WriteRadialSlotPayload(target.PageId, target.Index, sourcePayload, refresh: false);
+        WriteRadialSlotPayload(source.PageId, source.Index, targetPayload ?? new RadialSlotPayload(null, null, null));
+        ActiveTitle = "已移动槽位";
+    }
+
+    private void AddDroppedPathToRadialSlot(RadialEditTarget target, IEnumerable<string> filePaths)
+    {
+        var firstPath = filePaths.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(firstPath))
+        {
+            return;
+        }
+
+        var currentPayload = ReadRadialSlotPayload(target.PageId, target.Index);
+        var hasExisting = !string.IsNullOrWhiteSpace(currentPayload?.ExtensionId) ||
+                          !string.IsNullOrWhiteSpace(currentPayload?.ChildPageId);
+        if (hasExisting)
+        {
+            var confirm = System.Windows.MessageBox.Show(
+                this,
+                $"槽位 {target.Index + 1} 已有内容，是否用“{Path.GetFileName(firstPath)}”替换？",
+                "替换轮盘槽位",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.Yes)
+            {
+                ActiveTitle = "已取消替换";
+                return;
+            }
+        }
+
+        try
+        {
+            var command = _mainWindow.CreateQuickOpenExtensionFromPath(firstPath);
+            _mainWindow.MarkExtensionAsNewFromQuickPanel(command);
+            WriteRadialSlotPayload(
+                target.PageId,
+                target.Index,
+                new RadialSlotPayload(command.ExtensionId, null, null));
+            ActiveTitle = $"已添加：{command.Title}";
+            HostAssets.AppendLog($"Radial dropped path assigned: page={target.PageId}, index={target.Index + 1}, path={firstPath}, command={command.ExtensionId}.");
+        }
+        catch (Exception ex)
+        {
+            ActiveTitle = "拖拽添加失败";
+            _mainWindow.SyncStatus = $"拖拽添加到轮盘失败：{Path.GetFileName(firstPath)}，{ex.Message}";
+            HostAssets.AppendLog($"Radial dropped path assign failed: page={target.PageId}, index={target.Index + 1}, path={firstPath}, error={ex}");
+        }
+    }
+
+    private void AddChildPageToTarget(RadialEditTarget target)
+    {
+        var settings = AppSettingsStore.Load();
+        settings.RadialMenu ??= new RadialMenuSettings();
+        settings.RadialMenu.Pages ??= [];
+        var page = settings.RadialMenu.Pages.FirstOrDefault(item => item.Id.Equals(target.PageId, StringComparison.OrdinalIgnoreCase));
+        if (page == null)
+        {
+            return;
+        }
+
+        EnsureRadialPageSlotCapacity(page);
+
+        if (!string.IsNullOrWhiteSpace(page.ChildPageIds[target.Index]))
+        {
+            return;
+        }
+
+        var childPage = new RadialMenuPageSettings
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Name = $"子环 {target.Index + 1}"
+        };
+        settings.RadialMenu.Pages.Add(childPage);
+        page.ChildPageIds[target.Index] = childPage.Id;
+        PersistRadialSettings(settings);
+        RefreshFromSettings(target.PageId, target.Index, ensureChildRingVisible: true);
+    }
+
+    private void ClearChildPageFromTarget(RadialEditTarget target)
+    {
+        var settings = AppSettingsStore.Load();
+        settings.RadialMenu ??= new RadialMenuSettings();
+        settings.RadialMenu.Pages ??= [];
+        var page = settings.RadialMenu.Pages.FirstOrDefault(item => item.Id.Equals(target.PageId, StringComparison.OrdinalIgnoreCase));
+        if (page == null)
+        {
+            return;
+        }
+
+        EnsureRadialPageSlotCapacity(page);
+
+        var removedId = page.ChildPageIds[target.Index];
+        page.ChildPageIds[target.Index] = null;
+        if (!string.IsNullOrWhiteSpace(removedId) && settings.RadialMenu.Pages.Count > 1)
+        {
+            settings.RadialMenu.Pages.RemoveAll(item => item.Id.Equals(removedId, StringComparison.OrdinalIgnoreCase));
+            foreach (var item in settings.RadialMenu.Pages)
+            {
+                item.ChildPageIds = (item.ChildPageIds ?? [])
+                    .Select(id => string.Equals(id, removedId, StringComparison.OrdinalIgnoreCase) ? null : id)
+                    .ToList();
+            }
+        }
+
+        PersistRadialSettings(settings);
+        RefreshFromSettings(target.PageId, target.Index, ensureChildRingVisible: false);
+    }
+
+    private void SaveRadialSlotCommand(string pageId, int index, string? extensionId, string? displayTitle)
+    {
+        var settings = AppSettingsStore.Load();
+        settings.RadialMenu ??= new RadialMenuSettings();
+        settings.RadialMenu.Pages ??= [];
+        var page = settings.RadialMenu.Pages.FirstOrDefault(item => item.Id.Equals(pageId, StringComparison.OrdinalIgnoreCase));
+        if (page == null)
+        {
+            return;
+        }
+
+        page.Slots ??= [];
+        EnsureRadialPageSlotCapacity(page);
+
+        page.Slots[index] = string.IsNullOrWhiteSpace(extensionId) ? null : extensionId.Trim();
+        page.SlotTitles[index] = string.IsNullOrWhiteSpace(displayTitle) ? null : displayTitle.Trim();
+        PersistRadialSettings(settings);
+        RefreshFromSettings(pageId, index, ensureChildRingVisible: !string.IsNullOrWhiteSpace(page.ChildPageIds?.ElementAtOrDefault(index)));
+    }
+
+    private RadialSlotPayload? ReadRadialSlotPayload(string pageId, int index)
+    {
+        var settings = AppSettingsStore.Load();
+        var page = settings.RadialMenu?.Pages?.FirstOrDefault(item => item.Id.Equals(pageId, StringComparison.OrdinalIgnoreCase));
+        if (page == null || index < 0 || index >= RadialMenuSettings.TotalSlotCount)
+        {
+            return null;
+        }
+
+        EnsureRadialPageSlotCapacity(page);
+        return new RadialSlotPayload(
+            page.Slots.ElementAtOrDefault(index),
+            page.SlotTitles.ElementAtOrDefault(index),
+            page.ChildPageIds.ElementAtOrDefault(index));
+    }
+
+    private void WriteRadialSlotPayload(string pageId, int index, RadialSlotPayload payload, bool refresh = true)
+    {
+        var settings = AppSettingsStore.Load();
+        settings.RadialMenu ??= new RadialMenuSettings();
+        settings.RadialMenu.Pages ??= [];
+        var page = settings.RadialMenu.Pages.FirstOrDefault(item => item.Id.Equals(pageId, StringComparison.OrdinalIgnoreCase));
+        if (page == null || index < 0 || index >= RadialMenuSettings.TotalSlotCount)
+        {
+            return;
+        }
+
+        EnsureRadialPageSlotCapacity(page);
+        page.Slots[index] = string.IsNullOrWhiteSpace(payload.ExtensionId) ? null : payload.ExtensionId.Trim();
+        page.SlotTitles[index] = string.IsNullOrWhiteSpace(payload.DisplayTitle) ? null : payload.DisplayTitle.Trim();
+        page.ChildPageIds[index] = string.IsNullOrWhiteSpace(payload.ChildPageId) ? null : payload.ChildPageId.Trim();
+        PersistRadialSettings(settings);
+        if (refresh)
+        {
+            RefreshFromSettings(pageId, index, ensureChildRingVisible: !string.IsNullOrWhiteSpace(page.ChildPageIds[index]));
+        }
+    }
+
+    private static void EnsureRadialPageSlotCapacity(RadialMenuPageSettings page)
+    {
+        page.Slots ??= [];
+        page.SlotTitles ??= [];
+        page.ChildPageIds ??= [];
+        while (page.Slots.Count < RadialMenuSettings.TotalSlotCount) page.Slots.Add(null);
+        while (page.SlotTitles.Count < RadialMenuSettings.TotalSlotCount) page.SlotTitles.Add(null);
+        while (page.ChildPageIds.Count < RadialMenuSettings.TotalSlotCount) page.ChildPageIds.Add(null);
+    }
+
+    private void PersistRadialSettings(AppSettings settings)
+    {
+        AppSettingsStore.Save(settings);
+        _mainWindow.RefreshAppSettings();
+        _mainWindow.NotifyQuickPanelSettingsChanged("radial-inline-edit");
+        _pages = _mainWindow.GetRadialMenuPages().ToList();
+    }
+
+    private void RefreshFromSettings(string pageId, int index, bool ensureChildRingVisible)
+    {
+        BuildItems((AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings()).RadiusPixels);
+        var target = Items.FirstOrDefault(item => item.OwnerPageId.Equals(pageId, StringComparison.OrdinalIgnoreCase) && item.Index == index)
+            ?? OuterItems.FirstOrDefault(item => item.OwnerPageId.Equals(pageId, StringComparison.OrdinalIgnoreCase) && item.Index == index)
+            ?? ChildItems.FirstOrDefault(item => item.OwnerPageId.Equals(pageId, StringComparison.OrdinalIgnoreCase) && item.Index == index)
+            ?? GrandChildItems.FirstOrDefault(item => item.OwnerPageId.Equals(pageId, StringComparison.OrdinalIgnoreCase) && item.Index == index);
+        if (target != null)
+        {
+            if (pageId.Equals(_currentPageId, StringComparison.OrdinalIgnoreCase))
+            {
+                SetSelectedItem(target);
+            }
+
+            if (ensureChildRingVisible && target.HasChildPage)
+            {
+                BuildChildRing(target);
+            }
+        }
+
+        UpdateEditModeState();
+        ActiveTitle = "编辑已保存，点击中心 X 关闭";
+        _selectionTimer.Start();
+    }
+
+    private RadialEditTarget? ResolveCurrentEditTarget()
+    {
+        if (_selectedGrandChildItem != null)
+        {
+            return new RadialEditTarget(_selectedGrandChildItem.OwnerPageId, _selectedGrandChildItem.Index, _selectedGrandChildItem);
+        }
+
+        if (_selectedChildItem != null)
+        {
+            return new RadialEditTarget(_selectedChildItem.OwnerPageId, _selectedChildItem.Index, _selectedChildItem);
+        }
+
+        if (_selectedItem != null)
+        {
+            return new RadialEditTarget(_selectedItem.OwnerPageId, _selectedItem.Index, _selectedItem);
+        }
+
+        return null;
+    }
+
+    private bool TryHandleEmptySlotRelease(RadialMenuItemViewModel? item)
+    {
+        if (item == null || item.Command != null || item.HasChildPage)
+        {
+            return false;
+        }
+
+        _editModeLocked = true;
+        UpdateEditModeState();
+        AddCommandToTarget(new RadialEditTarget(item.OwnerPageId, item.Index, item));
+        return true;
+    }
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
@@ -652,17 +1457,26 @@ public sealed class RadialMenuItemViewModel : INotifyPropertyChanged
 {
     private bool _isSelected;
 
-    public RadialMenuItemViewModel(int index, CommandItem? command, string childPageId, string childPageTitle, double x, double y)
+    public RadialMenuItemViewModel(string ownerPageId, int index, CommandItem? command, string childPageId, string childPageTitle, double x, double y, double angleDegrees, RadialMenuRing ring)
     {
+        OwnerPageId = ownerPageId;
         Index = index;
         Command = command;
         ChildPageId = childPageId;
         ChildPageTitle = childPageTitle;
         X = x;
         Y = y;
+        AngleDegrees = angleDegrees;
+        Ring = ring;
     }
 
+    public string OwnerPageId { get; }
+
     public int Index { get; }
+
+    public double AngleDegrees { get; }
+
+    public RadialMenuRing Ring { get; }
 
     public CommandItem? Command { get; }
 
@@ -670,11 +1484,13 @@ public sealed class RadialMenuItemViewModel : INotifyPropertyChanged
 
     public string ChildPageTitle { get; }
 
+    public bool HasChildPage => !string.IsNullOrWhiteSpace(ChildPageId);
+
     public double X { get; }
 
     public double Y { get; }
 
-    public string Title => !string.IsNullOrWhiteSpace(ChildPageId) ? ChildPageTitle : Command?.Title ?? "空";
+    public string Title => !string.IsNullOrWhiteSpace(ChildPageId) ? ChildPageTitle : Command?.Title ?? string.Empty;
 
     public ImageSource? IconSource => Command?.IconSource;
 
@@ -719,3 +1535,31 @@ public sealed class RadialMenuItemViewModel : INotifyPropertyChanged
 public sealed record RadialSeparatorViewModel(double X1, double Y1, double X2, double Y2);
 
 public sealed record RadialMenuRuntimeItem(CommandItem? Command, string ChildPageId);
+
+internal sealed record RadialEditTarget(string PageId, int Index, RadialMenuItemViewModel Item);
+
+public enum RadialMenuRing
+{
+    Inner,
+    Outer,
+    Child,
+    GrandChild
+}
+
+internal sealed record RadialSlotPayload(string? ExtensionId, string? DisplayTitle, string? ChildPageId);
+
+internal static partial class RadialMenuNativeMethods
+{
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}

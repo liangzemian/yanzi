@@ -744,6 +744,7 @@
                                                                                Margin="0,3,0,0"
                                                                                TextAlignment="Center"
                                                                                TextTrimming="CharacterEllipsis"
+                                                                               Visibility="{Binding HasChildPageTitle, Converter={StaticResource BooleanToVisibilityConverter}}"
                                                                                ToolTip="子环入口"/>
                                                                 </StackPanel>
                                                             </Border>

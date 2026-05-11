@@ -50,6 +50,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private bool _suppressWindowBoundsPersistence;
     private bool _isRefreshingRadialMenu;
     private bool _isRenamingRadialMenuPage;
+    private bool _suspendActivationRefresh;
     private RadialMenuSlotEditorItem? _selectedRadialMenuSlot;
 
     public SettingsWindow(MainWindow mainWindow)
@@ -927,6 +928,12 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         if (_isRenamingRadialMenuPage)
         {
             HostAssets.AppendLog("Settings activated skipped during radial page rename.");
+            return;
+        }
+
+        if (_suspendActivationRefresh)
+        {
+            HostAssets.AppendLog("Settings activated skipped during modal slot edit.");
             return;
         }
 
@@ -2239,7 +2246,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             .DistinctBy(static rule => rule.TriggerKey, StringComparer.OrdinalIgnoreCase)
             .ToList();
         AppSettingsStore.Save(_settings);
-        _mainWindow.RefreshAppSettings();
+        _mainWindow.NotifyQuickPanelSettingsChanged("yarnselect-settings-saved");
         SyncStatusText = $"燕选设置已保存：{YarnSelectSummary}";
         RefreshYarnSelectBindings();
     }
@@ -2350,22 +2357,32 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
             var selectedPage = _settings.RadialMenu.Pages.First(page => page.Id.Equals(_settings.RadialMenu.SelectedPageId, StringComparison.OrdinalIgnoreCase));
             selectedPage.Slots ??= [];
+            selectedPage.SlotTitles ??= [];
             selectedPage.ChildPageIds ??= [];
-            while (selectedPage.Slots.Count < 8) selectedPage.Slots.Add(null);
-            while (selectedPage.ChildPageIds.Count < 8) selectedPage.ChildPageIds.Add(null);
+            while (selectedPage.Slots.Count < RadialMenuSettings.TotalSlotCount) selectedPage.Slots.Add(null);
+            while (selectedPage.SlotTitles.Count < RadialMenuSettings.TotalSlotCount) selectedPage.SlotTitles.Add(null);
+            while (selectedPage.ChildPageIds.Count < RadialMenuSettings.TotalSlotCount) selectedPage.ChildPageIds.Add(null);
 
             RadialMenuSlots.Clear();
             BuildRadialPreviewSeparators();
             var center = 180.0;
-            var radius = 128.0;
-            for (var index = 0; index < 8; index++)
+            var innerRadius = 92.0;
+            var outerRadius = 137.0;
+            for (var index = 0; index < RadialMenuSettings.TotalSlotCount; index++)
             {
-                var angle = (-90 + index * 45) * Math.PI / 180.0;
+                var isOuter = index >= RadialMenuSettings.InnerSlotCount;
+                var offset = isOuter ? index - RadialMenuSettings.InnerSlotCount : index;
+                var step = isOuter ? 22.5 : 45.0;
+                var angle = (-90 + offset * step) * Math.PI / 180.0;
+                var radius = isOuter ? outerRadius : innerRadius;
                 RadialMenuSlots.Add(new RadialMenuSlotEditorItem(
                     index,
                     selectedPage.Slots.ElementAtOrDefault(index) ?? string.Empty,
+                    selectedPage.SlotTitles.ElementAtOrDefault(index) ?? string.Empty,
                     selectedPage.ChildPageIds.ElementAtOrDefault(index) ?? string.Empty,
-                    ResolveRadialExtensionTitle(selectedPage.Slots.ElementAtOrDefault(index)),
+                    ResolveRadialExtensionTitle(
+                        selectedPage.Slots.ElementAtOrDefault(index),
+                        selectedPage.SlotTitles.ElementAtOrDefault(index)),
                     ResolveRadialChildPageTitle(selectedPage.ChildPageIds.ElementAtOrDefault(index)),
                     center + Math.Cos(angle) * radius - 52,
                     center + Math.Sin(angle) * radius - 32));
@@ -2384,12 +2401,22 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     {
         RadialMenuPreviewSeparators.Clear();
         const double center = 180.0;
-        for (var index = 0; index < 8; index++)
+        for (var index = 0; index < RadialMenuSettings.InnerSlotCount; index++)
         {
             var angle = (-112.5 + index * 45) * Math.PI / 180.0;
             RadialMenuPreviewSeparators.Add(new RadialSeparatorViewModel(
                 center + Math.Cos(angle) * 46,
                 center + Math.Sin(angle) * 46,
+                center + Math.Cos(angle) * 135,
+                center + Math.Sin(angle) * 135));
+        }
+
+        for (var index = 0; index < RadialMenuSettings.OuterSlotCount; index++)
+        {
+            var angle = (-101.25 + index * 22.5) * Math.PI / 180.0;
+            RadialMenuPreviewSeparators.Add(new RadialSeparatorViewModel(
+                center + Math.Cos(angle) * 135,
+                center + Math.Sin(angle) * 135,
                 center + Math.Cos(angle) * 180,
                 center + Math.Sin(angle) * 180));
         }
@@ -2409,25 +2436,39 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             .OrderBy(static item => item.Index)
             .Select(static item => string.IsNullOrWhiteSpace(item.ExtensionId) ? null : item.ExtensionId.Trim())
             .Cast<string?>()
-            .Take(8)
+            .Take(RadialMenuSettings.TotalSlotCount)
+            .ToList();
+        selectedPage.SlotTitles = RadialMenuSlots
+            .OrderBy(static item => item.Index)
+            .Select(static item => string.IsNullOrWhiteSpace(item.DisplayTitle) ? null : item.DisplayTitle.Trim())
+            .Cast<string?>()
+            .Take(RadialMenuSettings.TotalSlotCount)
             .ToList();
         selectedPage.ChildPageIds = RadialMenuSlots
             .OrderBy(static item => item.Index)
             .Select(static item => string.IsNullOrWhiteSpace(item.ChildPageId) ? null : item.ChildPageId.Trim())
             .Cast<string?>()
-            .Take(8)
+            .Take(RadialMenuSettings.TotalSlotCount)
             .ToList();
-        while (selectedPage.Slots.Count < 8)
+        while (selectedPage.Slots.Count < RadialMenuSettings.TotalSlotCount)
         {
             selectedPage.Slots.Add(null);
         }
 
-        while (selectedPage.ChildPageIds.Count < 8)
+        while (selectedPage.SlotTitles.Count < RadialMenuSettings.TotalSlotCount)
+        {
+            selectedPage.SlotTitles.Add(null);
+        }
+
+        while (selectedPage.ChildPageIds.Count < RadialMenuSettings.TotalSlotCount)
         {
             selectedPage.ChildPageIds.Add(null);
         }
         var firstPageSlots = _settings.RadialMenu.Pages[0].Slots ?? [];
-        _settings.RadialMenu.Slots = firstPageSlots.Concat(Enumerable.Repeat<string?>(null, 8)).Take(8).ToList();
+        _settings.RadialMenu.Slots = firstPageSlots
+            .Concat(Enumerable.Repeat<string?>(null, RadialMenuSettings.TotalSlotCount))
+            .Take(RadialMenuSettings.TotalSlotCount)
+            .ToList();
     }
 
     private static bool IsRadialMenuCommandCandidate(CommandItem command)
@@ -2509,8 +2550,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         SelectRadialMenuSlot(slot);
         slot.ExtensionId = option.ExtensionId;
+        slot.DisplayTitle = string.Empty;
         slot.ExtensionTitle = option.Title;
         SaveQuickPanelTriggerSettings();
+        RefreshRadialMenuSlots();
     }
 
     private static CommandItem BuildRadialFileCommand(EverythingSearchResult result)
@@ -2681,6 +2724,14 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         if (sender is FrameworkElement { DataContext: RadialMenuSlotEditorItem slot })
         {
             SelectRadialMenuSlot(slot);
+            if (!string.IsNullOrWhiteSpace(slot.ExtensionId))
+            {
+                slot.ExtensionId = string.Empty;
+                slot.DisplayTitle = string.Empty;
+                slot.ExtensionTitle = ResolveRadialExtensionTitle(string.Empty);
+                SaveQuickPanelTriggerSettings();
+                e.Handled = true;
+            }
         }
     }
 
@@ -2731,15 +2782,27 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             : string.Empty;
         var dialog = new HotkeyCaptureWindow(
             "模拟按键",
-            "录制要在此槽位执行的组合键。松开燕环时会直接模拟这个按键。",
+            "录制要在此槽位执行的组合键，并设置轮盘里显示的名称。",
             initialShortcut,
+            slot.DisplayTitle,
             allowEmpty: false,
             allowDoubleTap: false,
             allowModifierless: true)
         {
             Owner = this
         };
-        if (dialog.ShowDialog() != true)
+        bool? dialogResult;
+        _suspendActivationRefresh = true;
+        try
+        {
+            dialogResult = dialog.ShowDialog();
+        }
+        finally
+        {
+            _suspendActivationRefresh = false;
+        }
+
+        if (dialogResult != true)
         {
             return;
         }
@@ -2750,9 +2813,16 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        slot.ExtensionId = $"{RadialSimulatedKeyPrefix}{shortcut}";
-        slot.ExtensionTitle = ResolveRadialExtensionTitle(slot.ExtensionId);
+        var currentSlot = RadialMenuSlots.FirstOrDefault(item => item.Index == slot.Index) ?? slot;
+        SelectRadialMenuSlot(currentSlot);
+        currentSlot.ExtensionId = $"{RadialSimulatedKeyPrefix}{shortcut}";
+        currentSlot.DisplayTitle = string.IsNullOrWhiteSpace(dialog.DisplayNameText)
+            ? shortcut
+            : dialog.DisplayNameText.Trim();
+        currentSlot.ExtensionTitle = ResolveRadialExtensionTitle(currentSlot.ExtensionId, currentSlot.DisplayTitle);
+        HostAssets.AppendLog($"Radial simulated key assigned: slot={slot.Index + 1}, shortcut={shortcut}, displayTitle={currentSlot.DisplayTitle}, page={SelectedRadialMenuPageId}.");
         SaveQuickPanelTriggerSettings();
+        RefreshRadialMenuSlots();
     }
 
     private void RadialSlotClearCommandMenuItem_Click(object sender, RoutedEventArgs e)
@@ -2765,6 +2835,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         SelectRadialMenuSlot(slot);
         slot.ExtensionId = string.Empty;
+        slot.DisplayTitle = string.Empty;
         slot.ExtensionTitle = ResolveRadialExtensionTitle(string.Empty);
         SaveQuickPanelTriggerSettings();
     }
@@ -2874,7 +2945,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         ApplyRadialMenuCommandToSlot(_selectedRadialMenuSlot, option);
     }
 
-    private string ResolveRadialExtensionTitle(string? extensionId)
+    private string ResolveRadialExtensionTitle(string? extensionId, string? displayTitleOverride = null)
     {
         if (string.IsNullOrWhiteSpace(extensionId))
         {
@@ -2883,7 +2954,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         if (extensionId.StartsWith(RadialSimulatedKeyPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            return $"模拟按键：{extensionId[RadialSimulatedKeyPrefix.Length..]}";
+            return string.IsNullOrWhiteSpace(displayTitleOverride)
+                ? extensionId[RadialSimulatedKeyPrefix.Length..]
+                : displayTitleOverride.Trim();
         }
 
         if (extensionId.StartsWith("result::", StringComparison.OrdinalIgnoreCase))
@@ -2897,16 +2970,17 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             option.ExtensionId.Equals(extensionId, StringComparison.OrdinalIgnoreCase))?.Title ?? "未知扩展";
     }
 
+
     private string ResolveRadialChildPageTitle(string? pageId)
     {
         if (string.IsNullOrWhiteSpace(pageId))
         {
-            return "无子环";
+            return string.Empty;
         }
 
         var name = _settings.RadialMenu?.Pages?.FirstOrDefault(page =>
             page.Id.Equals(pageId, StringComparison.OrdinalIgnoreCase))?.Name;
-        return string.IsNullOrWhiteSpace(name) ? "未知子环" : $"进入 {name}";
+        return string.IsNullOrWhiteSpace(name) ? string.Empty : name;
     }
 
     private void AddYarnSelectRuleButton_Click(object sender, RoutedEventArgs e)
@@ -3221,14 +3295,16 @@ public sealed record YarnSelectExtensionOption(
 public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
 {
     private string _extensionId;
+    private string _displayTitle;
     private string _childPageId;
     private string _extensionTitle;
     private string _childPageTitle;
 
-    public RadialMenuSlotEditorItem(int index, string extensionId, string childPageId, string extensionTitle, string childPageTitle, double x, double y)
+    public RadialMenuSlotEditorItem(int index, string extensionId, string displayTitle, string childPageId, string extensionTitle, string childPageTitle, double x, double y)
     {
         Index = index;
         _extensionId = extensionId;
+        _displayTitle = displayTitle;
         _childPageId = childPageId;
         _extensionTitle = extensionTitle;
         _childPageTitle = childPageTitle;
@@ -3256,6 +3332,22 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
             }
 
             _extensionId = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string DisplayTitle
+    {
+        get => _displayTitle;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _displayTitle)
+            {
+                return;
+            }
+
+            _displayTitle = value;
             OnPropertyChanged();
         }
     }
@@ -3305,8 +3397,11 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
 
             _childPageTitle = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(HasChildPageTitle));
         }
     }
+
+    public bool HasChildPageTitle => !string.IsNullOrWhiteSpace(_childPageTitle);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

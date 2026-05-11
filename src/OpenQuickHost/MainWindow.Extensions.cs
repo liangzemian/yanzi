@@ -17,6 +17,7 @@ public partial class MainWindow
 {
     private const uint InputKeyboard = 1;
     private const uint KeyeventfKeyup = 0x0002;
+    private static readonly IntPtr SimulatedInputMarker = new(0x59414E5B);
 
     private void UpsertLocalExtensionCommand(CommandItem command)
     {
@@ -496,14 +497,16 @@ public partial class MainWindow
         var page = radial.Pages.FirstOrDefault(item => item.Id.Equals(pageId ?? radial.SelectedPageId, StringComparison.OrdinalIgnoreCase))
             ?? radial.Pages.FirstOrDefault();
         var slots = page?.Slots ?? [];
+        var slotTitles = page?.SlotTitles ?? [];
         var childPages = page?.ChildPageIds ?? [];
         var result = new List<RadialMenuRuntimeItem>();
-        for (var index = 0; index < 8; index++)
+        for (var index = 0; index < RadialMenuSettings.TotalSlotCount; index++)
         {
             var extensionId = slots.ElementAtOrDefault(index);
+            var displayTitle = slotTitles.ElementAtOrDefault(index);
             var command = string.IsNullOrWhiteSpace(extensionId)
                 ? null
-                : ResolveRadialCommand(extensionId, allCommands);
+                : ResolveRadialCommand(extensionId, allCommands, displayTitle);
             var childPageId = childPages.ElementAtOrDefault(index) ?? string.Empty;
             result.Add(new RadialMenuRuntimeItem(command, childPageId));
         }
@@ -511,7 +514,7 @@ public partial class MainWindow
         return result;
     }
 
-    private static CommandItem? ResolveRadialCommand(string extensionId, IReadOnlyList<CommandItem> allCommands)
+    private static CommandItem? ResolveRadialCommand(string extensionId, IReadOnlyList<CommandItem> allCommands, string? displayTitle = null)
     {
         var command = allCommands.FirstOrDefault(command => command.ExtensionId.Equals(extensionId, StringComparison.OrdinalIgnoreCase));
         if (command != null)
@@ -528,10 +531,11 @@ public partial class MainWindow
                 return null;
             }
 
+            var effectiveTitle = string.IsNullOrWhiteSpace(displayTitle) ? shortcut : displayTitle.Trim();
             return new CommandItem(
                 glyph: "键",
-                title: $"模拟按键 {shortcut}",
-                subtitle: "执行时会向前台程序发送这个按键",
+                title: effectiveTitle,
+                subtitle: "向前台程序发送这个按键",
                 category: "模拟按键",
                 accentHex: "#FF2563EB",
                 openTarget: null,
@@ -594,7 +598,13 @@ public partial class MainWindow
 
         try
         {
-            SendSimulatedKeystroke(modifiers, key);
+            var sent = SendSimulatedKeystroke(modifiers, key, out var inputCount, out var lastError);
+            HostAssets.AppendLog($"Simulated keystroke SendInput: shortcut={shortcut}, sent={sent}/{inputCount}, inputSize={Marshal.SizeOf<INPUT>()}, lastError={lastError}.");
+            if (sent != inputCount)
+            {
+                throw new Win32Exception(lastError == 0 ? Marshal.GetLastWin32Error() : lastError, "SendInput 未完整发送按键。");
+            }
+
             RecordCommandUsage(runnable);
             HostAssets.AppendRecent(runnable.Title);
             HostAssets.AppendLog($"Executed simulated keystroke: {shortcut}");
@@ -676,8 +686,10 @@ public partial class MainWindow
         return key != Key.None;
     }
 
-    private static void SendSimulatedKeystroke(uint modifiers, Key key)
+    private static uint SendSimulatedKeystroke(uint modifiers, Key key, out int inputCount, out int lastError)
     {
+        Thread.Sleep(60);
+
         var virtualKeys = new List<ushort>(5);
         if ((modifiers & ModControl) != 0)
         {
@@ -716,7 +728,10 @@ public partial class MainWindow
             inputs.Add(CreateKeyInput(virtualKeys[index], keyUp: true));
         }
 
-        _ = SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
+        inputCount = inputs.Count;
+        var sent = SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
+        lastError = Marshal.GetLastWin32Error();
+        return sent;
     }
 
     private static INPUT CreateKeyInput(ushort virtualKey, bool keyUp)
@@ -729,7 +744,8 @@ public partial class MainWindow
                 ki = new KEYBDINPUT
                 {
                     wVk = virtualKey,
-                    dwFlags = keyUp ? KeyeventfKeyup : 0
+                    dwFlags = keyUp ? KeyeventfKeyup : 0,
+                    dwExtraInfo = SimulatedInputMarker
                 }
             }
         };
@@ -737,6 +753,64 @@ public partial class MainWindow
 
     public IReadOnlyList<RadialMenuPageSettings> GetRadialMenuPages() =>
         AppSettingsStore.Load().RadialMenu?.Pages ?? [];
+
+    public IReadOnlyList<CommandItem> GetRadialMenuCommandCandidates(string? keyword)
+    {
+        keyword = (keyword ?? string.Empty).Trim();
+        var candidates = GetAllCommands()
+            .Where(static command => command.Source is CommandSource.LocalExtension or CommandSource.WebSearch or CommandSource.Application or CommandSource.Local)
+            .Where(command =>
+                string.IsNullOrWhiteSpace(keyword) ||
+                command.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                command.ExtensionId.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                command.Subtitle.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                command.Category.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(command.OpenTarget) && command.OpenTarget.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(GetLocalExtensionDisplayOrder)
+            .ThenBy(static command => command.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(string.IsNullOrWhiteSpace(keyword) ? 60 : 40)
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var fileResults = EverythingSearchService.Search(keyword, 20);
+            if (fileResults.Success)
+            {
+                foreach (var result in fileResults.Results)
+                {
+                    var command = BuildRadialFileCommand(result);
+                    if (candidates.Any(existing => existing.ExtensionId.Equals(command.ExtensionId, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue;
+                    }
+
+                    candidates.Add(command);
+                }
+            }
+        }
+
+        return candidates;
+    }
+
+    private static CommandItem BuildRadialFileCommand(EverythingSearchResult result)
+    {
+        var subtitle = string.IsNullOrWhiteSpace(result.SizeText)
+            ? result.DirectoryPath
+            : $"{result.DirectoryPath}   ·   {result.SizeText}";
+        return new CommandItem(
+            glyph: result.IsFolder ? "夹" : "文",
+            title: result.Name,
+            subtitle: subtitle,
+            category: result.IsFolder ? "文件夹" : "文件",
+            accentHex: result.IsFolder ? "#FF3B82F6" : "#FF4B5563",
+            openTarget: result.FullPath,
+            keywords: [result.FullPath, result.DirectoryPath, result.Name],
+            source: CommandSource.File,
+            extensionId: $"result::{result.FullPath}",
+            resultKind: result.IsFolder ? ResultItemKind.Folder : ResultItemKind.File,
+            resultProviderTitle: "Everything 文件",
+            iconSourceOverride: NativeFileIconService.GetIcon(result.FullPath, result.IsFolder));
+    }
 
     public bool AreListenerServicesPaused => _listenerServicesPaused;
 
@@ -1356,7 +1430,13 @@ public partial class MainWindow
     private struct InputUnion
     {
         [FieldOffset(0)]
+        public MOUSEINPUT mi;
+
+        [FieldOffset(0)]
         public KEYBDINPUT ki;
+
+        [FieldOffset(0)]
+        public HARDWAREINPUT hi;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1367,6 +1447,25 @@ public partial class MainWindow
         public uint dwFlags;
         public uint time;
         public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
     }
 
     public IReadOnlyList<CommandItem> GetLocalExtensionsForSettings()

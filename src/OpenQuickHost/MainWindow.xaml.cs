@@ -2269,6 +2269,15 @@ public sealed class CloudQuickPanelConfigSnapshot
     [JsonPropertyName("quickPanelMouseTriggers")]
     public QuickPanelMouseTriggerSettings QuickPanelMouseTriggers { get; set; } = new();
 
+    [JsonPropertyName("yarnSelect")]
+    public YarnSelectSettings? YarnSelect { get; set; }
+
+    [JsonPropertyName("radialMenu")]
+    public RadialMenuSettings? RadialMenu { get; set; }
+
+    [JsonPropertyName("yanyuRules")]
+    public List<YanyuRuleSettings>? YanyuRules { get; set; }
+
     public static CloudQuickPanelConfigSnapshot FromSettings(AppSettings settings)
     {
         return new CloudQuickPanelConfigSnapshot
@@ -2280,7 +2289,10 @@ public sealed class CloudQuickPanelConfigSnapshot
             SelectedQuickPanelContextGroupId = settings.SelectedQuickPanelContextGroupId,
             GlobalFavoriteExtensionIds = settings.GlobalFavoriteExtensionIds.ToList(),
             ContextFavoriteExtensionIds = settings.ContextFavoriteExtensionIds.ToList(),
-            QuickPanelMouseTriggers = CloneTriggers(settings.QuickPanelMouseTriggers)
+            QuickPanelMouseTriggers = CloneTriggers(settings.QuickPanelMouseTriggers),
+            YarnSelect = CloneByJson(settings.YarnSelect),
+            RadialMenu = CloneByJson(settings.RadialMenu),
+            YanyuRules = CloneByJson(settings.YanyuRules)
         };
     }
 
@@ -2295,8 +2307,17 @@ public sealed class CloudQuickPanelConfigSnapshot
             SelectedQuickPanelContextGroupId = SelectedQuickPanelContextGroupId,
             GlobalFavoriteExtensionIds = GlobalFavoriteExtensionIds.ToList(),
             ContextFavoriteExtensionIds = ContextFavoriteExtensionIds.ToList(),
-            QuickPanelMouseTriggers = CloneTriggers(QuickPanelMouseTriggers)
+            QuickPanelMouseTriggers = CloneTriggers(QuickPanelMouseTriggers),
+            YarnSelect = YarnSelect == null ? new YarnSelectSettings() : CloneByJson(YarnSelect),
+            RadialMenu = RadialMenu == null ? new RadialMenuSettings() : CloneByJson(RadialMenu),
+            YanyuRules = YanyuRules == null ? [] : CloneByJson(YanyuRules)
         };
+    }
+
+    private static T CloneByJson<T>(T value)
+    {
+        var json = JsonSerializer.Serialize(value);
+        return JsonSerializer.Deserialize<T>(json) ?? value;
     }
 
     private static List<QuickPanelGroupSettings> CloneGroups(IEnumerable<QuickPanelGroupSettings> groups)

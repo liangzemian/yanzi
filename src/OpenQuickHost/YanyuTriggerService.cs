@@ -48,6 +48,7 @@ public static class YanyuTriggerService
     private const int VkOem5 = 0xDC;
     private const int VkOem6 = 0xDD;
     private const int VkOem7 = 0xDE;
+    private const uint LlkhfInjected = 0x00000010;
     private static readonly IntPtr SyntheticInputMarker = new(0x59414E5A);
     private static readonly LowLevelKeyboardProc Proc = HookCallback;
     private static readonly StringBuilder Buffer = new();
@@ -147,7 +148,7 @@ public static class YanyuTriggerService
 
         var message = wParam.ToInt32();
         var info = Marshal.PtrToStructure<KbdLlHookStruct>(lParam);
-        if (info.dwExtraInfo == SyntheticInputMarker)
+        if ((info.flags & LlkhfInjected) != 0 || info.dwExtraInfo == SyntheticInputMarker)
         {
             return CallNextHookEx(_hookId, nCode, wParam, lParam);
         }
