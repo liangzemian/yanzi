@@ -1527,21 +1527,6 @@
                                                                     MouseLeave="RadialSlot_MouseLeave"
                                                                     DragOver="RadialSlot_DragOver"
                                                                     Drop="RadialSlot_Drop">
-                                                                <Border.Style>
-                                                                    <Style TargetType="Border">
-                                                                        <Setter Property="Visibility" Value="Visible"/>
-                                                                        <Style.Triggers>
-                                                                            <!-- Hide empty slots when not hovered -->
-                                                                            <MultiDataTrigger>
-                                                                                <MultiDataTrigger.Conditions>
-                                                                                    <Condition Binding="{Binding IsEmpty}" Value="True"/>
-                                                                                    <Condition Binding="{Binding IsHovered}" Value="False"/>
-                                                                                </MultiDataTrigger.Conditions>
-                                                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                                                            </MultiDataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </Border.Style>
                                                                 <Border.ContextMenu>
                                                                     <ContextMenu>
                                                                         <MenuItem Header="添加扩展/应用/系统项" Click="RadialSlotAddCommandMenuItem_Click"/>
@@ -1557,7 +1542,24 @@
                                                                     <Ellipse Width="70" 
                                                                              Height="70" 
                                                                              Fill="#20FFFFFF"
-                                                                             Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                             Stroke="#40FFFFFF"
+                                                                             StrokeThickness="1">
+                                                                        <Ellipse.Style>
+                                                                            <Style TargetType="Ellipse">
+                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                <Style.Triggers>
+                                                                                    <!-- Show highlight when empty and hovered -->
+                                                                                    <MultiDataTrigger>
+                                                                                        <MultiDataTrigger.Conditions>
+                                                                                            <Condition Binding="{Binding IsEmpty}" Value="True"/>
+                                                                                            <Condition Binding="{Binding IsHovered}" Value="True"/>
+                                                                                        </MultiDataTrigger.Conditions>
+                                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                                    </MultiDataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </Ellipse.Style>
+                                                                    </Ellipse>
                                                                     
                                                                     <StackPanel>
                                                                         <!-- Show ➕ for empty slots when hovered -->
@@ -1565,8 +1567,23 @@
                                                                                    Foreground="#80FFFFFF" 
                                                                                    FontSize="32" 
                                                                                    HorizontalAlignment="Center"
-                                                                                   Margin="0,10,0,0"
-                                                                                   Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                                   Margin="0,10,0,0">
+                                                                            <TextBlock.Style>
+                                                                                <Style TargetType="TextBlock">
+                                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                    <Style.Triggers>
+                                                                                        <!-- Show ➕ when empty and hovered -->
+                                                                                        <MultiDataTrigger>
+                                                                                            <MultiDataTrigger.Conditions>
+                                                                                                <Condition Binding="{Binding IsEmpty}" Value="True"/>
+                                                                                                <Condition Binding="{Binding IsHovered}" Value="True"/>
+                                                                                            </MultiDataTrigger.Conditions>
+                                                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                                                        </MultiDataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </TextBlock.Style>
+                                                                        </TextBlock>
                                                                         
                                                                         <!-- Show normal content for filled slots -->
                                                                         <StackPanel Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
