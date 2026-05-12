@@ -100,9 +100,22 @@ public class InputHookService
             _longPressTimer.Stop();
             _dragTriggered = true;
             _releaseShouldExecute = true;
-            _activeTriggerTarget = ActiveTriggerTarget.Panel;
-            HostAssets.AppendLog($"Input hook: {_trackedButton} long press triggered.");
-            InvokeShowPanel();
+            // _activeTriggerTarget is already set by StartLongPressTimer
+            HostAssets.AppendLog($"Input hook: {_trackedButton} long press triggered for {_activeTriggerTarget}.");
+            
+            // Invoke the appropriate show method based on the target
+            if (_activeTriggerTarget == ActiveTriggerTarget.Radial)
+            {
+                InvokeShowRadial();
+            }
+            else if (_activeTriggerTarget == ActiveTriggerTarget.Yanm)
+            {
+                InvokeShowYanm();
+            }
+            else
+            {
+                InvokeShowPanel();
+            }
         };
 
         _isEnabled = true;
