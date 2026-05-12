@@ -3337,19 +3337,90 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                string.Equals(mode, MouseTriggerModes.CtrlRightClick, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static void ApplyMouseTriggerModeToRadialFlags(RadialMenuSettings radial)
+    {
+        var mode = MouseTriggerModes.Normalize(radial.MouseTriggerMode);
+        switch (mode)
+        {
+            case MouseTriggerModes.MiddleDown:
+                radial.TriggerMiddleButtonDown = true;
+                break;
+            case MouseTriggerModes.X1Down:
+                radial.TriggerX1ButtonDown = true;
+                break;
+            case MouseTriggerModes.X2Down:
+                radial.TriggerX2ButtonDown = true;
+                break;
+            case MouseTriggerModes.CtrlLeftClick:
+                radial.TriggerCtrlLeftClick = true;
+                break;
+            case MouseTriggerModes.CtrlRightClick:
+                radial.TriggerCtrlRightClick = true;
+                break;
+            case MouseTriggerModes.CtrlMiddleClick:
+                radial.TriggerCtrlMiddleClick = true;
+                break;
+            case MouseTriggerModes.MiddleLongPress:
+                radial.TriggerMiddleButtonLongPress = true;
+                break;
+            case MouseTriggerModes.RightLongPress:
+                radial.TriggerRightButtonLongPress = true;
+                break;
+            case MouseTriggerModes.RightDrag:
+                radial.TriggerRightButtonDrag = true;
+                break;
+            case MouseTriggerModes.HorizontalWheel:
+                radial.TriggerHorizontalWheel = true;
+                break;
+        }
+    }
+
+    private static void ApplyMouseTriggerModeToYanmFlags(YanmSettings yanm)
+    {
+        var mode = MouseTriggerModes.Normalize(yanm.MouseTriggerMode);
+        switch (mode)
+        {
+            case MouseTriggerModes.MiddleDown:
+                yanm.TriggerMiddleButtonDown = true;
+                break;
+            case MouseTriggerModes.X1Down:
+                yanm.TriggerX1ButtonDown = true;
+                break;
+            case MouseTriggerModes.X2Down:
+                yanm.TriggerX2ButtonDown = true;
+                break;
+            case MouseTriggerModes.CtrlLeftClick:
+                yanm.TriggerCtrlLeftClick = true;
+                break;
+            case MouseTriggerModes.CtrlRightClick:
+                yanm.TriggerCtrlRightClick = true;
+                break;
+            case MouseTriggerModes.CtrlMiddleClick:
+                yanm.TriggerCtrlMiddleClick = true;
+                break;
+            case MouseTriggerModes.MiddleLongPress:
+                yanm.TriggerMiddleButtonLongPress = true;
+                break;
+            case MouseTriggerModes.RightLongPress:
+                yanm.TriggerRightButtonLongPress = true;
+                break;
+            case MouseTriggerModes.RightDrag:
+                yanm.TriggerRightButtonDrag = true;
+                break;
+            case MouseTriggerModes.HorizontalWheel:
+                yanm.TriggerHorizontalWheel = true;
+                break;
+        }
+    }
+
     private void SaveQuickPanelTriggerSettings()
     {
         SaveRadialMenuSlots();
         _settings.RadialMenu ??= new RadialMenuSettings();
         _settings.Yanm ??= new YanmSettings();
         _settings.QuickPanelMouseTriggers ??= new QuickPanelMouseTriggerSettings();
-        _settings.RadialMenu.MouseTriggerMode = MouseTriggerModes.None;
-        _settings.Yanm.MouseTriggerMode = MouseTriggerModes.None;
-        if (_settings.QuickPanelMouseTriggers.RightButtonDrag)
-        {
-            _settings.Yanm.MouseTriggerMode = MouseTriggerModes.None;
-            _settings.RadialMenu.MouseTriggerMode = MouseTriggerModes.None;
-        }
+        ApplyMouseTriggerModeToRadialFlags(_settings.RadialMenu);
+        ApplyMouseTriggerModeToYanmFlags(_settings.Yanm);
         AppSettingsStore.Save(_settings);
         _mainWindow.RefreshAppSettings();
         _mainWindow.NotifyQuickPanelSettingsChanged("quickpanel-trigger-settings-saved");
@@ -3407,20 +3478,14 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     {
         _settings.Yanm ??= new YanmSettings();
         _settings.Yanm.ActivationKey = YanmActivationKeys.Normalize(_settings.Yanm.ActivationKey);
-        _settings.Yanm.MouseTriggerMode = MouseTriggerModes.None;
+        _settings.Yanm.MouseTriggerMode = MouseTriggerModes.Normalize(_settings.Yanm.MouseTriggerMode);
+        ApplyMouseTriggerModeToYanmFlags(_settings.Yanm);
         if (requireCustomShortcut &&
             string.Equals(_settings.Yanm.ActivationKey, YanmActivationKeys.Custom, StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(_settings.Yanm.CustomShortcut))
         {
             System.Windows.MessageBox.Show(this, "已选择自定义快捷键，请先录制一个快捷键再保存。", "缺少快捷键", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
-        }
-
-        if (_settings.QuickPanelMouseTriggers?.RightButtonDrag == true &&
-            IsRightMouseTriggerMode(_settings.Yanm.MouseTriggerMode))
-        {
-            _settings.Yanm.MouseTriggerMode = MouseTriggerModes.None;
-            SyncStatusText = "鼠标面板已占用右键，燕幕的右键触发已自动禁用。";
         }
 
         AppSettingsStore.Save(_settings);
@@ -3964,6 +4029,22 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         slot.ExtensionTitle = ResolveRadialExtensionTitle(slot.ExtensionId);
         e.Handled = true;
         SaveQuickPanelTriggerSettings();
+    }
+
+    private void RadialSlot_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RadialMenuSlotEditorItem slot })
+        {
+            slot.IsHovered = true;
+        }
+    }
+
+    private void RadialSlot_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RadialMenuSlotEditorItem slot })
+        {
+            slot.IsHovered = false;
+        }
     }
 
     private void RadialSlotAddCommandMenuItem_Click(object sender, RoutedEventArgs e)
@@ -4531,6 +4612,7 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
     private string _childPageId;
     private string _extensionTitle;
     private string _childPageTitle;
+    private bool _isHovered;
 
     public RadialMenuSlotEditorItem(int index, string extensionId, string displayTitle, string childPageId, string extensionTitle, string childPageTitle, double x, double y)
     {
@@ -4552,6 +4634,25 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
 
     public double Y { get; }
 
+    public bool IsEmpty => string.IsNullOrWhiteSpace(_extensionId) && string.IsNullOrWhiteSpace(_childPageId);
+
+    public bool IsNotEmpty => !IsEmpty;
+
+    public bool IsHovered
+    {
+        get => _isHovered;
+        set
+        {
+            if (value == _isHovered)
+            {
+                return;
+            }
+
+            _isHovered = value;
+            OnPropertyChanged();
+        }
+    }
+
     public string ExtensionId
     {
         get => _extensionId;
@@ -4565,6 +4666,8 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
 
             _extensionId = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(IsEmpty));
+            OnPropertyChanged(nameof(IsNotEmpty));
         }
     }
 
@@ -4613,6 +4716,8 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
 
             _childPageId = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(IsEmpty));
+            OnPropertyChanged(nameof(IsNotEmpty));
         }
     }
 
