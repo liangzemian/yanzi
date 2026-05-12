@@ -427,8 +427,8 @@ public class InputHookService
             return;
         }
 
-        var yanmDrag = IsMouseTriggerModeActive(MouseTriggerModes.RightDrag, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled);
-        var radialDrag = IsMouseTriggerModeActive(MouseTriggerModes.RightDrag, _radialSettings.MouseTriggerMode, _radialSettings.Enabled);
+        var yanmDrag = _yanmSettings.TriggerRightButtonDrag || IsMouseTriggerModeActive(MouseTriggerModes.RightDrag, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled);
+        var radialDrag = _radialSettings.TriggerRightButtonDrag || IsMouseTriggerModeActive(MouseTriggerModes.RightDrag, _radialSettings.MouseTriggerMode, _radialSettings.Enabled);
         if (!radialDrag && !yanmDrag && !_settings.RightButtonDrag)
         {
             return;
@@ -567,29 +567,59 @@ public class InputHookService
     }
 
     private static bool IsRadialRightDragEnabled() =>
-        IsMouseTriggerModeActive(MouseTriggerModes.RightDrag, _radialSettings.MouseTriggerMode, _radialSettings.Enabled) && _onShowRadial != null;
+        (_radialSettings.TriggerRightButtonDrag || IsMouseTriggerModeActive(MouseTriggerModes.RightDrag, _radialSettings.MouseTriggerMode, _radialSettings.Enabled)) && _onShowRadial != null;
 
     private static bool IsYanmRightDragEnabled() =>
-        IsMouseTriggerModeActive(MouseTriggerModes.RightDrag, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled) && _onShowYanm != null;
+        (_yanmSettings.TriggerRightButtonDrag || IsMouseTriggerModeActive(MouseTriggerModes.RightDrag, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled)) && _onShowYanm != null;
 
     private static bool TryTriggerMouseMode(string mode, POINT point)
     {
-        if (IsMouseTriggerModeActive(mode, _radialSettings.MouseTriggerMode, _radialSettings.Enabled) && _onShowRadial != null)
+        // Check radial menu triggers (both old MouseTriggerMode and new boolean properties)
+        if (_radialSettings.Enabled && _onShowRadial != null)
         {
-            _releaseShouldExecute = true;
-            _activeTriggerTarget = ActiveTriggerTarget.Radial;
-            HostAssets.AppendLog($"Input hook: radial mouse mode triggered: {mode}, pt=({point.x},{point.y}).");
-            InvokeShowRadial();
-            return true;
+            var radialTriggered = IsMouseTriggerModeActive(mode, _radialSettings.MouseTriggerMode, _radialSettings.Enabled) ||
+                                  (mode == MouseTriggerModes.MiddleDown && _radialSettings.TriggerMiddleButtonDown) ||
+                                  (mode == MouseTriggerModes.X1Down && _radialSettings.TriggerX1ButtonDown) ||
+                                  (mode == MouseTriggerModes.X2Down && _radialSettings.TriggerX2ButtonDown) ||
+                                  (mode == MouseTriggerModes.HorizontalWheel && _radialSettings.TriggerHorizontalWheel) ||
+                                  (mode == MouseTriggerModes.CtrlLeftClick && _radialSettings.TriggerCtrlLeftClick) ||
+                                  (mode == MouseTriggerModes.CtrlRightClick && _radialSettings.TriggerCtrlRightClick) ||
+                                  (mode == MouseTriggerModes.MiddleLongPress && _radialSettings.TriggerMiddleButtonLongPress) ||
+                                  (mode == MouseTriggerModes.RightLongPress && _radialSettings.TriggerRightButtonLongPress) ||
+                                  (mode == MouseTriggerModes.RightDrag && _radialSettings.TriggerRightButtonDrag);
+            
+            if (radialTriggered)
+            {
+                _releaseShouldExecute = true;
+                _activeTriggerTarget = ActiveTriggerTarget.Radial;
+                HostAssets.AppendLog($"Input hook: radial mouse mode triggered: {mode}, pt=({point.x},{point.y}).");
+                InvokeShowRadial();
+                return true;
+            }
         }
 
-        if (IsMouseTriggerModeActive(mode, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled) && _onShowYanm != null)
+        // Check Yanm triggers (both old MouseTriggerMode and new boolean properties)
+        if (_yanmSettings.Enabled && _onShowYanm != null)
         {
-            _releaseShouldExecute = true;
-            _activeTriggerTarget = ActiveTriggerTarget.Yanm;
-            HostAssets.AppendLog($"Input hook: Yanm mouse mode triggered: {mode}, pt=({point.x},{point.y}).");
-            InvokeShowYanm();
-            return true;
+            var yanmTriggered = IsMouseTriggerModeActive(mode, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled) ||
+                                (mode == MouseTriggerModes.MiddleDown && _yanmSettings.TriggerMiddleButtonDown) ||
+                                (mode == MouseTriggerModes.X1Down && _yanmSettings.TriggerX1ButtonDown) ||
+                                (mode == MouseTriggerModes.X2Down && _yanmSettings.TriggerX2ButtonDown) ||
+                                (mode == MouseTriggerModes.HorizontalWheel && _yanmSettings.TriggerHorizontalWheel) ||
+                                (mode == MouseTriggerModes.CtrlLeftClick && _yanmSettings.TriggerCtrlLeftClick) ||
+                                (mode == MouseTriggerModes.CtrlRightClick && _yanmSettings.TriggerCtrlRightClick) ||
+                                (mode == MouseTriggerModes.MiddleLongPress && _yanmSettings.TriggerMiddleButtonLongPress) ||
+                                (mode == MouseTriggerModes.RightLongPress && _yanmSettings.TriggerRightButtonLongPress) ||
+                                (mode == MouseTriggerModes.RightDrag && _yanmSettings.TriggerRightButtonDrag);
+            
+            if (yanmTriggered)
+            {
+                _releaseShouldExecute = true;
+                _activeTriggerTarget = ActiveTriggerTarget.Yanm;
+                HostAssets.AppendLog($"Input hook: Yanm mouse mode triggered: {mode}, pt=({point.x},{point.y}).");
+                InvokeShowYanm();
+                return true;
+            }
         }
 
         return false;
@@ -599,10 +629,14 @@ public class InputHookService
     {
         return button == TrackedMouseButton.Right
             ? _settings.RightButtonLongPress ||
+              _radialSettings.TriggerRightButtonLongPress ||
+              _yanmSettings.TriggerRightButtonLongPress ||
               IsMouseTriggerModeActive(MouseTriggerModes.RightLongPress, _radialSettings.MouseTriggerMode, _radialSettings.Enabled) ||
               IsMouseTriggerModeActive(MouseTriggerModes.RightLongPress, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled)
             : button == TrackedMouseButton.Middle &&
               (_settings.MiddleButtonLongPress ||
+               _radialSettings.TriggerMiddleButtonLongPress ||
+               _yanmSettings.TriggerMiddleButtonLongPress ||
                IsMouseTriggerModeActive(MouseTriggerModes.MiddleLongPress, _radialSettings.MouseTriggerMode, _radialSettings.Enabled) ||
                IsMouseTriggerModeActive(MouseTriggerModes.MiddleLongPress, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled));
     }
@@ -612,15 +646,15 @@ public class InputHookService
         if (button == TrackedMouseButton.Right)
         {
             if (_settings.RightButtonLongPress) return ActiveTriggerTarget.Panel;
-            if (IsMouseTriggerModeActive(MouseTriggerModes.RightLongPress, _radialSettings.MouseTriggerMode, _radialSettings.Enabled)) return ActiveTriggerTarget.Radial;
-            if (IsMouseTriggerModeActive(MouseTriggerModes.RightLongPress, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled)) return ActiveTriggerTarget.Yanm;
+            if (_radialSettings.TriggerRightButtonLongPress || IsMouseTriggerModeActive(MouseTriggerModes.RightLongPress, _radialSettings.MouseTriggerMode, _radialSettings.Enabled)) return ActiveTriggerTarget.Radial;
+            if (_yanmSettings.TriggerRightButtonLongPress || IsMouseTriggerModeActive(MouseTriggerModes.RightLongPress, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled)) return ActiveTriggerTarget.Yanm;
         }
 
         if (button == TrackedMouseButton.Middle)
         {
             if (_settings.MiddleButtonLongPress) return ActiveTriggerTarget.Panel;
-            if (IsMouseTriggerModeActive(MouseTriggerModes.MiddleLongPress, _radialSettings.MouseTriggerMode, _radialSettings.Enabled)) return ActiveTriggerTarget.Radial;
-            if (IsMouseTriggerModeActive(MouseTriggerModes.MiddleLongPress, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled)) return ActiveTriggerTarget.Yanm;
+            if (_radialSettings.TriggerMiddleButtonLongPress || IsMouseTriggerModeActive(MouseTriggerModes.MiddleLongPress, _radialSettings.MouseTriggerMode, _radialSettings.Enabled)) return ActiveTriggerTarget.Radial;
+            if (_yanmSettings.TriggerMiddleButtonLongPress || IsMouseTriggerModeActive(MouseTriggerModes.MiddleLongPress, _yanmSettings.MouseTriggerMode, _yanmSettings.Enabled)) return ActiveTriggerTarget.Yanm;
         }
 
         return ActiveTriggerTarget.None;
