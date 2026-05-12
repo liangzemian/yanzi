@@ -1462,21 +1462,21 @@
                                                 </ItemsControl>
                                                 
                                                 <!-- Ring line around inner circle -->
-                                                <Ellipse Width="90"
-                                                         Height="90"
-                                                         Canvas.Left="135"
-                                                         Canvas.Top="135"
+                                                <Ellipse Width="70"
+                                                         Height="70"
+                                                         Canvas.Left="145"
+                                                         Canvas.Top="145"
                                                          Fill="Transparent"
                                                          Stroke="#33FFFFFF"
                                                          StrokeThickness="1.5"
                                                          IsHitTestVisible="False"/>
                                                 
-                                                <Border Width="90"
-                                                        Height="90"
-                                                        Canvas.Left="135"
-                                                        Canvas.Top="135"
+                                                <Border Width="70"
+                                                        Height="70"
+                                                        Canvas.Left="145"
+                                                        Canvas.Top="145"
                                                         Background="#01000000"
-                                                        CornerRadius="45"
+                                                        CornerRadius="35"
                                                         ToolTip="右键或双击重命名当前轮盘"
                                                         MouseLeftButtonDown="RadialMenuCenter_MouseLeftButtonDown"
                                                         MouseRightButtonDown="RadialMenuCenter_MouseRightButtonDown">
@@ -1493,11 +1493,11 @@
                                                         <TextBlock Text="{Binding SelectedRadialMenuPageName}"
                                                                    TextAlignment="Center"
                                                                    Foreground="White"
-                                                                   FontSize="16"
+                                                                   FontSize="14"
                                                                    FontWeight="SemiBold"
                                                                    VerticalAlignment="Center"
                                                                    TextTrimming="CharacterEllipsis"
-                                                                   Margin="8,0"
+                                                                   Margin="6,0"
                                                                    IsHitTestVisible="False"/>
                                                     </Grid>
                                                 </Border>
@@ -1527,6 +1527,17 @@
                                                                     MouseLeave="RadialSlot_MouseLeave"
                                                                     DragOver="RadialSlot_DragOver"
                                                                     Drop="RadialSlot_Drop">
+                                                                <Border.Style>
+                                                                    <Style TargetType="Border">
+                                                                        <Setter Property="Background" Value="Transparent"/>
+                                                                        <Style.Triggers>
+                                                                            <!-- Highlight sector when hovered -->
+                                                                            <DataTrigger Binding="{Binding IsHovered}" Value="True">
+                                                                                <Setter Property="Background" Value="#15FFFFFF"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Border.Style>
                                                                 <Border.ContextMenu>
                                                                     <ContextMenu>
                                                                         <MenuItem Header="添加扩展/应用/系统项" Click="RadialSlotAddCommandMenuItem_Click"/>
@@ -1538,9 +1549,9 @@
                                                                     </ContextMenu>
                                                                 </Border.ContextMenu>
                                                                 <Grid>
-                                                                    <!-- Hover highlight background for empty slots -->
-                                                                    <Ellipse Width="70" 
-                                                                             Height="70" 
+                                                                    <!-- Hover highlight circle for empty slots -->
+                                                                    <Ellipse Width="50" 
+                                                                             Height="50" 
                                                                              Fill="#20FFFFFF"
                                                                              Stroke="#40FFFFFF"
                                                                              StrokeThickness="1">
@@ -1564,10 +1575,10 @@
                                                                     <StackPanel>
                                                                         <!-- Show ➕ for empty slots when hovered -->
                                                                         <TextBlock Text="➕" 
-                                                                                   Foreground="#80FFFFFF" 
-                                                                                   FontSize="32" 
+                                                                                   Foreground="#90FFFFFF" 
+                                                                                   FontSize="20" 
                                                                                    HorizontalAlignment="Center"
-                                                                                   Margin="0,10,0,0">
+                                                                                   Margin="0,8,0,0">
                                                                             <TextBlock.Style>
                                                                                 <Style TargetType="TextBlock">
                                                                                     <Setter Property="Visibility" Value="Collapsed"/>
