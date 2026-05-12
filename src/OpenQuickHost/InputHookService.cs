@@ -261,12 +261,26 @@ public class InputHookService
             else if (message == WM_MBUTTONDOWN)
             {
                 BeginTracking(TrackedMouseButton.Middle, mouse.pt);
-                HostAssets.AppendLog($"Input hook: middle button down, middleDown={_settings.MiddleButtonDown}, middleLong={_settings.MiddleButtonLongPress}, pt=({mouse.pt.x},{mouse.pt.y}).");
-                if (_settings.MiddleButtonDown)
+                HostAssets.AppendLog($"Input hook: middle button down, middleDown={_settings.MiddleButtonDown}, middleLong={_settings.MiddleButtonLongPress}, ctrlMiddle={_settings.CtrlMiddleClick}, ctrlDown={IsControlDown()}, pt=({mouse.pt.x},{mouse.pt.y}).");
+                
+                // Check Ctrl+Middle first
+                if (_settings.CtrlMiddleClick && IsControlDown())
                 {
                     _releaseShouldExecute = true;
                     _activeTriggerTarget = ActiveTriggerTarget.Panel;
-                    HostAssets.AppendLog("Input hook: middle button down triggered.");
+                    HostAssets.AppendLog("Input hook: Ctrl+middle click triggered for panel.");
+                    InvokeShowPanel();
+                }
+                else if (IsControlDown() && TryTriggerMouseMode(MouseTriggerModes.CtrlMiddleClick, mouse.pt))
+                {
+                    return (IntPtr)1;
+                }
+                // Check middle button down triggers
+                else if (_settings.MiddleButtonDown)
+                {
+                    _releaseShouldExecute = true;
+                    _activeTriggerTarget = ActiveTriggerTarget.Panel;
+                    HostAssets.AppendLog("Input hook: middle button down triggered for panel.");
                     InvokeShowPanel();
                 }
                 else if (TryTriggerMouseMode(MouseTriggerModes.MiddleDown, mouse.pt))

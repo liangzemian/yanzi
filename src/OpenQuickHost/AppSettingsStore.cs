@@ -692,6 +692,7 @@ public static class MouseTriggerModes
     public const string X2Down = "X2Down";
     public const string CtrlLeftClick = "CtrlLeftClick";
     public const string CtrlRightClick = "CtrlRightClick";
+    public const string CtrlMiddleClick = "CtrlMiddleClick";
     public const string MiddleLongPress = "MiddleLongPress";
     public const string RightLongPress = "RightLongPress";
     public const string RightDrag = "RightDrag";
@@ -706,6 +707,7 @@ public static class MouseTriggerModes
             X2Down => X2Down,
             CtrlLeftClick => CtrlLeftClick,
             CtrlRightClick => CtrlRightClick,
+            CtrlMiddleClick => CtrlMiddleClick,
             MiddleLongPress => MiddleLongPress,
             RightLongPress => RightLongPress,
             RightDrag => RightDrag,

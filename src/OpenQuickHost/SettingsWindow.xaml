@@ -1,4 +1,4 @@
-<Window x:Class="OpenQuickHost.SettingsWindow"
+﻿<Window x:Class="OpenQuickHost.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -861,13 +861,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonLongPress:None" x:Name="RightButtonLongPress_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonLongPress:Panel" x:Name="RightButtonLongPress_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonLongPress:Radial" x:Name="RightButtonLongPress_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonLongPress:Yanm" x:Name="RightButtonLongPress_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -908,13 +908,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonLongPress:None" x:Name="MiddleButtonLongPress_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonLongPress:Panel" x:Name="MiddleButtonLongPress_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonLongPress:Radial" x:Name="MiddleButtonLongPress_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonLongPress:Yanm" x:Name="MiddleButtonLongPress_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -957,13 +957,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonDrag:None" x:Name="RightButtonDrag_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonDrag:Panel" x:Name="RightButtonDrag_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonDrag:Radial" x:Name="RightButtonDrag_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonDrag:Yanm" x:Name="RightButtonDrag_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1007,13 +1007,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonDown:None" x:Name="MiddleButtonDown_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonDown:Panel" x:Name="MiddleButtonDown_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonDown:Radial" x:Name="MiddleButtonDown_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonDown:Yanm" x:Name="MiddleButtonDown_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1053,13 +1053,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X1ButtonDown:None" x:Name="X1ButtonDown_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X1ButtonDown:Panel" x:Name="X1ButtonDown_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X1ButtonDown:Radial" x:Name="X1ButtonDown_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X1ButtonDown:Yanm" x:Name="X1ButtonDown_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1099,13 +1099,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X2ButtonDown:None" x:Name="X2ButtonDown_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X2ButtonDown:Panel" x:Name="X2ButtonDown_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X2ButtonDown:Radial" x:Name="X2ButtonDown_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X2ButtonDown:Yanm" x:Name="X2ButtonDown_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1145,13 +1145,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="HorizontalWheel:None" x:Name="HorizontalWheel_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="HorizontalWheel:Panel" x:Name="HorizontalWheel_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="HorizontalWheel:Radial" x:Name="HorizontalWheel_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="HorizontalWheel:Yanm" x:Name="HorizontalWheel_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1207,13 +1207,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlLeftClick:None" x:Name="CtrlLeftClick_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlLeftClick:Panel" x:Name="CtrlLeftClick_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlLeftClick:Radial" x:Name="CtrlLeftClick_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlLeftClick:Yanm" x:Name="CtrlLeftClick_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1259,13 +1259,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlRightClick:None" x:Name="CtrlRightClick_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlRightClick:Panel" x:Name="CtrlRightClick_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlRightClick:Radial" x:Name="CtrlRightClick_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlRightClick:Yanm" x:Name="CtrlRightClick_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1310,13 +1310,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlMiddleClick:None" x:Name="CtrlMiddleClick_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlMiddleClick:Panel" x:Name="CtrlMiddleClick_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlMiddleClick:Radial" x:Name="CtrlMiddleClick_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlMiddleClick:Yanm" x:Name="CtrlMiddleClick_Yanm"/>
                                                 </Grid>
                                             </Border>
