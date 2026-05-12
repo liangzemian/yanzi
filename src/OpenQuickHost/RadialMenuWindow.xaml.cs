@@ -885,6 +885,22 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         e.Handled = true;
     }
 
+    private void RadialSlot_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RadialMenuItemViewModel item })
+        {
+            item.IsHovered = true;
+        }
+    }
+
+    private void RadialSlot_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: RadialMenuItemViewModel item })
+        {
+            item.IsHovered = false;
+        }
+    }
+
     private static bool TryGetDroppedFilePaths(System.Windows.DragEventArgs e, out string[] filePaths)
     {
         filePaths = [];
@@ -1456,6 +1472,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
 public sealed class RadialMenuItemViewModel : INotifyPropertyChanged
 {
     private bool _isSelected;
+    private bool _isHovered;
 
     public RadialMenuItemViewModel(string ownerPageId, int index, CommandItem? command, string childPageId, string childPageTitle, double x, double y, double angleDegrees, RadialMenuRing ring)
     {
@@ -1507,6 +1524,25 @@ public sealed class RadialMenuItemViewModel : INotifyPropertyChanged
     public System.Windows.Media.Brush AccentBrush => Command?.AccentBrush ?? System.Windows.Media.Brushes.Transparent;
 
     public double Scale => IsSelected ? 1.12 : 1.0;
+
+    public bool IsEmpty => Command == null && string.IsNullOrWhiteSpace(ChildPageId);
+
+    public bool IsNotEmpty => !IsEmpty;
+
+    public bool IsHovered
+    {
+        get => _isHovered;
+        set
+        {
+            if (value == _isHovered)
+            {
+                return;
+            }
+
+            _isHovered = value;
+            OnPropertyChanged();
+        }
+    }
 
     public bool IsSelected
     {

@@ -39,6 +39,15 @@
             </ItemsControl.ItemTemplate>
         </ItemsControl>
 
+        <!-- Ring line around inner circle -->
+        <Ellipse Width="270"
+                 Height="270"
+                 Fill="Transparent"
+                 Stroke="#33FFFFFF"
+                 StrokeThickness="1.5"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center"/>
+
         <Ellipse Width="270"
                  Height="270"
                  Fill="#CC101010"
@@ -112,12 +121,38 @@
                             MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
                             DragOver="RadialSlot_DragOver"
                             Drop="RadialSlot_Drop"
+                            MouseEnter="RadialSlot_MouseEnter"
+                            MouseLeave="RadialSlot_MouseLeave"
                             RenderTransformOrigin="0.5,0.5">
                         <Border.RenderTransform>
                             <ScaleTransform ScaleX="{Binding Scale}" ScaleY="{Binding Scale}"/>
                         </Border.RenderTransform>
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <!-- Hide empty slots when not hovered -->
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsEmpty}" Value="True"/>
+                                            <Condition Binding="{Binding IsHovered}" Value="False"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                            <Grid Width="23" Height="23" HorizontalAlignment="Center" ClipToBounds="True">
+                            <!-- Show ➕ for empty slots when hovered -->
+                            <TextBlock Text="➕" 
+                                       Foreground="#60FFFFFF" 
+                                       FontSize="20" 
+                                       HorizontalAlignment="Center" 
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                            
+                            <!-- Show normal content for filled slots -->
+                            <Grid Width="23" Height="23" HorizontalAlignment="Center" ClipToBounds="True" Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <Image Source="{Binding IconSource}" Stretch="UniformToFill" Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                 <Viewbox Width="14" Height="14" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
@@ -130,7 +165,8 @@
                                        Width="50"
                                        TextAlignment="Center"
                                        TextTrimming="CharacterEllipsis"
-                                       Margin="0,4,0,0"/>
+                                       Margin="0,4,0,0"
+                                       Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                         </StackPanel>
                     </Border>
                 </DataTemplate>
@@ -160,15 +196,42 @@
                             MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
                             DragOver="RadialSlot_DragOver"
                             Drop="RadialSlot_Drop"
+                            MouseEnter="RadialSlot_MouseEnter"
+                            MouseLeave="RadialSlot_MouseLeave"
                             RenderTransformOrigin="0.5,0.5">
                         <Border.RenderTransform>
                             <ScaleTransform ScaleX="{Binding Scale}" ScaleY="{Binding Scale}"/>
                         </Border.RenderTransform>
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Visibility" Value="Visible"/>
+                                <Style.Triggers>
+                                    <!-- Hide empty slots when not hovered -->
+                                    <MultiDataTrigger>
+                                        <MultiDataTrigger.Conditions>
+                                            <Condition Binding="{Binding IsEmpty}" Value="True"/>
+                                            <Condition Binding="{Binding IsHovered}" Value="False"/>
+                                        </MultiDataTrigger.Conditions>
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                    </MultiDataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
                         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                            <!-- Show ➕ for empty slots when hovered -->
+                            <TextBlock Text="➕" 
+                                       Foreground="#60FFFFFF" 
+                                       FontSize="24" 
+                                       HorizontalAlignment="Center" 
+                                       VerticalAlignment="Center"
+                                       Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                            
+                            <!-- Show normal content for filled slots -->
                             <Grid Width="32"
                                   Height="32"
                                   HorizontalAlignment="Center"
-                                  ClipToBounds="True">
+                                  ClipToBounds="True"
+                                  Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
                                 <Image Source="{Binding IconSource}"
                                        Stretch="UniformToFill"
                                        Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
@@ -194,7 +257,8 @@
                                        Width="60"
                                        TextAlignment="Center"
                                        TextTrimming="CharacterEllipsis"
-                                       Margin="0,4,0,0"/>
+                                       Margin="0,4,0,0"
+                                       Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                         </StackPanel>
                     </Border>
                 </DataTemplate>
@@ -259,15 +323,42 @@
                                 MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
                                 DragOver="RadialSlot_DragOver"
                                 Drop="RadialSlot_Drop"
+                                MouseEnter="RadialSlot_MouseEnter"
+                                MouseLeave="RadialSlot_MouseLeave"
                                 RenderTransformOrigin="0.5,0.5">
                             <Border.RenderTransform>
                                 <ScaleTransform ScaleX="{Binding Scale}" ScaleY="{Binding Scale}"/>
                             </Border.RenderTransform>
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                    <Style.Triggers>
+                                        <!-- Hide empty slots when not hovered -->
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsEmpty}" Value="True"/>
+                                                <Condition Binding="{Binding IsHovered}" Value="False"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </MultiDataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                <!-- Show ➕ for empty slots when hovered -->
+                                <TextBlock Text="➕" 
+                                           Foreground="#60FFFFFF" 
+                                           FontSize="22" 
+                                           HorizontalAlignment="Center" 
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                
+                                <!-- Show normal content for filled slots -->
                                 <Grid Width="26"
                                       Height="26"
                                       HorizontalAlignment="Center"
-                                      ClipToBounds="True">
+                                      ClipToBounds="True"
+                                      Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <Image Source="{Binding IconSource}"
                                            Stretch="UniformToFill"
                                            Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
@@ -293,7 +384,8 @@
                                            Width="54"
                                            TextAlignment="Center"
                                            TextTrimming="CharacterEllipsis"
-                                           Margin="0,4,0,0"/>
+                                           Margin="0,4,0,0"
+                                           Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                             </StackPanel>
                         </Border>
                     </DataTemplate>
@@ -359,12 +451,38 @@
                                 MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
                                 DragOver="RadialSlot_DragOver"
                                 Drop="RadialSlot_Drop"
+                                MouseEnter="RadialSlot_MouseEnter"
+                                MouseLeave="RadialSlot_MouseLeave"
                                 RenderTransformOrigin="0.5,0.5">
                             <Border.RenderTransform>
                                 <ScaleTransform ScaleX="{Binding Scale}" ScaleY="{Binding Scale}"/>
                             </Border.RenderTransform>
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                    <Style.Triggers>
+                                        <!-- Hide empty slots when not hovered -->
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsEmpty}" Value="True"/>
+                                                <Condition Binding="{Binding IsHovered}" Value="False"/>
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </MultiDataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                <Grid Width="23" Height="23" HorizontalAlignment="Center" ClipToBounds="True">
+                                <!-- Show ➕ for empty slots when hovered -->
+                                <TextBlock Text="➕" 
+                                           Foreground="#60FFFFFF" 
+                                           FontSize="20" 
+                                           HorizontalAlignment="Center" 
+                                           VerticalAlignment="Center"
+                                           Visibility="{Binding IsEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                
+                                <!-- Show normal content for filled slots -->
+                                <Grid Width="23" Height="23" HorizontalAlignment="Center" ClipToBounds="True" Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
                                     <Image Source="{Binding IconSource}" Stretch="UniformToFill" Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                                     <Viewbox Width="14" Height="14" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
                                         <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
@@ -377,7 +495,8 @@
                                            Width="50"
                                            TextAlignment="Center"
                                            TextTrimming="CharacterEllipsis"
-                                           Margin="0,4,0,0"/>
+                                           Margin="0,4,0,0"
+                                           Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                             </StackPanel>
                         </Border>
                     </DataTemplate>
