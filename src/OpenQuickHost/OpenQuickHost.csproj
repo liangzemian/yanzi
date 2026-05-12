@@ -77,6 +77,7 @@
   <ItemGroup>
     <PackageReference Include="Basic.Reference.Assemblies.Net90" Version="1.8.3" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3912.50" />
   </ItemGroup>
 
   <ItemGroup>
@@ -84,19 +85,19 @@
   </ItemGroup>
 
   <Target Name="PublishExtensionHostForBuild" AfterTargets="Build">
-    <Exec Command='dotnet publish "$(MSBuildThisFileDirectory)..\Yanzi.ExtensionHost\Yanzi.ExtensionHost.csproj" -c $(Configuration) -r win-x64 --self-contained true -p:PublishSingleFile=true -p:SatelliteResourceLanguages=zh-Hans -p:DebugType=None -o "$(TargetDir)ExtensionHost"' />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\Yanzi.ExtensionHost\Yanzi.ExtensionHost.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -p:PublishSingleFile=true -p:SatelliteResourceLanguages=zh-Hans -p:DebugType=None -o &quot;$(TargetDir)ExtensionHost&quot;" />
   </Target>
 
   <Target Name="PublishExtensionHostForPublish" AfterTargets="Publish">
-    <Exec Command='dotnet publish "$(MSBuildThisFileDirectory)..\Yanzi.ExtensionHost\Yanzi.ExtensionHost.csproj" -c $(Configuration) -r win-x64 --self-contained true -p:PublishSingleFile=true -p:SatelliteResourceLanguages=zh-Hans -p:DebugType=None -o "$(PublishDir)ExtensionHost"' />
+    <Exec Command="dotnet publish &quot;$(MSBuildThisFileDirectory)..\Yanzi.ExtensionHost\Yanzi.ExtensionHost.csproj&quot; -c $(Configuration) -r win-x64 --self-contained true -p:PublishSingleFile=true -p:SatelliteResourceLanguages=zh-Hans -p:DebugType=None -o &quot;$(PublishDir)ExtensionHost&quot;" />
   </Target>
 
   <Target Name="CopyNativeWindowReferenceAssembliesForBuild" AfterTargets="Build">
-    <Exec Command='powershell -NoProfile -ExecutionPolicy Bypass -File "$(MSBuildThisFileDirectory)..\..\scripts\copy-native-window-refs.ps1" -OutputDir "$(TargetDir)NativeWindowRefs"' />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\..\scripts\copy-native-window-refs.ps1&quot; -OutputDir &quot;$(TargetDir)NativeWindowRefs&quot;" />
   </Target>
 
   <Target Name="CopyNativeWindowReferenceAssembliesForPublish" AfterTargets="Publish">
-    <Exec Command='powershell -NoProfile -ExecutionPolicy Bypass -File "$(MSBuildThisFileDirectory)..\..\scripts\copy-native-window-refs.ps1" -OutputDir "$(PublishDir)NativeWindowRefs"' />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\..\scripts\copy-native-window-refs.ps1&quot; -OutputDir &quot;$(PublishDir)NativeWindowRefs&quot;" />
   </Target>
 
 </Project>

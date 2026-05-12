@@ -1,0 +1,174 @@
+<Window x:Class="OpenQuickHost.YanmOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        Focusable="True"
+        KeyDown="Window_KeyDown">
+    <Grid x:Name="Root"
+          Background="#59000000"
+          PreviewMouseLeftButtonDown="Root_MouseLeftButtonDown"
+          PreviewMouseMove="Root_MouseMove"
+          PreviewMouseLeftButtonUp="Root_MouseLeftButtonUp"
+          PreviewMouseRightButtonDown="Root_MouseRightButtonDown">
+        <Canvas x:Name="GridCanvas" Panel.ZIndex="0" IsHitTestVisible="False" Opacity="0.28"/>
+        <Canvas x:Name="ComponentCanvas" Panel.ZIndex="20"/>
+        <Border x:Name="CornerHintPanel"
+                Panel.ZIndex="95"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Margin="22,22,0,0"
+                Padding="12,7"
+                CornerRadius="14"
+                Background="#D9111318"
+                BorderBrush="#22FFFFFF"
+                BorderThickness="1">
+            <TextBlock x:Name="CornerHintText"
+                       Foreground="#F4FFFFFF"
+                       FontSize="12.5"
+                       Text=""/>
+        </Border>
+        <Border x:Name="WelcomePanel"
+                Panel.ZIndex="5"
+                Width="520"
+                Padding="28"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                CornerRadius="28"
+                Background="#E812141B"
+                BorderBrush="#26FFFFFF"
+                BorderThickness="1">
+            <StackPanel>
+                <TextBlock x:Name="WelcomeTitleText"
+                           Text="欢迎使用燕幕"
+                           Foreground="White"
+                           FontSize="30"
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock x:Name="WelcomeBodyText"
+                           Text="这是一个全局信息层：你可以把日历、待办、网页数据、脚本结果和 AI 生成的小组件放在任意位置。"
+                           Foreground="#BFFFFFFF"
+                           FontSize="14"
+                           LineHeight="24"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           Margin="0,14,0,0"/>
+                <Border Margin="0,22,0,0"
+                        Padding="14,10"
+                        CornerRadius="16"
+                        Background="#182B80FF">
+                    <TextBlock x:Name="WelcomeActionText"
+                               Text=""
+                               Foreground="#DDEBFFFF"
+                               FontSize="13"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"/>
+                </Border>
+            </StackPanel>
+        </Border>
+        <Border x:Name="WebView2WarningPanel"
+                Panel.ZIndex="90"
+                Visibility="Collapsed"
+                Width="560"
+                Padding="28"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                CornerRadius="28"
+                Background="#F212141B"
+                BorderBrush="#33FFFFFF"
+                BorderThickness="1">
+            <StackPanel>
+                <TextBlock Text="燕幕组件渲染环境缺失"
+                           Foreground="White"
+                           FontSize="26"
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="燕幕使用 WebView2 渲染 HTML 组件。当前系统可能安装了 Edge 浏览器，但缺少 Microsoft Edge WebView2 Runtime，因此组件会显示为空白。"
+                           Foreground="#BFFFFFFF"
+                           FontSize="14"
+                           LineHeight="24"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           Margin="0,14,0,0"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,22,0,0">
+                    <Button Content="下载 WebView2 Runtime"
+                            Padding="14,8"
+                            FontSize="13"
+                            Foreground="White"
+                            Background="#FF2563EB"
+                            BorderBrush="#FF3B82F6"
+                            Click="DownloadWebView2Button_Click"/>
+                    <Button Content="打开燕幕设置"
+                            Margin="10,0,0,0"
+                            Padding="14,8"
+                            FontSize="13"
+                            Foreground="White"
+                            Background="#22FFFFFF"
+                            BorderBrush="#33FFFFFF"
+                            Click="OpenYanmSettingsButton_Click"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+        <Canvas x:Name="OverlayCanvas" Panel.ZIndex="10" IsHitTestVisible="False">
+            <Border x:Name="SelectionBox"
+                    Visibility="Collapsed"
+                    BorderBrush="#FF64C7FF"
+                    BorderThickness="2"
+                    Background="#4464C7FF"
+                    CornerRadius="8"/>
+            <Border x:Name="HoverCell"
+                    Visibility="Collapsed"
+                    BorderBrush="#884EA7FF"
+                    BorderThickness="1"
+                    Background="#1F4EA7FF"
+                    CornerRadius="4"/>
+        </Canvas>
+        <Border x:Name="HintPanel"
+                Panel.ZIndex="100"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,28"
+                Padding="14,8"
+                CornerRadius="16"
+                Background="#DD111318"
+                BorderBrush="#22FFFFFF"
+                BorderThickness="1">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock x:Name="HintText"
+                           Foreground="#DDFFFFFF"
+                           FontSize="13"
+                           VerticalAlignment="Center"
+                           Text=""/>
+                <Button x:Name="ResetDefaultsButton"
+                        Content="重置默认组件"
+                        Margin="14,0,0,0"
+                        Padding="10,4"
+                        FontSize="12"
+                        Foreground="White"
+                        Background="#22FFFFFF"
+                        BorderBrush="#33FFFFFF"
+                        Click="ResetDefaultsButton_Click"/>
+                <Button Content="复制提示词"
+                        Margin="8,0,0,0"
+                        Padding="10,4"
+                        FontSize="12"
+                        Foreground="White"
+                        Background="#22FFFFFF"
+                        BorderBrush="#33FFFFFF"
+                        Click="CopyYanmPromptButton_Click"/>
+                <Button Content="燕幕设置"
+                        Margin="8,0,0,0"
+                        Padding="10,4"
+                        FontSize="12"
+                        Foreground="White"
+                        Background="#22FFFFFF"
+                        BorderBrush="#33FFFFFF"
+                        Click="OpenYanmSettingsButton_Click"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

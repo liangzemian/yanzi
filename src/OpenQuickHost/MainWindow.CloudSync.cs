@@ -991,7 +991,8 @@ public partial class MainWindow
             !AreQuickPanelMouseTriggersEqual(settings.QuickPanelMouseTriggers, incoming.QuickPanelMouseTriggers) ||
             snapshot.YarnSelect != null && !AreJsonPayloadsEqual(settings.YarnSelect, incoming.YarnSelect) ||
             snapshot.RadialMenu != null && !AreJsonPayloadsEqual(settings.RadialMenu, incoming.RadialMenu) ||
-            snapshot.YanyuRules != null && !AreJsonPayloadsEqual(settings.YanyuRules, incoming.YanyuRules);
+            snapshot.YanyuRules != null && !AreJsonPayloadsEqual(settings.YanyuRules, incoming.YanyuRules) ||
+            snapshot.Yanm != null && !AreJsonPayloadsEqual(settings.Yanm, incoming.Yanm);
         if (!changed)
         {
             HostAssets.AppendLog("Quick panel cloud pull: no local changes detected.");
@@ -1019,6 +1020,11 @@ public partial class MainWindow
         if (snapshot.YanyuRules != null)
         {
             settings.YanyuRules = incoming.YanyuRules;
+        }
+
+        if (snapshot.Yanm != null)
+        {
+            settings.Yanm = incoming.Yanm;
         }
 
         AppSettingsStore.Save(settings);
@@ -1065,7 +1071,8 @@ public partial class MainWindow
                settings.ContextFavoriteExtensionIds.Count > 0 ||
                settings.YanyuRules.Count > 0 ||
                settings.YarnSelect.Rules.Count > 0 ||
-               settings.RadialMenu.Enabled ||
+            settings.RadialMenu.Enabled ||
+               settings.Yanm.Components.Count > 0 ||
                settings.RadialMenu.Pages.Any(static page =>
                    page.Slots.Any(static slot => !string.IsNullOrWhiteSpace(slot)) ||
                    page.ChildPageIds.Any(static childPageId => !string.IsNullOrWhiteSpace(childPageId)));
@@ -1289,12 +1296,14 @@ public partial class MainWindow
         {
             InputHookService.ReloadSettings();
             YarnSelectService.ReloadSettings();
+            KeyboardDoubleTapService.ApplyYanmSettings(settings.Yanm);
             if (!YarnSelectService.IsRunning && settings.YarnSelect?.Enabled == true)
             {
                 YarnSelectService.Start(HandleYarnSelectAction);
             }
 
             RefreshYanyuRules();
+            _yanmOverlay?.ReloadSettings();
             RefreshLauncherHotkeyRegistration();
             RefreshExtensionHotkeys();
         }
@@ -1348,17 +1357,25 @@ public partial class MainWindow
         QueueCloudWebDavConfigSync("credential-saved");
     }
 
-    public void NotifyQuickPanelSettingsChanged(string reason)
+    public void NotifyQuickPanelSettingsChanged(string reason, bool refreshYanmOverlay = true)
     {
         _appSettings = AppSettingsStore.Load();
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();
             YarnSelectService.ReloadSettings();
+            KeyboardDoubleTapService.ApplyYanmSettings(_appSettings.Yanm);
             if (!YarnSelectService.IsRunning && _appSettings.YarnSelect?.Enabled == true)
             {
                 YarnSelectService.Start(HandleYarnSelectAction);
             }
+
+            if (refreshYanmOverlay)
+            {
+                _yanmOverlay?.ReloadSettings();
+            }
+
+            RefreshYanmHotkeyRegistration();
         }
 
         QueueCloudQuickPanelConfigSync(reason);
@@ -1425,6 +1442,42 @@ public partial class MainWindow
         }
 
         message = $"主程序快捷键已更新为 {settings.LauncherHotkey}";
+        return true;
+    }
+
+    public string GetYanmHotkey()
+    {
+        var yanm = AppSettingsStore.Load().Yanm;
+        return yanm == null ? string.Empty : (yanm.ActivationKey.Equals(YanmActivationKeys.Custom, StringComparison.OrdinalIgnoreCase) ? yanm.CustomShortcut : yanm.ActivationKey);
+    }
+
+    public bool TryUpdateYanmHotkey(string shortcut, out string message)
+    {
+        message = string.Empty;
+        if (string.IsNullOrWhiteSpace(shortcut) || !TryParseHotkey(shortcut, out _, out _))
+        {
+            message = "快捷键格式无效。示例：Ctrl+Alt+Y";
+            return false;
+        }
+
+        var settings = AppSettingsStore.Load();
+        settings.Yanm ??= new YanmSettings();
+        var previous = settings.Yanm.CustomShortcut;
+        settings.Yanm.CustomShortcut = shortcut.Trim();
+        settings.Yanm.ActivationKey = YanmActivationKeys.Custom;
+        AppSettingsStore.Save(settings);
+
+        if (!RefreshYanmHotkeyRegistration())
+        {
+            settings.Yanm.CustomShortcut = previous;
+            AppSettingsStore.Save(settings);
+            RefreshYanmHotkeyRegistration();
+            message = "燕幕快捷键注册失败，可能与系统或其他程序冲突。";
+            return false;
+        }
+
+        KeyboardDoubleTapService.ApplyYanmSettings(settings.Yanm);
+        message = $"燕幕快捷键已更新为 {settings.Yanm.CustomShortcut}";
         return true;
     }
 

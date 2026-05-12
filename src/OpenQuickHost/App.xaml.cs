@@ -341,6 +341,15 @@ public partial class App : WpfApplication
         CurrentApp?.OpenRunningExtensionsWindow();
     }
 
+    private void TrayResetKeyboardState_Click(object sender, RoutedEventArgs e)
+    {
+        KeyboardDoubleTapService.ResetStuckKeyboardState();
+        ShowDesktopNotification(
+            "键盘状态已修复",
+            "已清理可能卡住的 Win、Ctrl、Alt、Shift 等按键状态。如果刚才输入或快捷键异常，可以继续使用。",
+            Forms.ToolTipIcon.Info);
+    }
+
     private void TrayExit_Click(object sender, RoutedEventArgs e)
     {
         if (MainWindow is MainWindow mw)

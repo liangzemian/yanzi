@@ -67,6 +67,8 @@ public static class ExtensionPackageService
     private static void WriteJsonEntry(ZipArchive archive, string entryName, object data)
     {
         var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        // 使用固定的时间戳，确保相同内容生成相同的hash
+        entry.LastWriteTime = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
         using var writer = new StreamWriter(entry.Open(), Encoding.UTF8);
         writer.Write(JsonSerializer.Serialize(data, JsonOptions));
     }
@@ -77,6 +79,10 @@ public static class ExtensionPackageService
         using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
         {
             WriteManifestEntry(archive, directoryPath, iconOverride);
+            
+            // 使用固定的时间戳（2020-01-01），确保相同内容生成相同的hash
+            var fixedTimestamp = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+            
             foreach (var filePath in Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
                          .Where(path => ShouldIncludeInPackage(directoryPath, path)))
             {
@@ -86,7 +92,13 @@ public static class ExtensionPackageService
                     continue;
                 }
 
-                archive.CreateEntryFromFile(filePath, relativePath, CompressionLevel.Optimal);
+                // 手动创建entry并设置固定时间戳，而不是使用CreateEntryFromFile
+                var entry = archive.CreateEntry(relativePath, CompressionLevel.Optimal);
+                entry.LastWriteTime = fixedTimestamp;
+                
+                using var entryStream = entry.Open();
+                using var fileStream = File.OpenRead(filePath);
+                fileStream.CopyTo(entryStream);
             }
         }
 

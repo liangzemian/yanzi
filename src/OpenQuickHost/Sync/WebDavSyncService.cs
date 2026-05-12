@@ -50,7 +50,8 @@ public sealed class WebDavSyncService
     public async Task ProbeAsync(CancellationToken cancellationToken = default)
     {
         EnsureConfigured();
-        await EnsureCollectionTreeAsync(cancellationToken, NormalizeRootPath(_settings.WebDavRootPath).Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries));
+        // 修复：根路径已经在BuildRelativeUri中处理，这里不需要再创建
+        // 只需要确保packages目录存在即可
         await EnsureCollectionAsync("packages", cancellationToken);
     }
 
@@ -94,6 +95,10 @@ public sealed class WebDavSyncService
     {
         EnsureConfigured();
         await ProbeAsync(cancellationToken);
+        
+        // 确保基础目录存在（特别是在清空远程后）
+        await EnsureCollectionAsync("packages", cancellationToken);
+        await EnsureCollectionAsync("state", cancellationToken);
 
         var remoteIndex = await LoadRemoteIndexAsync(cancellationToken);
         var localState = LoadLocalIndex();
@@ -131,6 +136,13 @@ public sealed class WebDavSyncService
                 catch (InvalidDataException ex)
                 {
                     HostAssets.AppendLog($"WebDAV skipped invalid remote package for {remoteEntry.ExtensionId}: {ex.Message}");
+                    remoteIndexChanged = true;
+                    continue;
+                }
+                catch (FileNotFoundException ex)
+                {
+                    // 远程索引中有记录但文件不存在（可能被手动删除），从索引中移除
+                    HostAssets.AppendLog($"WebDAV skipped missing remote package for {remoteEntry.ExtensionId}: {ex.Message}");
                     remoteIndexChanged = true;
                     continue;
                 }
@@ -226,6 +238,131 @@ public sealed class WebDavSyncService
         return new WebDavSyncResult(uploaded, pulled, SyncRootDisplay, configUploaded, configPulled);
     }
 
+    public async Task ClearCloudAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        await ProbeAsync(cancellationToken);
+
+        HostAssets.AppendLog("WebDAV clear cloud started");
+
+        // 1. 先清空本地状态，避免后续同步冲突
+        if (File.Exists(HostAssets.WebDavSyncStatePath))
+        {
+            File.Delete(HostAssets.WebDavSyncStatePath);
+            HostAssets.AppendLog("WebDAV clear cloud: cleared local state");
+        }
+
+        // 2. 删除根目录的index.json（旧版本可能存在）
+        try
+        {
+            await DeleteRemoteFileAsync("index.json", cancellationToken);
+            HostAssets.AppendLog("WebDAV clear cloud: deleted root index.json");
+            await Task.Delay(500, cancellationToken); // 避免频率限制
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"WebDAV clear cloud: failed to delete root index: {ex.Message}");
+        }
+
+        // 3. 删除state目录（包括索引和配置）
+        try
+        {
+            await DeleteRemoteDirectoryAsync("state", cancellationToken);
+            HostAssets.AppendLog("WebDAV clear cloud: deleted state directory");
+            await Task.Delay(500, cancellationToken); // 避免频率限制
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"WebDAV clear cloud: failed to delete state: {ex.Message}");
+        }
+
+        // 4. 删除packages目录（最大的目录，最后删除）
+        try
+        {
+            await DeleteRemoteDirectoryAsync("packages", cancellationToken);
+            HostAssets.AppendLog("WebDAV clear cloud: deleted packages directory");
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"WebDAV clear cloud: failed to delete packages: {ex.Message}");
+            // 如果删除packages失败，尝试逐个删除子目录
+            await DeletePackagesGraduallyAsync(cancellationToken);
+        }
+
+        HostAssets.AppendLog("WebDAV clear cloud completed");
+    }
+
+    private async Task DeletePackagesGraduallyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            HostAssets.AppendLog("WebDAV clear cloud: attempting gradual deletion of packages");
+            
+            // 读取远程索引，获取所有扩展ID
+            var remoteIndex = await LoadRemoteIndexAsync(cancellationToken);
+            var extensionIds = remoteIndex.Items
+                .Select(item => item.ExtensionId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            HostAssets.AppendLog($"WebDAV clear cloud: found {extensionIds.Count} extensions to delete");
+
+            // 逐个删除扩展目录，每次删除后延迟
+            for (int i = 0; i < extensionIds.Count; i++)
+            {
+                var extensionId = extensionIds[i];
+                try
+                {
+                    await DeleteRemotePackageTreeAsync(extensionId, cancellationToken);
+                    HostAssets.AppendLog($"WebDAV clear cloud: deleted extension {i + 1}/{extensionIds.Count}: {extensionId}");
+                    
+                    // 每删除5个扩展延迟1秒，避免频率限制
+                    if ((i + 1) % 5 == 0)
+                    {
+                        await Task.Delay(1000, cancellationToken);
+                    }
+                    else
+                    {
+                        await Task.Delay(200, cancellationToken);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    HostAssets.AppendLog($"WebDAV clear cloud: failed to delete extension {extensionId}: {ex.Message}");
+                }
+            }
+
+            // 最后尝试删除packages目录本身
+            await Task.Delay(1000, cancellationToken);
+            await DeleteRemoteDirectoryAsync("packages", cancellationToken);
+            HostAssets.AppendLog("WebDAV clear cloud: deleted packages directory after gradual cleanup");
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"WebDAV clear cloud: gradual deletion failed: {ex.Message}");
+        }
+    }
+
+    private async Task DeleteRemoteDirectoryAsync(string relativePath, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(HttpMethod.Delete, relativePath);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.NotFound)
+        {
+            await ThrowWebDavFailureAsync(request, response, cancellationToken);
+        }
+    }
+
+    private async Task DeleteRemoteFileAsync(string relativePath, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(HttpMethod.Delete, relativePath);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode && response.StatusCode != HttpStatusCode.NotFound)
+        {
+            await ThrowWebDavFailureAsync(request, response, cancellationToken);
+        }
+    }
+
     private async Task<(bool uploaded, bool pulled)> SyncLauncherConfigAsync(CancellationToken cancellationToken)
     {
         await EnsureCollectionAsync("state", cancellationToken);
@@ -314,6 +451,11 @@ public sealed class WebDavSyncService
         if (snapshot.YanyuRules != null)
         {
             settings.YanyuRules = incoming.YanyuRules;
+        }
+
+        if (snapshot.Yanm != null)
+        {
+            settings.Yanm = incoming.Yanm;
         }
 
         AppSettingsStore.Save(settings);
@@ -636,7 +778,9 @@ public sealed class WebDavSyncService
             return;
         }
 
-        await EnsureCollectionAsync($"packages/{entry.ExtensionId}", cancellationToken);
+        // 确保整个目录树存在（packages 和 packages/{extensionId}）
+        await EnsureCollectionTreeAsync(cancellationToken, "packages", entry.ExtensionId);
+        
         using var request = CreateRequest(HttpMethod.Put, entry.PackagePath);
         request.Content = new ByteArrayContent(bytes);
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/zip");
@@ -701,17 +845,37 @@ public sealed class WebDavSyncService
 
     private async Task VerifyUploadedPackageAsync(WebDavSyncEntry entry, byte[] expectedBytes, CancellationToken cancellationToken)
     {
-        var remoteBytes = await GetBytesAsync(entry.PackagePath, cancellationToken);
-        var remoteHash = ComputeSha256(remoteBytes);
-        if (!TryValidateZipArchive(remoteBytes, out var zipError) ||
-            !string.Equals(remoteHash, entry.PackageHash, StringComparison.OrdinalIgnoreCase))
+        // 验证上传的文件，如果失败则重试
+        const int maxRetries = 3;
+        const int retryDelayMs = 500;
+        
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            throw new InvalidDataException(
-                $"WebDAV 上传校验失败：{entry.PackagePath}，expectedBytes={expectedBytes.Length}, remoteBytes={remoteBytes.Length}, expectedHash={entry.PackageHash}, remoteHash={remoteHash}, remoteHead={FormatBytePrefix(remoteBytes)}, zipError={zipError}。");
-        }
+            try
+            {
+                var remoteBytes = await GetBytesAsync(entry.PackagePath, cancellationToken);
+                var remoteHash = ComputeSha256(remoteBytes);
+                if (!TryValidateZipArchive(remoteBytes, out var zipError) ||
+                    !string.Equals(remoteHash, entry.PackageHash, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidDataException(
+                        $"WebDAV 上传校验失败：{entry.PackagePath}，expectedBytes={expectedBytes.Length}, remoteBytes={remoteBytes.Length}, expectedHash={entry.PackageHash}, remoteHash={remoteHash}, remoteHead={FormatBytePrefix(remoteBytes)}, zipError={zipError}。");
+                }
 
-        HostAssets.AppendLog(
-            $"WebDAV verified package: id={entry.ExtensionId}, path={entry.PackagePath}, bytes={remoteBytes.Length}, hash={remoteHash}");
+                HostAssets.AppendLog(
+                    $"WebDAV verified package: id={entry.ExtensionId}, path={entry.PackagePath}, bytes={remoteBytes.Length}, hash={remoteHash}");
+                return; // 验证成功
+            }
+            catch (FileNotFoundException) when (attempt < maxRetries)
+            {
+                // 文件可能还在同步中，等待后重试
+                HostAssets.AppendLog($"WebDAV verify retry {attempt}/{maxRetries}: {entry.PackagePath} not found yet, waiting...");
+                await Task.Delay(retryDelayMs * attempt, cancellationToken);
+            }
+        }
+        
+        // 所有重试都失败，抛出异常
+        throw new FileNotFoundException($"WebDAV 上传验证失败：{entry.PackagePath} 上传后无法读取，可能是服务器延迟或权限问题。", entry.PackagePath);
     }
 
     private static async Task ReplaceDirectoryFromPackageAsync(string targetDirectory, byte[] packageBytes, CancellationToken cancellationToken)
@@ -764,25 +928,67 @@ public sealed class WebDavSyncService
 
     private async Task EnsureCollectionAsync(string relativePath, CancellationToken cancellationToken)
     {
-        using var request = CreateRequest(new HttpMethod("MKCOL"), relativePath);
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
-        if (response.IsSuccessStatusCode)
-        {
-            return;
-        }
+        const int maxRetries = 3;
+        Exception? lastException = null;
 
-        if (response.StatusCode == HttpStatusCode.MethodNotAllowed ||
-            response.StatusCode == HttpStatusCode.Conflict)
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            if (await CollectionExistsAsync(relativePath, cancellationToken))
+            try
             {
-                return;
-            }
+                using var request = CreateRequest(new HttpMethod("MKCOL"), relativePath);
+                using var response = await _httpClient.SendAsync(request, cancellationToken);
+                if (response.IsSuccessStatusCode)
+                {
+                    return;
+                }
 
-            throw new InvalidOperationException($"WebDAV 目录不可用：{relativePath}，服务器返回 {(int)response.StatusCode} {response.ReasonPhrase}。");
+                if (response.StatusCode == HttpStatusCode.MethodNotAllowed ||
+                    response.StatusCode == HttpStatusCode.Conflict)
+                {
+                    if (await CollectionExistsAsync(relativePath, cancellationToken))
+                    {
+                        return;
+                    }
+
+                    throw new InvalidOperationException($"WebDAV 目录不可用：{relativePath}，服务器返回 {(int)response.StatusCode} {response.ReasonPhrase}。");
+                }
+
+                // 503错误：频率限制
+                if (response.StatusCode == HttpStatusCode.ServiceUnavailable)
+                {
+                    var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                    if (responseBody.Contains("Too many requests") || responseBody.Contains("BlockedTemporarily"))
+                    {
+                        if (attempt < maxRetries)
+                        {
+                            var delay = attempt * 2000; // 2秒、4秒、6秒
+                            HostAssets.AppendLog($"WebDAV rate limited, retrying in {delay}ms (attempt {attempt}/{maxRetries})");
+                            await Task.Delay(delay, cancellationToken);
+                            continue;
+                        }
+
+                        throw new InvalidOperationException(
+                            "坚果云频率限制：请求过于频繁，账号已被临时封禁。\n\n" +
+                            "请等待10-30分钟后再试，期间不要进行任何WebDAV操作。");
+                    }
+                }
+
+                await ThrowWebDavFailureAsync(request, response, cancellationToken);
+            }
+            catch (InvalidOperationException)
+            {
+                throw; // 重新抛出我们自己的异常
+            }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                lastException = ex;
+                var delay = attempt * 1000;
+                HostAssets.AppendLog($"WebDAV request failed, retrying in {delay}ms (attempt {attempt}/{maxRetries}): {ex.Message}");
+                await Task.Delay(delay, cancellationToken);
+            }
         }
 
-        await ThrowWebDavFailureAsync(request, response, cancellationToken);
+        throw lastException ?? new InvalidOperationException($"WebDAV 目录创建失败：{relativePath}");
     }
 
     private async Task<bool> CollectionExistsAsync(string relativePath, CancellationToken cancellationToken)

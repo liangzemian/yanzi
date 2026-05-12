@@ -479,7 +479,9 @@ public partial class MainWindow
             () => _quickPanel?.ShowAtMouse(),
             () => _quickPanel?.ExecuteHoveredSlotFromHoldRelease(),
             () => _radialMenu?.ShowAtMouse(),
-            () => _radialMenu?.ExecuteSelectedFromHoldRelease());
+            () => _radialMenu?.ExecuteSelectedFromHoldRelease(),
+            () => _yanmOverlay?.ShowTemporary(),
+            () => _yanmOverlay?.HideTemporary());
     }
 
     public void StopMousePanelService()
@@ -876,6 +878,7 @@ public partial class MainWindow
         YanyuTriggerService.Stop();
         YarnSelectService.Stop();
         UnregisterLauncherHotkey();
+        UnregisterYanmHotkey();
         UnregisterExtensionHotkeys();
         SyncStatus = "已暂停快捷键、扩展快捷键、燕选和鼠标面板监听。";
     }
@@ -885,11 +888,12 @@ public partial class MainWindow
         _listenerServicesPaused = false;
         InputHookService.ReloadSettings();
         StartMousePanelService();
-        KeyboardDoubleTapService.Start(HandleKeyboardDoubleTap);
+        StartKeyboardTriggerService();
         YanyuTriggerService.Start(HandleYanyuRuleTriggered);
         YarnSelectService.Start(HandleYarnSelectAction);
         RefreshYanyuRules();
         RefreshLauncherHotkeyRegistration();
+        RefreshYanmHotkeyRegistration();
         RefreshExtensionHotkeys();
         SyncStatus = "已恢复快捷键、扩展快捷键、燕选和鼠标面板监听。";
     }
@@ -933,11 +937,12 @@ public partial class MainWindow
         _source.AddHook(WndProc);
         if (!_listenerServicesPaused)
         {
-            KeyboardDoubleTapService.Start(HandleKeyboardDoubleTap);
+            StartKeyboardTriggerService();
             YanyuTriggerService.Start(HandleYanyuRuleTriggered);
             YarnSelectService.Start(HandleYarnSelectAction);
             RefreshYanyuRules();
             RefreshLauncherHotkeyRegistration();
+            RefreshYanmHotkeyRegistration();
             RefreshExtensionHotkeys();
         }
     }
@@ -955,6 +960,7 @@ public partial class MainWindow
             {
                 UnregisterExtensionHotkeys();
                 UnregisterLauncherHotkey();
+                UnregisterYanmHotkey();
                 KeyboardDoubleTapService.Stop();
                 YanyuTriggerService.Stop();
                 YarnSelectService.Stop();
@@ -1078,6 +1084,11 @@ public partial class MainWindow
         if (msg == WmHotKey && wParam.ToInt32() == HotKeyId)
         {
             TogglePanelVisibility();
+            handled = true;
+        }
+        else if (msg == WmHotKey && wParam.ToInt32() == YanmHotKeyId)
+        {
+            _yanmOverlay?.ToggleFromShortcut();
             handled = true;
         }
         else if (msg == WmHotKey && _registeredExtensionHotkeys.TryGetValue(wParam.ToInt32(), out var command))
@@ -1224,6 +1235,42 @@ public partial class MainWindow
 
         HostAssets.AppendLog($"Launcher keyboard double tap invoked: {keyName}.");
         TogglePanelVisibility();
+    }
+
+    private void StartKeyboardTriggerService()
+    {
+        KeyboardDoubleTapService.Start(
+            HandleKeyboardDoubleTap,
+            ShowYanmOverlayHold,
+            HideYanmOverlayHold,
+            ToggleYanmOverlayPinned);
+    }
+
+    private void ShowYanmOverlayHold()
+    {
+        var settings = AppSettingsStore.Load().Yanm ?? new YanmSettings();
+        if (!settings.Enabled || !settings.TriggerWinHold)
+        {
+            return;
+        }
+
+        _yanmOverlay?.ShowTemporary();
+    }
+
+    private void HideYanmOverlayHold()
+    {
+        _yanmOverlay?.HideTemporary();
+    }
+
+    private void ToggleYanmOverlayPinned()
+    {
+        var settings = AppSettingsStore.Load().Yanm ?? new YanmSettings();
+        if (!settings.Enabled || !settings.TriggerWinDoubleTap)
+        {
+            return;
+        }
+
+        _yanmOverlay?.TogglePinned();
     }
 
     private void RefreshExtensionHotkeys()
@@ -1400,6 +1447,39 @@ public partial class MainWindow
         return success;
     }
 
+    private bool RefreshYanmHotkeyRegistration()
+    {
+        if (_source == null)
+        {
+            return false;
+        }
+
+        UnregisterYanmHotkey();
+        var yanm = AppSettingsStore.Load().Yanm ?? new YanmSettings();
+        if (!yanm.Enabled || !string.Equals(YanmActivationKeys.Normalize(yanm.ActivationKey), YanmActivationKeys.Custom, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!TryParseHotkey(yanm.CustomShortcut, out var modifiers, out var key))
+        {
+            HostAssets.AppendLog($"Invalid yanm hotkey skipped: {yanm.CustomShortcut}");
+            return false;
+        }
+
+        var success = RegisterHotKey(
+            _source.Handle,
+            YanmHotKeyId,
+            modifiers | ModNoRepeat,
+            (uint)KeyInterop.VirtualKeyFromKey(key));
+        if (!success)
+        {
+            HostAssets.AppendLog($"Failed to register yanm hotkey: {yanm.CustomShortcut}");
+        }
+
+        return success;
+    }
+
     private void UnregisterLauncherHotkey()
     {
         if (_source == null)
@@ -1408,6 +1488,16 @@ public partial class MainWindow
         }
 
         UnregisterHotKey(_source.Handle, HotKeyId);
+    }
+
+    private void UnregisterYanmHotkey()
+    {
+        if (_source == null)
+        {
+            return;
+        }
+
+        UnregisterHotKey(_source.Handle, YanmHotKeyId);
     }
 
     [DllImport("user32.dll", SetLastError = true)]

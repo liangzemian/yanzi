@@ -103,6 +103,7 @@ public static class YarnSelectService
     public static void ReloadSettings()
     {
         _settings = AppSettingsStore.Load().YarnSelect ?? new YarnSelectSettings();
+        _settings.WhitelistedProcesses ??= [];
         _settings.BlacklistedProcesses ??= [];
         if (_isRunning && !_settings.Enabled)
         {
@@ -117,6 +118,16 @@ public static class YarnSelectService
             .Select(static rule => $"Left+{rule.TriggerKey}:{rule.ActionType}")
             .ToList();
         enabled.Add($"delay={Math.Clamp(_settings.TriggerDelayMilliseconds, 0, 1000)}ms");
+        var whitelist = _settings.WhitelistedProcesses ?? [];
+        var blacklist = _settings.BlacklistedProcesses ?? [];
+        if (whitelist.Count > 0)
+        {
+            enabled.Add($"whitelist={whitelist.Count}");
+        }
+        else if (blacklist.Count > 0)
+        {
+            enabled.Add($"blacklist={blacklist.Count}");
+        }
         return string.Join(", ", enabled);
     }
 
@@ -227,7 +238,7 @@ public static class YarnSelectService
 
     private static bool CanTrigger()
     {
-        if (!_leftButtonDown || _triggeredThisHold || IsForegroundProcessBlacklisted())
+        if (!_leftButtonDown || _triggeredThisHold || !IsForegroundProcessAllowed())
         {
             return false;
         }
@@ -394,12 +405,23 @@ public static class YarnSelectService
 
     private static bool IsKeyDown(int vkCode) => (GetAsyncKeyState(vkCode) & 0x8000) != 0;
 
-    private static bool IsForegroundProcessBlacklisted()
+    private static bool IsForegroundProcessAllowed()
     {
         var processName = GetForegroundProcessName();
-        return !string.IsNullOrWhiteSpace(processName) &&
-               _settings.BlacklistedProcesses.Any(item =>
-                   processName.Equals(NormalizeProcessName(item), StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(processName))
+        {
+            return false;
+        }
+
+        var whitelist = _settings.WhitelistedProcesses ?? [];
+        if (whitelist.Count > 0)
+        {
+            return whitelist.Any(item =>
+                processName.Equals(NormalizeProcessName(item), StringComparison.OrdinalIgnoreCase));
+        }
+
+        return !_settings.BlacklistedProcesses.Any(item =>
+            processName.Equals(NormalizeProcessName(item), StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetForegroundProcessName()

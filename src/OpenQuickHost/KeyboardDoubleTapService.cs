@@ -19,13 +19,19 @@ public static class KeyboardDoubleTapService
     private const int VkRShift = 0xA1;
     private const int VkLWin = 0x5B;
     private const int VkRWin = 0x5C;
+    private const int VkCapsLock = 0x14;
     private const uint LlkhfInjected = 0x00000010;
 
     private static readonly LowLevelKeyboardProc Proc = HookCallback;
     private static IntPtr _hookId = IntPtr.Zero;
     private static Action<string>? _onDoubleTap;
+    private static Action? _onWinHold;
+    private static Action? _onWinRelease;
+    private static Action? _onWinDoubleTap;
     private static ModifierTapKind _lastTapKind = ModifierTapKind.None;
     private static long _lastTapTimestamp;
+    private static long _lastWinTapTimestamp;
+    private static long _yanmTriggerDownTimestamp;
     private static bool _sequenceDirty;
     private static bool _leftCtrlDown;
     private static bool _rightCtrlDown;
@@ -38,10 +44,19 @@ public static class KeyboardDoubleTapService
     private static bool _doubleCtrlEnabled = true;
     private static bool _doubleAltEnabled = true;
     private static bool _suppressCurrentAltTap;
+    private static bool _winOverlayActive;
+    private static bool _winOverlayEnabled = true;
+    private static bool _winHoldEnabled = true;
+    private static bool _winDoubleTapEnabled = true;
+    private static string _yanmActivationKey = YanmActivationKeys.Win;
 
     public static bool IsRunning => _hookId != IntPtr.Zero;
 
-    public static void Start(Action<string> onDoubleTap)
+    public static void Start(
+        Action<string> onDoubleTap,
+        Action? onWinHold = null,
+        Action? onWinRelease = null,
+        Action? onWinDoubleTap = null)
     {
         if (IsRunning)
         {
@@ -50,10 +65,15 @@ public static class KeyboardDoubleTapService
         }
 
         _onDoubleTap = onDoubleTap;
+        _onWinHold = onWinHold;
+        _onWinRelease = onWinRelease;
+        _onWinDoubleTap = onWinDoubleTap;
         _sequenceDirty = false;
         _lastTapKind = ModifierTapKind.None;
         _lastTapTimestamp = 0;
+        _lastWinTapTimestamp = 0;
         ApplyConfiguredShortcut(AppSettingsStore.Load().LauncherHotkey);
+        ApplyYanmSettings(AppSettingsStore.Load().Yanm);
         _hookId = SetHook(Proc);
         if (_hookId == IntPtr.Zero)
         {
@@ -82,9 +102,48 @@ public static class KeyboardDoubleTapService
         HostAssets.AppendLog($"Keyboard double tap: stopped. unhooked={unhooked}.");
         _hookId = IntPtr.Zero;
         _onDoubleTap = null;
+        _onWinHold = null;
+        _onWinRelease = null;
+        _onWinDoubleTap = null;
         _lastTapKind = ModifierTapKind.None;
         _sequenceDirty = false;
         ResetKeyState();
+    }
+
+    public static void ApplyYanmSettings(YanmSettings? settings)
+    {
+        settings ??= new YanmSettings();
+        var normalizedKey = YanmActivationKeys.Normalize(settings.ActivationKey);
+        var supportsWinKeyboardTriggers = normalizedKey is YanmActivationKeys.Win or YanmActivationKeys.CapsLock;
+        _winOverlayEnabled = settings.Enabled && supportsWinKeyboardTriggers && (settings.TriggerWinHold || settings.TriggerWinDoubleTap);
+        _winHoldEnabled = settings.Enabled && supportsWinKeyboardTriggers && settings.TriggerWinHold;
+        _winDoubleTapEnabled = settings.Enabled && supportsWinKeyboardTriggers && settings.TriggerWinDoubleTap;
+        _yanmActivationKey = YanmActivationKeys.Normalize(settings.ActivationKey);
+        if (!_winOverlayEnabled)
+        {
+            _winOverlayActive = false;
+        }
+    }
+
+    public static void ResetStuckKeyboardState()
+    {
+        ResetKeyState();
+        _lastTapKind = ModifierTapKind.None;
+        _lastTapTimestamp = 0;
+        _lastWinTapTimestamp = 0;
+        _sequenceDirty = false;
+
+        ReleaseVirtualKey(VkLControl);
+        ReleaseVirtualKey(VkRControl);
+        ReleaseVirtualKey(VkLMenu);
+        ReleaseVirtualKey(VkRMenu);
+        ReleaseVirtualKey(VkLShift);
+        ReleaseVirtualKey(VkRShift);
+        ReleaseVirtualKey(VkLWin);
+        ReleaseVirtualKey(VkRWin);
+        ReleaseVirtualKey(VkCapsLock);
+        CancelForegroundAltMenuMode();
+        HostAssets.AppendLog("Keyboard state reset requested from tray: modifiers released and internal state cleared.");
     }
 
     private static IntPtr SetHook(LowLevelKeyboardProc proc)
@@ -172,10 +231,12 @@ public static class KeyboardDoubleTapService
                 return false;
             case VkLWin:
                 _leftWinDown = true;
-                return false;
+                return IsYanmTriggerKey(YanmActivationKeys.Win) ? HandleYanmTriggerDown(YanmActivationKeys.Win) : false;
             case VkRWin:
                 _rightWinDown = true;
-                return false;
+                return IsYanmTriggerKey(YanmActivationKeys.Win) ? HandleYanmTriggerDown(YanmActivationKeys.Win) : false;
+            case VkCapsLock:
+                return IsYanmTriggerKey(YanmActivationKeys.CapsLock) ? HandleYanmTriggerDown(YanmActivationKeys.CapsLock) : false;
         }
 
         _sequenceDirty = true;
@@ -211,10 +272,12 @@ public static class KeyboardDoubleTapService
                 return false;
             case VkLWin:
                 _leftWinDown = false;
-                return false;
+                return IsYanmTriggerKey(YanmActivationKeys.Win) ? HandleYanmTriggerUp(YanmActivationKeys.Win) : false;
             case VkRWin:
                 _rightWinDown = false;
-                return false;
+                return IsYanmTriggerKey(YanmActivationKeys.Win) ? HandleYanmTriggerUp(YanmActivationKeys.Win) : false;
+            case VkCapsLock:
+                return IsYanmTriggerKey(YanmActivationKeys.CapsLock) ? HandleYanmTriggerUp(YanmActivationKeys.CapsLock) : false;
             default:
                 _sequenceDirty = true;
                 return false;
@@ -257,6 +320,83 @@ public static class KeyboardDoubleTapService
         return releasedKind == ModifierTapKind.Alt && _doubleAltEnabled && _suppressCurrentAltTap;
     }
 
+    private static bool IsYanmTriggerKey(string key)
+    {
+        return string.Equals(_yanmActivationKey, key, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HandleYanmTriggerDown(string key)
+    {
+        if (!_winOverlayEnabled || HasBlockingModifiersForYanm(key))
+        {
+            return false;
+        }
+
+        var now = Environment.TickCount64;
+        if (_winOverlayActive && _yanmTriggerDownTimestamp > 0 && now - _yanmTriggerDownTimestamp > 1500)
+        {
+            HostAssets.AppendLog($"Keyboard {key} hold: stale active state detected, resetting Yanm trigger state.");
+            _winOverlayActive = false;
+            _yanmTriggerDownTimestamp = 0;
+        }
+
+        if (!_winOverlayActive)
+        {
+            _winOverlayActive = true;
+            _yanmTriggerDownTimestamp = now;
+            if (_winHoldEnabled)
+            {
+                HostAssets.AppendLog($"Keyboard {key} hold: triggered Yanm overlay.");
+                System.Windows.Application.Current.Dispatcher.BeginInvoke(() => _onWinHold?.Invoke());
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HandleYanmTriggerUp(string key)
+    {
+        if (!_winOverlayActive)
+        {
+            return false;
+        }
+
+        _winOverlayActive = false;
+        _yanmTriggerDownTimestamp = 0;
+        var now = Environment.TickCount64;
+        var isDoubleTap = _winDoubleTapEnabled && now - _lastWinTapTimestamp <= 350;
+        _lastWinTapTimestamp = now;
+        System.Windows.Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            if (isDoubleTap)
+            {
+                HostAssets.AppendLog($"Keyboard {key} double tap: toggled Yanm pin.");
+                _onWinDoubleTap?.Invoke();
+            }
+            else
+            {
+                if (_winHoldEnabled)
+                {
+                    _onWinRelease?.Invoke();
+                }
+            }
+        });
+
+        return true;
+    }
+
+    private static bool HasBlockingModifiersForYanm(string key)
+    {
+        return string.Equals(key, YanmActivationKeys.Win, StringComparison.OrdinalIgnoreCase)
+            ? HasNonWinModifiersPressed()
+            : _leftCtrlDown || _rightCtrlDown || _leftAltDown || _rightAltDown || _leftShiftDown || _rightShiftDown || _leftWinDown || _rightWinDown;
+    }
+
+    private static bool HasNonWinModifiersPressed()
+    {
+        return _leftCtrlDown || _rightCtrlDown || _leftAltDown || _rightAltDown || _leftShiftDown || _rightShiftDown;
+    }
+
     private static bool HasOtherModifiersPressed(ModifierTapKind releasedKind)
     {
         return releasedKind switch
@@ -278,6 +418,8 @@ public static class KeyboardDoubleTapService
         _leftWinDown = false;
         _rightWinDown = false;
         _suppressCurrentAltTap = false;
+        _winOverlayActive = false;
+        _yanmTriggerDownTimestamp = 0;
     }
 
     private static bool ShouldSuppressCurrentAltTap()
@@ -303,6 +445,12 @@ public static class KeyboardDoubleTapService
         const uint keyEventKeyUp = 0x0002;
         keybd_event((byte)VkEscape, 0, 0, UIntPtr.Zero);
         keybd_event((byte)VkEscape, 0, keyEventKeyUp, UIntPtr.Zero);
+    }
+
+    private static void ReleaseVirtualKey(int vkCode)
+    {
+        const uint keyEventKeyUp = 0x0002;
+        keybd_event((byte)vkCode, 0, keyEventKeyUp, UIntPtr.Zero);
     }
 
     private enum ModifierTapKind

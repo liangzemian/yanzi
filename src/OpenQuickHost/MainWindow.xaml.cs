@@ -30,6 +30,7 @@ namespace OpenQuickHost;
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
     private const int HotKeyId = 0x5301;
+    private const int YanmHotKeyId = 0x5302;
     private const uint ModControl = 0x0002;
     private const uint ModAlt = 0x0001;
     private const uint ModShift = 0x0004;
@@ -69,6 +70,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private int _nextExtensionHotkeyId = 0x5400;
     private QuickPanelWindow? _quickPanel;
     private RadialMenuWindow? _radialMenu;
+    private YanmOverlayWindow? _yanmOverlay;
     private readonly DispatcherTimer _backgroundWebDavSyncTimer;
     private readonly DispatcherTimer _cloudReconnectTimer;
     private readonly DispatcherTimer _fileSearchDebounceTimer;
@@ -179,6 +181,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         _quickPanel = new QuickPanelWindow(this);
         _radialMenu = new RadialMenuWindow(this);
+        _yanmOverlay = new YanmOverlayWindow(this);
 
         NetworkChange.NetworkAvailabilityChanged += NetworkChange_NetworkAvailabilityChanged;
         NetworkChange.NetworkAddressChanged += NetworkChange_NetworkAddressChanged;
@@ -2278,6 +2281,9 @@ public sealed class CloudQuickPanelConfigSnapshot
     [JsonPropertyName("yanyuRules")]
     public List<YanyuRuleSettings>? YanyuRules { get; set; }
 
+    [JsonPropertyName("yanm")]
+    public YanmSettings? Yanm { get; set; }
+
     public static CloudQuickPanelConfigSnapshot FromSettings(AppSettings settings)
     {
         return new CloudQuickPanelConfigSnapshot
@@ -2292,7 +2298,8 @@ public sealed class CloudQuickPanelConfigSnapshot
             QuickPanelMouseTriggers = CloneTriggers(settings.QuickPanelMouseTriggers),
             YarnSelect = CloneByJson(settings.YarnSelect),
             RadialMenu = CloneByJson(settings.RadialMenu),
-            YanyuRules = CloneByJson(settings.YanyuRules)
+            YanyuRules = CloneByJson(settings.YanyuRules),
+            Yanm = CloneByJson(settings.Yanm)
         };
     }
 
@@ -2310,7 +2317,8 @@ public sealed class CloudQuickPanelConfigSnapshot
             QuickPanelMouseTriggers = CloneTriggers(QuickPanelMouseTriggers),
             YarnSelect = YarnSelect == null ? new YarnSelectSettings() : CloneByJson(YarnSelect),
             RadialMenu = RadialMenu == null ? new RadialMenuSettings() : CloneByJson(RadialMenu),
-            YanyuRules = YanyuRules == null ? [] : CloneByJson(YanyuRules)
+            YanyuRules = YanyuRules == null ? [] : CloneByJson(YanyuRules),
+            Yanm = Yanm == null ? new YanmSettings() : CloneByJson(Yanm)
         };
     }
 

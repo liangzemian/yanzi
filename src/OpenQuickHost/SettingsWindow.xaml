@@ -27,6 +27,7 @@
     
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        <local:BoolToColorConverter x:Key="BoolToColorConverter" />
 
         <!-- Colors -->
         <Color x:Key="SidebarBG">#FF1E1E1E</Color>
@@ -145,6 +146,64 @@
         <Style x:Key="UpdateStoreBtn" TargetType="Button" BasedOn="{StaticResource PrimaryBtn}">
             <Setter Property="Background" Value="#FF16A34A" />
         </Style>
+
+        <!-- Icon Button Style -->
+        <Style x:Key="IconButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="#FF8E8E8E" />
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4" Padding="6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#FF2D2D2D" />
+                                <Setter Property="Foreground" Value="White" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Status Badge Styles -->
+        <Style x:Key="PublishedBadgeStyle" TargetType="Border">
+            <Setter Property="Background" Value="#1A16A34A" />
+            <Setter Property="BorderBrush" Value="#FF16A34A" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="6,2" />
+        </Style>
+
+        <Style x:Key="DisabledBadgeStyle" TargetType="Border">
+            <Setter Property="Background" Value="#1A666666" />
+            <Setter Property="BorderBrush" Value="#FF666666" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="6,2" />
+        </Style>
+
+        <!-- Filter Tab Style -->
+        <Style x:Key="FilterTabStyle" TargetType="Border">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+
+        <Style x:Key="FilterTabActiveStyle" TargetType="Border" BasedOn="{StaticResource FilterTabStyle}">
+            <Setter Property="Background" Value="#FF2D2D2D" />
+        </Style>
     </Window.Resources>
 
     <Border x:Name="WindowFrame"
@@ -170,10 +229,11 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Margin="22,18,22,20"
+                    <TextBlock Margin="22,18,22,12"
                                Text="设置"
                                FontSize="14"
                                FontWeight="SemiBold"
@@ -181,7 +241,7 @@
 
                     <!-- Account Section -->
                     <Button Grid.Row="1"
-                            Margin="10,0,10,15"
+                            Margin="10,0,10,10"
                             Background="Transparent"
                             BorderThickness="0"
                             Click="AccountButton_Click">
@@ -196,13 +256,11 @@
                                         <Border Width="32"
                                                 Height="32"
                                                 CornerRadius="16"
-                                                Background="#FF2D2D2D"
+                                                Background="#1A3B82F6"
                                                 VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding AccountInitial}"
-                                                       FontSize="14"
-                                                       Foreground="White"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center" />
+                                            <Viewbox Width="18" Height="18">
+                                                <Path Data="{local:IconGeometry user}" Fill="#FF3B82F6" Stretch="Uniform"/>
+                                            </Viewbox>
                                         </Border>
                                         <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
                                             <TextBlock Text="{Binding AccountTitle}"
@@ -232,7 +290,57 @@
                         </Button.ContextMenu>
                     </Button>
 
-                    <ListBox Grid.Row="2"
+                    <!-- Global Search Box -->
+                    <Border Grid.Row="2"
+                            Margin="10,0,10,15" 
+                            Background="#FF181818" 
+                            CornerRadius="6" 
+                            BorderBrush="#FF2A2A2A" 
+                            BorderThickness="1"
+                            Height="32">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="30" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Viewbox Width="14" Height="14" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <Path Data="{local:IconGeometry search}" Fill="#FF666666" Stretch="Uniform"/>
+                            </Viewbox>
+                            <TextBox Grid.Column="1" 
+                                     x:Name="SettingsSearchBox"
+                                     Text="{Binding SettingsSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                     Background="Transparent" 
+                                     BorderThickness="0" 
+                                     Foreground="White" 
+                                     CaretBrush="White"
+                                     VerticalAlignment="Center"
+                                     FontSize="13"/>
+                            <TextBlock Grid.Column="1" 
+                                       Text="搜索设置项..." 
+                                       Foreground="#FF555555" 
+                                       VerticalAlignment="Center" 
+                                       IsHitTestVisible="False"
+                                       FontSize="13"
+                                       Margin="2,0,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding SettingsSearchText}" Value=""/>
+                                                    <Condition Binding="{Binding IsKeyboardFocusWithin, ElementName=SettingsSearchBox}" Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                    </Border>
+
+                    <ListBox Grid.Row="3"
                              ItemsSource="{Binding NavigationItems}"
                              SelectedItem="{Binding SelectedNavigation, Mode=TwoWay}"
                              Style="{StaticResource SidebarListBoxStyle}"
@@ -303,58 +411,6 @@
                         </Button>
                     </StackPanel>
 
-                    <!-- Search Input -->
-                    <Border Grid.Column="2" 
-                            Margin="20,0,10,0" 
-                            Background="#FF1E1E1E" 
-                            CornerRadius="6" 
-                            BorderBrush="#FF2A2A2A" 
-                            BorderThickness="1"
-                            Height="32"
-                            Width="360"
-                            HorizontalAlignment="Left">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="30" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Viewbox Width="14" Height="14" VerticalAlignment="Center" HorizontalAlignment="Center">
-                                <Path Data="{local:IconGeometry search}" Fill="#FF666666" Stretch="Uniform"/>
-                            </Viewbox>
-                            <TextBox Grid.Column="1" 
-                                     x:Name="SettingsSearchBox"
-                                     Text="{Binding SettingsSearchText, UpdateSourceTrigger=PropertyChanged}"
-                                     Background="Transparent" 
-                                     BorderThickness="0" 
-                                     Foreground="White" 
-                                     CaretBrush="White"
-                                     VerticalAlignment="Center"
-                                     FontSize="13"/>
-                            <TextBlock Grid.Column="1" 
-                                       Text="搜索设置项..." 
-                                       Foreground="#FF555555" 
-                                       VerticalAlignment="Center" 
-                                       IsHitTestVisible="False"
-                                       FontSize="13"
-                                       Margin="2,0,0,0">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Visibility" Value="Collapsed"/>
-                                        <Style.Triggers>
-                                            <MultiDataTrigger>
-                                                <MultiDataTrigger.Conditions>
-                                                    <Condition Binding="{Binding SettingsSearchText}" Value=""/>
-                                                    <Condition Binding="{Binding IsKeyboardFocusWithin, ElementName=SettingsSearchBox}" Value="False"/>
-                                                </MultiDataTrigger.Conditions>
-                                                <Setter Property="Visibility" Value="Visible"/>
-                                            </MultiDataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                        </Grid>
-                    </Border>
-
                     <!-- Window Controls -->
                     <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Top">
                         <Button Style="{StaticResource NavButtonStyle}" Click="CloseButton_Click" VerticalAlignment="Center">
@@ -395,6 +451,29 @@
                             </Grid>
                             <Rectangle Height="1" Fill="#FF222222" Margin="0,12"/>
 
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16" Margin="0,18,0,0">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock Text="主程序快捷键" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                            <TextBlock Text="用于呼出或隐藏启动器。" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0"/>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" Background="#FF2D2D2D" CornerRadius="4" Padding="8,4" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding LauncherHotkey}" Foreground="White" FontSize="12"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="修改快捷键" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" Click="EditLauncherHotkeyButton_Click"/>
+                                        <Button Content="重置为 Alt+Space" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Click="ResetLauncherHotkeyButton_Click"/>
+                                    </StackPanel>
+                                    <TextBlock Text="主程序快捷键修改后会立即重新注册。支持常规组合键，也支持录制 DoubleCtrl / DoubleAlt。" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0"/>
+                                </StackPanel>
+                            </Border>
+
                             <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="14" Margin="0,18,0,0">
                                 <StackPanel>
                                     <TextBlock Text="说明" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
@@ -413,13 +492,13 @@
                                     <TextBlock Text="用于 AI 对话和后续 AI 扩展调用，支持本地或远程 OpenAI 兼容接口。" Foreground="#FF8E8E8E" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"/>
 
                                     <TextBlock Text="服务地址" Foreground="#FFB8B8B8" FontSize="12" Margin="0,16,0,0" />
-                                    <TextBox Text="{Binding AiBaseUrl, Mode=TwoWay}" Margin="0,6,0,0"/>
+                                    <TextBox x:Name="AiBaseUrlTextBox" Text="{Binding AiBaseUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,6,0,0" TextChanged="AiSettings_TextChanged"/>
 
                                     <TextBlock Text="API Key" Foreground="#FFB8B8B8" FontSize="12" Margin="0,14,0,0" />
-                                    <TextBox Text="{Binding AiApiKey, Mode=TwoWay}" Margin="0,6,0,0"/>
+                                    <TextBox x:Name="AiApiKeyTextBox" Text="{Binding AiApiKey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,6,0,0" TextChanged="AiSettings_TextChanged"/>
 
                                     <TextBlock Text="模型名" Foreground="#FFB8B8B8" FontSize="12" Margin="0,14,0,0" />
-                                    <TextBox Text="{Binding AiModel, Mode=TwoWay}" Margin="0,6,0,0"/>
+                                    <TextBox x:Name="AiModelTextBox" Text="{Binding AiModel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,6,0,0" TextChanged="AiSettings_TextChanged"/>
 
                                     <Grid Margin="0,16,0,0">
                                         <Grid.ColumnDefinitions>
@@ -427,7 +506,7 @@
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Text="{Binding AiSettingsStatusText}" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"/>
-                                        <Button Grid.Column="1" Content="保存 AI 配置" Style="{StaticResource PrimaryBtn}" Click="SaveAiSettingsButton_Click"/>
+                                        <Button x:Name="SaveAiButton" Grid.Column="1" Content="保存" Style="{StaticResource PrimaryBtn}" Click="SaveAiSettingsButton_Click" IsEnabled="{Binding HasAiSettingsChanged}"/>
                                     </Grid>
                                 </StackPanel>
                             </Border>
@@ -435,89 +514,244 @@
 
                         <!-- Sync View -->
                         <StackPanel Visibility="{Binding IsSyncSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <TextBlock Text="同步" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
-
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16">
+                            <!-- Header with Status Badge -->
+                            <Grid Margin="0,0,0,20">
                                 <StackPanel>
-                                    <Grid Margin="0,0,0,10">
-                                        <TextBlock Text="当前账号" Foreground="White" FontSize="13"/>
-                                        <TextBlock Text="{Binding AccountTitle}" Foreground="#FF8E8E8E" HorizontalAlignment="Right" FontSize="12"/>
-                                    </Grid>
-                                    <Rectangle Height="1" Fill="#FF2A2A2A" Margin="0,0,0,10"/>
-                                    <Grid Margin="0,0,0,10">
-                                        <TextBlock Text="服务端" Foreground="White" FontSize="13"/>
-                                        <TextBlock Text="{Binding BaseUrl}" Foreground="#FF8E8E8E" HorizontalAlignment="Right" FontSize="12"/>
-                                    </Grid>
-                                    <Rectangle Height="1" Fill="#FF2A2A2A" Margin="0,0,0,10"/>
-                                    <TextBlock Text="{Binding SyncStatusText}" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap"/>
-                                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                                        <Button Content="{Binding SignInButtonText}" Style="{StaticResource PrimaryBtn}" Margin="0,0,10,0" Click="SignInButton_Click"/>
-                                        <Button Content="退出登录" Style="{StaticResource SecondaryBtn}" Margin="0,0,10,0" Click="SignOutButton_Click" IsEnabled="{Binding IsAccountLoggedIn}"/>
-                                        <Button Content="刷新云状态" Style="{StaticResource SecondaryBtn}" Click="RefreshSyncStatusButton_Click" IsEnabled="{Binding IsAccountLoggedIn}"/>
-                                    </StackPanel>
+                                    <TextBlock Text="同步设置" Foreground="White" FontSize="20" FontWeight="Bold"/>
+                                    <TextBlock Text="管理您的数据备份与多设备同步配置" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0"/>
                                 </StackPanel>
-                            </Border>
+                                <Border HorizontalAlignment="Right" 
+                                        Background="#1A22C55E" 
+                                        BorderBrush="#3322C55E" 
+                                        BorderThickness="1" 
+                                        CornerRadius="12" 
+                                        Padding="10,6">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse Width="8" Height="8" Fill="#FF22C55E" VerticalAlignment="Center"/>
+                                        <TextBlock Text="上次同步: 刚刚" Foreground="#FF22C55E" FontSize="11" FontWeight="Medium" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
 
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16" Margin="0,16,0,0">
-                                <StackPanel>
-                                    <TextBlock Text="个人扩展同步（坚果云 / WebDAV）" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
-                                    <TextBlock Text="官方云负责账号、坚果云配置和后续扩展分享；你自己的扩展目录同步走坚果云或其他 WebDAV。" Foreground="#FF8E8E8E" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                            <!-- WebDAV Configuration Card -->
+                            <Border Background="#FF1E1E1E" CornerRadius="10" BorderBrush="#FF2A2A2A" BorderThickness="1" Margin="0,0,0,16">
+                                <!-- Card Header -->
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    
+                                    <!-- Header with Toggle -->
+                                    <Border Grid.Row="0" Background="#0AFFFFFF" BorderBrush="#FF2A2A2A" BorderThickness="0,0,0,1" Padding="20,16">
+                                        <Grid>
+                                            <TextBlock Text="个人扩展同步 (WebDAV)" Foreground="White" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <TextBlock Text="启用同步" Foreground="#FF8E8E8E" FontSize="12" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                                <CheckBox Style="{StaticResource RaycastSwitchStyle}" IsChecked="{Binding EnableWebDavSync, Mode=TwoWay}" Click="SaveWebDavSettingsButton_Click" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
 
-                                    <Grid Margin="0,16,0,0">
-                                        <TextBlock Text="启用个人同步" Foreground="White" FontSize="13" VerticalAlignment="Center"/>
-                                        <CheckBox HorizontalAlignment="Right" Style="{StaticResource RaycastSwitchStyle}" IsChecked="{Binding EnableWebDavSync, Mode=TwoWay}" Click="SaveWebDavSettingsButton_Click"/>
-                                    </Grid>
-                                    <Rectangle Height="1" Fill="#FF2A2A2A" Margin="0,12"/>
-
-                                    <TextBlock Text="WebDAV 服务地址" Foreground="#FFB8B8B8" FontSize="12" />
-                                    <TextBox Text="{Binding WebDavServerUrl, Mode=TwoWay}" Margin="0,6,0,0"/>
-
-                                    <TextBlock Text="同步根目录" Foreground="#FFB8B8B8" FontSize="12" Margin="0,14,0,0" />
-                                    <TextBox Text="{Binding WebDavRootPath, Mode=TwoWay}" Margin="0,6,0,0"/>
-
-                                    <TextBlock Text="用户名" Foreground="#FFB8B8B8" FontSize="12" Margin="0,14,0,0" />
-                                    <TextBox Text="{Binding WebDavUsername, Mode=TwoWay}" Margin="0,6,0,0"/>
-
-                                    <TextBlock Text="应用密码" Foreground="#FFB8B8B8" FontSize="12" Margin="0,14,0,0" />
-                                    <PasswordBox x:Name="WebDavPasswordBox" Margin="0,6,0,0" Height="40" Padding="12,10" VerticalAlignment="Top" PasswordChanged="WebDavPasswordBox_PasswordChanged"/>
-                                    <TextBlock Text="应用密码会使用 Windows DPAPI 本机加密保存，并自动同步到当前账号配置。" Foreground="#FF666666" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
-
-                                    <Grid Margin="0,16,0,0">
+                                    <!-- Configuration Fields -->
+                                    <Grid Grid.Row="1" Margin="20,20,20,16">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="16"/>
+                                            <ColumnDefinition Width="*"/>
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Text="{Binding WebDavStatusText}" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"/>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="16,0,0,0">
-                                            <Button Content="保存配置" Style="{StaticResource SecondaryBtn}" Margin="0,0,8,0" Click="SaveWebDavSettingsButton_Click"/>
-                                            <Button Content="测试连接" Style="{StaticResource SecondaryBtn}" Margin="0,0,8,0" Click="TestWebDavButton_Click"/>
-                                            <Button Content="立即同步" Style="{StaticResource PrimaryBtn}" Click="SyncWebDavButton_Click"/>
+
+                                        <!-- Row 1: Server URL (spans 2 columns) -->
+                                        <StackPanel Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="3">
+                                            <TextBlock Text="服务地址" Foreground="#FF8E8E8E" FontSize="11" FontWeight="Medium" Margin="0,0,0,6"/>
+                                            <TextBox Text="{Binding WebDavServerUrl, Mode=TwoWay}" Height="36" Padding="12,8" VerticalContentAlignment="Center"/>
+                                        </StackPanel>
+
+                                        <!-- Row 2: Root Path and Username -->
+                                        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,14,0,0">
+                                            <TextBlock Text="同步根目录" Foreground="#FF8E8E8E" FontSize="11" FontWeight="Medium" Margin="0,0,0,6"/>
+                                            <TextBox Text="{Binding WebDavRootPath, Mode=TwoWay}" Height="36" Padding="12,8" VerticalContentAlignment="Center"/>
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,14,0,0">
+                                            <TextBlock Text="用户名" Foreground="#FF8E8E8E" FontSize="11" FontWeight="Medium" Margin="0,0,0,6"/>
+                                            <TextBox Text="{Binding WebDavUsername, Mode=TwoWay}" Height="36" Padding="12,8" VerticalContentAlignment="Center"/>
+                                        </StackPanel>
+
+                                        <!-- Row 3: Password (spans 2 columns) -->
+                                        <StackPanel Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,14,0,0">
+                                            <TextBlock Text="应用密码" Foreground="#FF8E8E8E" FontSize="11" FontWeight="Medium" Margin="0,0,0,6"/>
+                                            <PasswordBox x:Name="WebDavPasswordBox" Height="36" Padding="12,8" VerticalContentAlignment="Center" PasswordChanged="WebDavPasswordBox_PasswordChanged"/>
+                                            <TextBlock Text="应用密码会使用 Windows DPAPI 本机加密保存，并自动同步到当前账号配置。" 
+                                                       Foreground="#FF666666" 
+                                                       FontSize="10" 
+                                                       Margin="0,6,0,0" 
+                                                       TextWrapping="Wrap"/>
                                         </StackPanel>
                                     </Grid>
+
+                                    <!-- Footer with Actions -->
+                                    <Border Grid.Row="2" Background="#0AFFFFFF" BorderBrush="#FF2A2A2A" BorderThickness="0,1,0,0" Padding="20,14">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding WebDavStatusText}" 
+                                                       Foreground="#FF8E8E8E" 
+                                                       FontSize="11" 
+                                                       VerticalAlignment="Center" 
+                                                       TextWrapping="Wrap"/>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                                <Button Content="保存配置" Style="{StaticResource SecondaryBtn}" Height="32" Padding="16,0" Margin="0,0,8,0" Click="SaveWebDavSettingsButton_Click"/>
+                                                <Button Content="测试连接" Style="{StaticResource SecondaryBtn}" Height="32" Padding="16,0" Margin="0,0,8,0" Click="TestWebDavButton_Click"/>
+                                                <Button Content="清空云端" Style="{StaticResource SecondaryBtn}" Height="32" Padding="16,0" Margin="0,0,8,0" Click="ClearCloudButton_Click" Foreground="#FFEF4444"/>
+                                                <Button Content="立即同步" Style="{StaticResource PrimaryBtn}" Height="32" Padding="20,0" Click="SyncWebDavButton_Click"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </Grid>
+                            </Border>
+
+                            <!-- Sync Log Card -->
+                            <Border Background="#FF1E1E1E" CornerRadius="10" BorderBrush="#FF2A2A2A" BorderThickness="1">
+                                <StackPanel>
+                                    <Border Padding="20,16" BorderBrush="#FF2A2A2A" BorderThickness="0,0,0,1">
+                                        <Grid>
+                                            <TextBlock Text="同步记录" Foreground="White" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                            <Button Content="刷新记录" 
+                                                    Style="{StaticResource SecondaryBtn}" 
+                                                    Height="28" 
+                                                    Padding="12,0" 
+                                                    HorizontalAlignment="Right"
+                                                    Click="RefreshSyncLogButton_Click"/>
+                                        </Grid>
+                                    </Border>
+                                    <Border Padding="20,16">
+                                        <TextBox Text="{Binding SyncActivityLogText, Mode=OneWay}"
+                                                 Height="160"
+                                                 IsReadOnly="True"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 Background="#FF000000"
+                                                 BorderBrush="#FF2A2A2A"
+                                                 BorderThickness="1"
+                                                 Foreground="#FF8E8E8E"
+                                                 FontFamily="Consolas"
+                                                 FontSize="11"
+                                                 Padding="12" />
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Yanm View -->
+                        <StackPanel Visibility="{Binding IsYanmSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="燕幕" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
+
+                            <Grid Margin="0,5">
+                                <StackPanel>
+                                    <TextBlock Text="全局信息层" Foreground="White" FontSize="13"/>
+                                    <TextBlock Text="{Binding YanmSummary}" Foreground="#FF666666" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Button Content="保存" Style="{StaticResource PrimaryBtn}" HorizontalAlignment="Right" Click="SaveYanmSettings_Click"/>
+                            </Grid>
+                            <Rectangle Height="1" Fill="#FF222222" Margin="0,12"/>
+
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
+                                <StackPanel>
+                                    <Grid Margin="0,0,0,12">
+                                        <StackPanel>
+                                            <TextBlock Text="启用燕幕" Foreground="White" FontSize="13"/>
+                                            <TextBlock Text="启用后可按住触发键临时显示信息层，或双击触发键固定进入燕幕。" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <CheckBox HorizontalAlignment="Right" Style="{StaticResource RaycastSwitchStyle}" IsChecked="{Binding EnableYanm, Mode=TwoWay}" Click="SaveYanmSettings_Click"/>
+                                    </Grid>
+
+                                    <Rectangle Height="1" Fill="#FF2A2A2A" Margin="0,0,0,12"/>
+
+                                    <TextBlock Text="默认激发按键" Foreground="#FFB8B8B8" FontSize="12"/>
+                                    <ComboBox ItemsSource="{Binding YanmActivationKeyOptions}"
+                                              DisplayMemberPath="Label"
+                                              SelectedValuePath="Value"
+                                              SelectedValue="{Binding YanmActivationKey, Mode=TwoWay}"
+                                              Margin="0,6,0,0"
+                                              Height="36"
+                                              SelectionChanged="YanmActivationKey_SelectionChanged"/>
+                                    <TextBlock Text="Win 符合信息层预期，但会拦截系统开始菜单；CapsLock 更少冲突，但会改变原有大小写锁定习惯。" Foreground="#FF666666" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap"/>
+
+                                    <StackPanel Margin="0,10,0,0"
+                                                Visibility="{Binding YanmUsesCustomShortcut, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="自定义快捷键" Foreground="#FFB8B8B8" FontSize="12"/>
+                                            <Button Grid.Column="1"
+                                                    Content="录制快捷键"
+                                                    Style="{StaticResource SecondaryBtn}"
+                                                    Height="28"
+                                                    Padding="10,0"
+                                                    Click="EditYanmHotkeyButton_Click"/>
+                                        </Grid>
+                                        <TextBox Text="{Binding YanmCustomShortcut, Mode=TwoWay}"
+                                                 Margin="0,6,0,0"
+                                                 Height="36"
+                                                 IsReadOnly="True"
+                                                 Background="#FF101014"
+                                                 BorderThickness="0"
+                                                 Foreground="White"
+                                                 Padding="10,6"/>
+                                    </StackPanel>
+
+                                    <CheckBox Content="允许鼠标触发（右键按住移动）"
+                                              Visibility="Collapsed"/>
+                                    <TextBlock Text="鼠标触发"
+                                               Foreground="#FFB8B8B8"
+                                               FontSize="12"
+                                               Margin="0,10,0,0"/>
+                                    <ComboBox ItemsSource="{Binding MouseTriggerOptions}"
+                                              DisplayMemberPath="Label"
+                                              SelectedValuePath="Value"
+                                              SelectedValue="{Binding YanmMouseTriggerMode, Mode=TwoWay}"
+                                              Margin="0,6,0,0"
+                                              Height="36"
+                                              SelectionChanged="SaveYanmSettings_Click"/>
+                                    <TextBlock Text="右键相关触发会与鼠标面板互斥；如果鼠标面板已经占用了右键，下面的右键项会自动失效。"
+                                               Foreground="#FF666666"
+                                               FontSize="11"
+                                               Margin="0,6,0,0"
+                                               TextWrapping="Wrap"/>
+
+                                    <Rectangle Height="1" Fill="#FF2A2A2A" Margin="0,14,0,12"/>
+
+                                    <CheckBox Content="按住触发键时临时显示，松开隐藏"
+                                              Foreground="#FFE5E5E5"
+                                              FontSize="13"
+                                              Margin="0,0,0,10"
+                                              IsChecked="{Binding YanmTriggerHold, Mode=TwoWay}"
+                                              Click="SaveYanmSettings_Click"/>
+                                    <CheckBox Content="双击触发键固定显示 / 取消固定"
+                                              Foreground="#FFE5E5E5"
+                                              FontSize="13"
+                                              IsChecked="{Binding YanmTriggerDoubleTap, Mode=TwoWay}"
+                                              Click="SaveYanmSettings_Click"/>
                                 </StackPanel>
                             </Border>
 
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16" Margin="0,16,0,0">
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15" Margin="0,18,0,0">
                                 <StackPanel>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Text="同步记录" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
-                                        <Button Grid.Column="1" Content="刷新记录" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Click="RefreshSyncLogButton_Click"/>
-                                    </Grid>
-                                    <TextBox Text="{Binding SyncActivityLogText, Mode=OneWay}"
-                                             Height="180"
-                                             IsReadOnly="True"
-                                             AcceptsReturn="True"
-                                             TextWrapping="Wrap"
-                                             VerticalScrollBarVisibility="Auto"
-                                             Background="#FF101014"
-                                             BorderThickness="0"
-                                             Foreground="#FFB8B8B8"
-                                             FontFamily="Consolas"
-                                             FontSize="12" />
+                                    <TextBlock Text="说明" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                    <TextBlock Text="燕幕组件库和布局会随配置同步。第一次启用后，按住触发键即可查看默认组件；双击触发键可进入固定编辑状态。" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -560,40 +794,547 @@
                         </StackPanel>
 
                         <!-- Mouse Panel View -->
-                        <StackPanel Visibility="{Binding IsQuickPanelSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+<StackPanel Visibility="{Binding IsQuickPanelSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <TextBlock Text="鼠标面板" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
                             
+                            <!-- Header with title, badge, and save button -->
                             <Grid Margin="0,5">
-                                <StackPanel>
-                                    <TextBlock Text="面板触发方式" Foreground="White" FontSize="13"/>
-                                    <TextBlock Text="{Binding QuickPanelTriggerSummary}" Foreground="#FF666666" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
-                                <Button Content="保存" Style="{StaticResource PrimaryBtn}" HorizontalAlignment="Right" Click="SaveQuickPanelTrigger_Click"/>
-                            </Grid>
-                            <Rectangle Height="1" Fill="#FF222222" Margin="0,12"/>
-
-                            <TextBlock Text="鼠标方式" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,8,0,10"/>
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
-                                <StackPanel>
-                                    <CheckBox Content="按下中键" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8" IsChecked="{Binding TriggerMiddleButtonDown, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-                                    <CheckBox Content="按下 X1 键" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8" IsChecked="{Binding TriggerX1ButtonDown, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-                                    <CheckBox Content="按下 X2 键" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8" IsChecked="{Binding TriggerX2ButtonDown, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-                                    <CheckBox Content="Ctrl+中键单击" Foreground="#FF666666" FontSize="13" Margin="0,0,0,8" IsEnabled="False"/>
-                                    <CheckBox Content="Ctrl+左键单击" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8" IsChecked="{Binding TriggerCtrlLeftClick, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-                                    <CheckBox Content="Ctrl+右键单击" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8" IsChecked="{Binding TriggerCtrlRightClick, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-                                    <CheckBox Content="长按中键" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8" IsChecked="{Binding TriggerMiddleButtonLongPress, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-                                    <CheckBox Content="长按右键" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8" IsChecked="{Binding TriggerRightButtonLongPress, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-                                    <CheckBox Content="按右键移动" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8" IsChecked="{Binding TriggerRightButtonDrag, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-
-                                    <CheckBox Content="滚轮左右（需要鼠标支持）" Foreground="#FFE5E5E5" FontSize="13" IsChecked="{Binding TriggerHorizontalWheel, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-
-                                    <Border BorderBrush="#FF333333" BorderThickness="1" CornerRadius="6" Padding="12" Margin="0,14,0,0">
-                                        <StackPanel>
-                                            <TextBlock Text="鼠标弹出选项" Foreground="#FFB8B8B8" FontSize="12" Margin="0,0,0,8"/>
-                                            <CheckBox Content="在按钮上松开后执行动作" Foreground="#FFE5E5E5" FontSize="13" IsChecked="{Binding ExecuteOnButtonRelease, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
-                                        </StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="全局手势与触发" Foreground="White" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    <Border Background="#FF3B82F6" CornerRadius="4" Padding="8,3" Margin="10,0,0,0">
+                                        <TextBlock Text="统一控制中心" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
                                     </Border>
                                 </StackPanel>
+                                <Button Content="保存配置" Style="{StaticResource PrimaryBtn}" HorizontalAlignment="Right" Click="SaveQuickPanelTrigger_Click"/>
+                            </Grid>
+                            <TextBlock Foreground="#FF8E8E8E" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap">
+                                <Run Text="选择呼出快捷方式的手势，并将它们分配给 "/>
+                                <Run Text="面板" Foreground="#FF3B82F6"/>
+                                <Run Text="、"/>
+                                <Run Text="燕环" Foreground="#FFA855F7"/>
+                                <Run Text=" 或 "/>
+                                <Run Text="燕幕" Foreground="#FF10B981"/>
+                                <Run Text="。"/>
+                            </TextBlock>
+                            <Rectangle Height="1" Fill="#FF222222" Margin="0,12"/>
+
+                            <!-- Section 1: 手势与长按 -->
+                            <TextBlock Text="手势与长按" Foreground="#FFB8B8B8" FontSize="12" FontWeight="SemiBold" Margin="0,12,0,10"/>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                
+                                <!-- 长按右键 -->
+                                <Border Grid.Column="0" x:Name="RightButtonLongPressCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="16,20,16,0" Margin="0,0,8,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <Viewbox Width="48" Height="60" Margin="0,0,0,12">
+                                                <Canvas Width="48" Height="60">
+                                                    <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                          Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Path x:Name="RightButtonLongPressHighlight" Data="M24,2 L24,20 L38,20 L38,16 C38,8 32,2 24,2 Z" 
+                                                          Fill="#FF52525B" Opacity="0.9"/>
+                                                    <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Rectangle Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF666666"/>
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="长按右键" Foreground="White" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                            <TextBlock Text="按住右键触发" Foreground="#FF8E8E8E" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,16"/>
+                                        </StackPanel>
+                                        
+                                        <!-- 分配按钮组 -->
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="6" Margin="-16,0,-16,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="RightButtonLongPress:None" x:Name="RightButtonLongPress_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="RightButtonLongPress:Panel" x:Name="RightButtonLongPress_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="RightButtonLongPress:Radial" x:Name="RightButtonLongPress_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="RightButtonLongPress:Yanm" x:Name="RightButtonLongPress_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                                
+                                <!-- 长按中键 -->
+                                <Border Grid.Column="1" x:Name="MiddleButtonLongPressCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="16,20,16,0" Margin="0,0,8,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <Viewbox Width="48" Height="60" Margin="0,0,0,12">
+                                                <Canvas Width="48" Height="60">
+                                                    <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                          Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Path Data="M10,2 C10,8 10,20 10,20 L24,20 L24,2 C17,2 10,7 10,2 Z" Fill="#FF333333"/>
+                                                    <Path Data="M24,2 L24,20 L38,20 C38,20 38,8 38,2 C32,2 24,2 24,2 Z" Fill="#FF333333"/>
+                                                    <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Rectangle x:Name="MiddleButtonLongPressHighlight" Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF52525B"/>
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="长按中键" Foreground="White" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                            <TextBlock Text="按住中键触发" Foreground="#FF8E8E8E" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,16"/>
+                                        </StackPanel>
+                                        
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="6" Margin="-16,0,-16,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="MiddleButtonLongPress:None" x:Name="MiddleButtonLongPress_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="MiddleButtonLongPress:Panel" x:Name="MiddleButtonLongPress_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="MiddleButtonLongPress:Radial" x:Name="MiddleButtonLongPress_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="MiddleButtonLongPress:Yanm" x:Name="MiddleButtonLongPress_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                                
+                                <!-- 按右键移动 -->
+                                <Border Grid.Column="2" x:Name="RightButtonDragCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="16,20,16,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <Viewbox Width="48" Height="60" Margin="0,0,0,12">
+                                                <Canvas Width="48" Height="60">
+                                                    <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                          Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Path x:Name="RightButtonDragHighlight" Data="M24,2 L24,20 L38,20 L38,16 C38,8 32,2 24,2 Z" 
+                                                          Fill="#FF52525B" Opacity="0.9"/>
+                                                    <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Rectangle Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF666666"/>
+                                                    <Path Data="M30,35 L35,30 L33,28 L30,31 L30,28 L28,28 L28,31 L25,28 L23,30 L28,35 L28,38 L25,38 L25,40 L28,40 L23,45 L25,47 L30,42 L30,45 L32,45 L32,42 L37,47 L39,45 L34,40 L37,40 L37,38 L34,38 L34,35 Z" 
+                                                          Fill="#FF52525B" Opacity="0.8"/>
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="按右键移动" Foreground="White" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                                            <TextBlock Text="拖动触发面板" Foreground="#FF8E8E8E" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,16"/>
+                                        </StackPanel>
+                                        
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="6" Margin="-16,0,-16,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="RightButtonDrag:None" x:Name="RightButtonDrag_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="RightButtonDrag:Panel" x:Name="RightButtonDrag_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="RightButtonDrag:Radial" x:Name="RightButtonDrag_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="RightButtonDrag:Yanm" x:Name="RightButtonDrag_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+
+                            <!-- Section 2: 独立按键触发 -->
+                            <TextBlock Text="独立按键触发" Foreground="#FFB8B8B8" FontSize="12" FontWeight="SemiBold" Margin="0,8,0,10"/>
+                            <UniformGrid Columns="4" Margin="0,0,0,16">
+                                <!-- 按下中键 -->
+                                <Border x:Name="MiddleButtonDownCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="12,16,12,0" Margin="0,0,8,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <Viewbox Width="32" Height="40" Margin="0,0,0,8">
+                                                <Canvas Width="48" Height="60">
+                                                    <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                          Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Path Data="M10,2 C10,8 10,20 10,20 L24,20 L24,2 C17,2 10,7 10,2 Z" Fill="#FF333333"/>
+                                                    <Path Data="M24,2 L24,20 L38,20 C38,20 38,8 38,2 C32,2 24,2 24,2 Z" Fill="#FF333333"/>
+                                                    <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Rectangle x:Name="MiddleButtonDownHighlight" Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF52525B"/>
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="按下中键" Foreground="White" FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                                        </StackPanel>
+                                        
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="4" Margin="-12,0,-12,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="MiddleButtonDown:None" x:Name="MiddleButtonDown_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="MiddleButtonDown:Panel" x:Name="MiddleButtonDown_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="MiddleButtonDown:Radial" x:Name="MiddleButtonDown_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="MiddleButtonDown:Yanm" x:Name="MiddleButtonDown_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                                
+                                <!-- 按下X1键 -->
+                                <Border x:Name="X1ButtonDownCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="12,16,12,0" Margin="0,0,8,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <Viewbox Width="32" Height="40" Margin="0,0,0,8">
+                                                <Canvas Width="48" Height="60">
+                                                    <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                          Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Rectangle Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF666666"/>
+                                                    <Ellipse x:Name="X1ButtonDownHighlight" Canvas.Left="2" Canvas.Top="30" Width="8" Height="12" Fill="#FF52525B"/>
+                                                    <TextBlock Canvas.Left="3" Canvas.Top="32" Text="X1" FontSize="5" FontWeight="Bold" Foreground="White"/>
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="按下X1键" Foreground="White" FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                                        </StackPanel>
+                                        
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="4" Margin="-12,0,-12,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="X1ButtonDown:None" x:Name="X1ButtonDown_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="X1ButtonDown:Panel" x:Name="X1ButtonDown_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="X1ButtonDown:Radial" x:Name="X1ButtonDown_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="X1ButtonDown:Yanm" x:Name="X1ButtonDown_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                                
+                                <!-- 按下X2键 -->
+                                <Border x:Name="X2ButtonDownCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="12,16,12,0" Margin="0,0,8,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <Viewbox Width="32" Height="40" Margin="0,0,0,8">
+                                                <Canvas Width="48" Height="60">
+                                                    <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                          Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Rectangle Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF666666"/>
+                                                    <Ellipse x:Name="X2ButtonDownHighlight" Canvas.Left="2" Canvas.Top="44" Width="8" Height="12" Fill="#FF52525B"/>
+                                                    <TextBlock Canvas.Left="3" Canvas.Top="46" Text="X2" FontSize="5" FontWeight="Bold" Foreground="White"/>
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="按下X2键" Foreground="White" FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                                        </StackPanel>
+                                        
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="4" Margin="-12,0,-12,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="X2ButtonDown:None" x:Name="X2ButtonDown_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="X2ButtonDown:Panel" x:Name="X2ButtonDown_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="X2ButtonDown:Radial" x:Name="X2ButtonDown_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="X2ButtonDown:Yanm" x:Name="X2ButtonDown_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                                
+                                <!-- 滚轮左右偏移 -->
+                                <Border x:Name="HorizontalWheelCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="12,16,12,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <Viewbox Width="32" Height="40" Margin="0,0,0,8">
+                                                <Canvas Width="48" Height="60">
+                                                    <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                          Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                    <Rectangle x:Name="HorizontalWheelHighlight" Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF52525B"/>
+                                                    <Path Data="M16,12 L18,10 L18,14 Z" Fill="#FFFFFFFF"/>
+                                                    <Path Data="M32,12 L30,10 L30,14 Z" Fill="#FFFFFFFF"/>
+                                                </Canvas>
+                                            </Viewbox>
+                                            <TextBlock Text="滚轮左右偏移" Foreground="White" FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                                        </StackPanel>
+                                        
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="4" Margin="-12,0,-12,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="HorizontalWheel:None" x:Name="HorizontalWheel_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="HorizontalWheel:Panel" x:Name="HorizontalWheel_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,2,0" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="HorizontalWheel:Radial" x:Name="HorizontalWheel_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="HorizontalWheel:Yanm" x:Name="HorizontalWheel_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                            </UniformGrid>
+
+                            <!-- Section 3: 键盘组合(CTRL) -->
+                            <TextBlock Text="键盘组合(CTRL)" Foreground="#FFB8B8B8" FontSize="12" FontWeight="SemiBold" Margin="0,8,0,10"/>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                
+                                <!-- Ctrl+左键单击 -->
+                                <Border Grid.Column="0" x:Name="CtrlLeftClickCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="16,20,16,0" Margin="0,0,8,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,12">
+                                                <Border Background="#FF2A2A2A" CornerRadius="4" Padding="6,4" Margin="0,0,4,0">
+                                                    <TextBlock Text="Ctrl" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
+                                                </Border>
+                                                <TextBlock Text="+" Foreground="#FF8E8E8E" FontSize="12" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                                <Viewbox Width="24" Height="30">
+                                                    <Canvas Width="48" Height="60">
+                                                        <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                              Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                        <Path x:Name="CtrlLeftClickHighlight" Data="M10,2 C10,8 10,20 10,20 L24,20 L24,2 C17,2 10,7 10,2 Z" 
+                                                              Fill="#FF52525B" Opacity="0.9"/>
+                                                        <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                        <Rectangle Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF666666"/>
+                                                    </Canvas>
+                                                </Viewbox>
+                                            </StackPanel>
+                                            <TextBlock Text="Ctrl+左键单击" Foreground="White" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,16"/>
+                                        </StackPanel>
+                                        
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="6" Margin="-16,0,-16,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlLeftClick:None" x:Name="CtrlLeftClick_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlLeftClick:Panel" x:Name="CtrlLeftClick_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlLeftClick:Radial" x:Name="CtrlLeftClick_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlLeftClick:Yanm" x:Name="CtrlLeftClick_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                                
+                                <!-- Ctrl+右键单击 -->
+                                <Border Grid.Column="1" x:Name="CtrlRightClickCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="16,20,16,0" Margin="0,0,8,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,12">
+                                                <Border Background="#FF2A2A2A" CornerRadius="4" Padding="6,4" Margin="0,0,4,0">
+                                                    <TextBlock Text="Ctrl" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
+                                                </Border>
+                                                <TextBlock Text="+" Foreground="#FF8E8E8E" FontSize="12" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                                <Viewbox Width="24" Height="30">
+                                                    <Canvas Width="48" Height="60">
+                                                        <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                              Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                        <Path x:Name="CtrlRightClickHighlight" Data="M24,2 L24,20 L38,20 L38,16 C38,8 32,2 24,2 Z" 
+                                                              Fill="#FF52525B" Opacity="0.9"/>
+                                                        <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                        <Rectangle Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF666666"/>
+                                                    </Canvas>
+                                                </Viewbox>
+                                            </StackPanel>
+                                            <TextBlock Text="Ctrl+右键单击" Foreground="White" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,16"/>
+                                        </StackPanel>
+                                        
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="6" Margin="-16,0,-16,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlRightClick:None" x:Name="CtrlRightClick_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlRightClick:Panel" x:Name="CtrlRightClick_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlRightClick:Radial" x:Name="CtrlRightClick_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlRightClick:Yanm" x:Name="CtrlRightClick_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                                
+                                <!-- Ctrl+中键单击 -->
+                                <Border Grid.Column="2" x:Name="CtrlMiddleClickCard" Background="#FF181818" CornerRadius="8" BorderThickness="2" BorderBrush="#FF27272A" Padding="16,20,16,0">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        
+                                        <StackPanel Grid.Row="0" HorizontalAlignment="Center">
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,12">
+                                                <Border Background="#FF2A2A2A" CornerRadius="4" Padding="6,4" Margin="0,0,4,0">
+                                                    <TextBlock Text="Ctrl" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
+                                                </Border>
+                                                <TextBlock Text="+" Foreground="#FF8E8E8E" FontSize="12" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                                <Viewbox Width="24" Height="30">
+                                                    <Canvas Width="48" Height="60">
+                                                        <Path Data="M24,0 C15,0 8,7 8,16 L8,44 C8,52 15,60 24,60 C33,60 40,52 40,44 L40,16 C40,7 33,0 24,0 Z" 
+                                                              Fill="#FF2A2A2A" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                        <Path Data="M4 14 L20 14" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                        <Line X1="24" Y1="2" X2="24" Y2="20" Stroke="#FF444444" StrokeThickness="1.5"/>
+                                                        <Rectangle x:Name="CtrlMiddleClickHighlight" Canvas.Left="20" Canvas.Top="8" Width="8" Height="8" RadiusX="2" RadiusY="2" Fill="#FF52525B"/>
+                                                    </Canvas>
+                                                </Viewbox>
+                                            </StackPanel>
+                                            <TextBlock Text="Ctrl+中键单击" Foreground="White" FontSize="13" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,16"/>
+                                        </StackPanel>
+                                        
+                                        <Border Grid.Row="1" Background="#0A09090B" BorderBrush="#FF27272A" BorderThickness="0,1,0,0" Padding="6" Margin="-16,0,-16,0">
+                                            <Border Background="#CC181818" CornerRadius="6" Padding="2">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlMiddleClick:None" x:Name="CtrlMiddleClick_None"/>
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlMiddleClick:Panel" x:Name="CtrlMiddleClick_Panel"/>
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,2,0" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlMiddleClick:Radial" x:Name="CtrlMiddleClick_Radial"/>
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="0"
+                                                            Click="AssignGesture_Click" Tag="CtrlMiddleClick:Yanm" x:Name="CtrlMiddleClick_Yanm"/>
+                                                </Grid>
+                                            </Border>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+
+                            <!-- Section 4: 面板交互选项 -->
+                            <TextBlock Text="面板交互选项" Foreground="#FFB8B8B8" FontSize="12" FontWeight="SemiBold" Margin="0,8,0,10"/>
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15" Margin="0,0,0,16">
+                                <Grid>
+                                    <StackPanel>
+                                        <TextBlock Text="在按钮上松开后执行动作" Foreground="White" FontSize="13"/>
+                                        <TextBlock Text="启用后，长按或拖动触发时，移动到扩展上松开即可自动运行。" Foreground="#FF8E8E8E" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <CheckBox HorizontalAlignment="Right" Style="{StaticResource RaycastSwitchStyle}" IsChecked="{Binding ExecuteOnButtonRelease, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
+                                </Grid>
                             </Border>
 
                             <TextBlock Text="燕环" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
@@ -603,7 +1344,7 @@
                                         <StackPanel>
                                             <TextBlock Text="游戏轮盘模式" Foreground="White" FontSize="13"/>
                                             <TextBlock Text="{Binding RadialMenuSummary}" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                                            <TextBlock Text="右键按住并移动触发燕环；右键按住不动仍触发鼠标面板。滚轮切页，子环可无限嵌套。" Foreground="#FF666666" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                                            <TextBlock Text="右键相关触发会和鼠标面板互斥；可改用中键、X1/X2、Ctrl 组合或滚轮等方式。滚轮切页，子环可无限嵌套。" Foreground="#FF666666" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"/>
                                             <CheckBox Content="按住 CapsLock 呼出燕环，松开执行"
                                                       Foreground="#FFE5E5E5"
                                                       FontSize="12"
@@ -613,6 +1354,18 @@
                                         </StackPanel>
                                         <CheckBox HorizontalAlignment="Right" Style="{StaticResource RaycastSwitchStyle}" IsChecked="{Binding EnableRadialMenu, Mode=TwoWay}" Click="SaveQuickPanelTrigger_Click"/>
                                     </Grid>
+
+                                    <TextBlock Text="鼠标触发"
+                                               Foreground="#FFB8B8B8"
+                                               FontSize="12"
+                                               Margin="0,12,0,0"/>
+                                    <ComboBox ItemsSource="{Binding MouseTriggerOptions}"
+                                              DisplayMemberPath="Label"
+                                              SelectedValuePath="Value"
+                                              SelectedValue="{Binding RadialMouseTriggerMode, Mode=TwoWay}"
+                                              Margin="0,6,0,0"
+                                              Height="36"
+                                              SelectionChanged="SaveQuickPanelTrigger_Click"/>
 
                                     <Grid Margin="0,16,0,0">
                                         <Grid.ColumnDefinitions>
@@ -961,10 +1714,24 @@
                                 </StackPanel>
                             </Border>
 
+                            <TextBlock Text="进程白名单" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
+                                <StackPanel>
+                                    <TextBlock Text="留空表示所有程序都生效；填写后只对这些进程生效。多个进程用逗号或换行分隔，可填 code、excel、photoshop 或 xxx.exe。" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap"/>
+                                    <TextBox Text="{Binding YarnSelectWhitelistedProcessesText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Margin="0,10,0,0"
+                                             MinHeight="70"
+                                             AcceptsReturn="True"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"/>
+                                    <Button Content="保存白名单" Style="{StaticResource SecondaryBtn}" HorizontalAlignment="Left" Margin="0,12,0,0" Click="SaveYarnSelectSettings_Click"/>
+                                </StackPanel>
+                            </Border>
+
                             <TextBlock Text="进程黑名单" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
                             <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
                                 <StackPanel>
-                                    <TextBlock Text="在这些进程中禁用燕选，多个进程用逗号或换行分隔。可填写 code、excel、photoshop 或 xxx.exe。" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap"/>
+                                    <TextBlock Text="当白名单为空时，这里的进程会被排除；多个进程用逗号或换行分隔。可填写 code、excel、photoshop 或 xxx.exe。" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap"/>
                                     <TextBox Text="{Binding YarnSelectBlacklistedProcessesText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                              Margin="0,10,0,0"
                                              MinHeight="70"
@@ -987,14 +1754,33 @@
                                     <TextBlock Text="{Binding LocalExtensionSummary}" Foreground="White" FontSize="13"/>
                                     <TextBlock Text="{Binding ExtensionsRootPath}" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
                                     <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                                        <Button Content="打开扩展目录" Style="{StaticResource PrimaryBtn}" Margin="0,0,10,0" Click="OpenExtensionsFolderButton_Click"/>
-                                        <Button Content="刷新扩展统计" Style="{StaticResource SecondaryBtn}" Click="RefreshExtensionStatsButton_Click" IsEnabled="{Binding CanRefreshExtensions}"/>
+                                        <Button Content="打开目录" Style="{StaticResource PrimaryBtn}" Margin="0,0,10,0" Click="OpenExtensionsFolderButton_Click"/>
+                                        <Button Content="刷新" Style="{StaticResource SecondaryBtn}" Click="RefreshExtensionStatsButton_Click" IsEnabled="{Binding CanRefreshExtensions}"/>
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
 
                             <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16" Margin="0,16,0,0">
                                 <StackPanel>
+                                    <!-- Filter Tabs -->
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                        <Border x:Name="FilterAllTab" Style="{StaticResource FilterTabActiveStyle}" MouseLeftButtonDown="FilterTab_Click" Tag="all">
+                                            <TextBlock Text="全部" Foreground="White" FontSize="13" FontWeight="Medium"/>
+                                        </Border>
+                                        <Border x:Name="FilterPublishedTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="published">
+                                            <TextBlock Text="已发布" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
+                                        </Border>
+                                        <Border x:Name="FilterDisabledTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="disabled">
+                                            <TextBlock Text="已禁用" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
+                                        </Border>
+                                        <Border x:Name="FilterShortcutTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="shortcut">
+                                            <TextBlock Text="快捷键" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
+                                        </Border>
+                                        <Border x:Name="FilterRecycleTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="recycle">
+                                            <TextBlock Text="回收站" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
+                                        </Border>
+                                    </StackPanel>
+
                                     <Grid Margin="0,0,0,12">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
@@ -1052,10 +1838,18 @@
                                                                 </Grid.ColumnDefinitions>
 
                                                                 <StackPanel>
-                                                                    <TextBlock Text="{Binding Title}" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                                                    <StackPanel Orientation="Horizontal">
+                                                                        <TextBlock Text="{Binding Title}" Foreground="White" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                                                        <!-- Published Badge -->
+                                                                        <Border Style="{StaticResource PublishedBadgeStyle}" Margin="8,0,0,0" Visibility="{Binding PublishedBadgeVisibility}">
+                                                                            <TextBlock Text="已发布" Foreground="#FF16A34A" FontSize="10" FontWeight="SemiBold"/>
+                                                                        </Border>
+                                                                        <!-- Shortcut Badge -->
+                                                                        <Border Background="#1A3B82F6" BorderBrush="#FF3B82F6" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="8,0,0,0" Visibility="{Binding ShortcutBadgeVisibility}">
+                                                                            <TextBlock Text="{Binding ShortcutLabel}" Foreground="#FF3B82F6" FontSize="10" FontWeight="SemiBold"/>
+                                                                        </Border>
+                                                                    </StackPanel>
                                                                     <TextBlock Text="{Binding ExtensionId}" Foreground="#FF8E8E8E" FontSize="11" Margin="0,4,0,0"/>
-                                                                    <TextBlock Text="{Binding SourceLabel}" Foreground="#FF666666" FontSize="11" Margin="0,4,0,0"/>
-                                                                    <TextBlock Text="{Binding PublisherLabel}" Foreground="#FF666666" FontSize="11" Margin="0,4,0,0"/>
                                                                 </StackPanel>
 
                                                                 <TextBlock Grid.Column="1" Text="{Binding Category}" Foreground="#FFE5E5E5" FontSize="12" VerticalAlignment="Center"/>
@@ -1067,19 +1861,62 @@
                                                                           Click="ExtensionEnabledSwitch_Click"/>
 
                                                                 <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right">
-                                                                    <Button Content="打开目录" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" IsEnabled="{Binding OpenDirectoryButtonEnabled}" Click="OpenExtensionDirectoryButton_Click"/>
-                                                                    <Button Content="编辑" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" IsEnabled="{Binding EditButtonEnabled}" Click="EditExtensionButton_Click"/>
-                                                                    <Button Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" IsEnabled="{Binding PublishButtonEnabled}" Visibility="{Binding PublishNewButtonVisibility}" Click="PublishExtensionButton_Click">
-                                                                        <StackPanel Orientation="Horizontal">
-                                                                            <Grid Width="12" Height="12" Margin="0,0,6,0" Visibility="{Binding PublishSpinnerVisibility}">
+                                                                    <!-- Shortcut Icon Button -->
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Margin="0,0,4,0" 
+                                                                            Click="EditExtensionShortcutButton_Click"
+                                                                            ToolTip="设置快捷键">
+                                                                        <Viewbox Width="14" Height="14">
+                                                                            <Path Data="{local:IconGeometry shortcut}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                        </Viewbox>
+                                                                    </Button>
+                                                                    <!-- Edit Icon Button -->
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Margin="0,0,4,0" 
+                                                                            IsEnabled="{Binding EditButtonEnabled}" 
+                                                                            Click="EditExtensionButton_Click"
+                                                                            ToolTip="编辑">
+                                                                        <Viewbox Width="14" Height="14">
+                                                                            <Path Data="{local:IconGeometry edit}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                        </Viewbox>
+                                                                    </Button>
+                                                                    <!-- Open Directory Icon Button -->
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Margin="0,0,4,0" 
+                                                                            IsEnabled="{Binding OpenDirectoryButtonEnabled}" 
+                                                                            Click="OpenExtensionDirectoryButton_Click"
+                                                                            ToolTip="打开目录">
+                                                                        <Viewbox Width="14" Height="14">
+                                                                            <Path Data="{local:IconGeometry folder}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                        </Viewbox>
+                                                                    </Button>
+                                                                    <!-- Delete Icon Button (Recycle) -->
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Margin="0,0,8,0" 
+                                                                            IsEnabled="{Binding DeleteButtonEnabled}" 
+                                                                            Click="DeleteExtensionButton_Click"
+                                                                            ToolTip="移入回收站">
+                                                                        <Viewbox Width="14" Height="14">
+                                                                            <Path Data="{local:IconGeometry recycle}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                        </Viewbox>
+                                                                    </Button>
+                                                                    <!-- Publish/Unpublish Icon Buttons -->
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Margin="0,0,4,0" 
+                                                                            IsEnabled="{Binding PublishButtonEnabled}" 
+                                                                            Visibility="{Binding PublishNewButtonVisibility}" 
+                                                                            Click="PublishExtensionButton_Click"
+                                                                            ToolTip="发布到商店">
+                                                                        <Grid Width="14" Height="14">
+                                                                            <Grid Visibility="{Binding PublishSpinnerVisibility}">
                                                                                 <Ellipse Stroke="#FF4B5563" StrokeThickness="2"/>
-                                                                                <Path Data="M 6,1 A 5,5 0 1 1 5.99,1"
+                                                                                <Path Data="M 7,1 A 6,6 0 1 1 6.99,1"
                                                                                       Stroke="#FFFFFFFF"
                                                                                       StrokeThickness="2"
                                                                                       StrokeStartLineCap="Round"
                                                                                       StrokeEndLineCap="Round">
                                                                                     <Path.RenderTransform>
-                                                                                        <RotateTransform CenterX="6" CenterY="6"/>
+                                                                                        <RotateTransform CenterX="7" CenterY="7"/>
                                                                                     </Path.RenderTransform>
                                                                                     <Path.Triggers>
                                                                                         <EventTrigger RoutedEvent="Loaded">
@@ -1095,20 +1932,27 @@
                                                                                     </Path.Triggers>
                                                                                 </Path>
                                                                             </Grid>
-                                                                            <TextBlock Text="{Binding PublishButtonText}" VerticalAlignment="Center"/>
-                                                                        </StackPanel>
+                                                                            <Viewbox Visibility="{Binding PublishIconVisibility}">
+                                                                                <Path Data="{local:IconGeometry store}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                            </Viewbox>
+                                                                        </Grid>
                                                                     </Button>
-                                                                    <Button Style="{StaticResource UpdateStoreBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" IsEnabled="{Binding PublishButtonEnabled}" Visibility="{Binding PublishUpdateButtonVisibility}" Click="PublishExtensionButton_Click">
-                                                                        <StackPanel Orientation="Horizontal">
-                                                                            <Grid Width="12" Height="12" Margin="0,0,6,0" Visibility="{Binding PublishSpinnerVisibility}">
-                                                                                <Ellipse Stroke="#FF86EFAC" StrokeThickness="2"/>
-                                                                                <Path Data="M 6,1 A 5,5 0 1 1 5.99,1"
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Margin="0,0,4,0" 
+                                                                            IsEnabled="{Binding PublishButtonEnabled}" 
+                                                                            Visibility="{Binding PublishUpdateButtonVisibility}" 
+                                                                            Click="PublishExtensionButton_Click"
+                                                                            ToolTip="更新商店版本">
+                                                                        <Grid Width="14" Height="14">
+                                                                            <Grid Visibility="{Binding PublishSpinnerVisibility}">
+                                                                                <Ellipse Stroke="#FF16A34A" StrokeThickness="2"/>
+                                                                                <Path Data="M 7,1 A 6,6 0 1 1 6.99,1"
                                                                                       Stroke="#FFFFFFFF"
                                                                                       StrokeThickness="2"
                                                                                       StrokeStartLineCap="Round"
                                                                                       StrokeEndLineCap="Round">
                                                                                     <Path.RenderTransform>
-                                                                                        <RotateTransform CenterX="6" CenterY="6"/>
+                                                                                        <RotateTransform CenterX="7" CenterY="7"/>
                                                                                     </Path.RenderTransform>
                                                                                     <Path.Triggers>
                                                                                         <EventTrigger RoutedEvent="Loaded">
@@ -1124,20 +1968,27 @@
                                                                                     </Path.Triggers>
                                                                                 </Path>
                                                                             </Grid>
-                                                                            <TextBlock Text="{Binding PublishButtonText}" VerticalAlignment="Center"/>
-                                                                        </StackPanel>
+                                                                            <Viewbox Visibility="{Binding PublishIconVisibility}">
+                                                                                <Path Data="{local:IconGeometry store}" Fill="#FF16A34A" Stretch="Uniform"/>
+                                                                            </Viewbox>
+                                                                        </Grid>
                                                                     </Button>
-                                                                    <Button Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" IsEnabled="{Binding UnpublishButtonEnabled}" Visibility="{Binding UnpublishButtonVisibility}" Click="UnpublishExtensionButton_Click">
-                                                                        <StackPanel Orientation="Horizontal">
-                                                                            <Grid Width="12" Height="12" Margin="0,0,6,0" Visibility="{Binding UnpublishSpinnerVisibility}">
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Margin="0,0,4,0" 
+                                                                            IsEnabled="{Binding UnpublishButtonEnabled}" 
+                                                                            Visibility="{Binding UnpublishButtonVisibility}" 
+                                                                            Click="UnpublishExtensionButton_Click"
+                                                                            ToolTip="下线">
+                                                                        <Grid Width="14" Height="14">
+                                                                            <Grid Visibility="{Binding UnpublishSpinnerVisibility}">
                                                                                 <Ellipse Stroke="#FF4B5563" StrokeThickness="2"/>
-                                                                                <Path Data="M 6,1 A 5,5 0 1 1 5.99,1"
+                                                                                <Path Data="M 7,1 A 6,6 0 1 1 6.99,1"
                                                                                       Stroke="#FFFFFFFF"
                                                                                       StrokeThickness="2"
                                                                                       StrokeStartLineCap="Round"
                                                                                       StrokeEndLineCap="Round">
                                                                                     <Path.RenderTransform>
-                                                                                        <RotateTransform CenterX="6" CenterY="6"/>
+                                                                                        <RotateTransform CenterX="7" CenterY="7"/>
                                                                                     </Path.RenderTransform>
                                                                                     <Path.Triggers>
                                                                                         <EventTrigger RoutedEvent="Loaded">
@@ -1153,10 +2004,61 @@
                                                                                     </Path.Triggers>
                                                                                 </Path>
                                                                             </Grid>
-                                                                            <TextBlock Text="{Binding UnpublishButtonText}" VerticalAlignment="Center"/>
-                                                                        </StackPanel>
+                                                                            <Viewbox Visibility="{Binding UnpublishIconVisibility}">
+                                                                                <Path Data="{local:IconGeometry store}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                            </Viewbox>
+                                                                        </Grid>
                                                                     </Button>
-                                                                    <Button Content="移入回收站" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" IsEnabled="{Binding DeleteButtonEnabled}" Click="DeleteExtensionButton_Click"/>
+                                                                </StackPanel>
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+
+                                            <!-- Recycle Bin Items List -->
+                                            <ItemsControl Grid.Row="1"
+                                                          ItemsSource="{Binding RecycleBinItems}"
+                                                          Visibility="{Binding RecycleBinListVisibility}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border BorderBrush="#FF252525" BorderThickness="0,1,0,0" Padding="14,12">
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="2.3*" />
+                                                                    <ColumnDefinition Width="1.1*" />
+                                                                    <ColumnDefinition Width="0.8*" />
+                                                                    <ColumnDefinition Width="0.8*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+
+                                                                <StackPanel>
+                                                                    <TextBlock Text="{Binding Title}" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                                                    <TextBlock Text="{Binding ExtensionId}" Foreground="#FF8E8E8E" FontSize="11" Margin="0,4,0,0"/>
+                                                                </StackPanel>
+
+                                                                <TextBlock Grid.Column="1" Text="{Binding Category}" Foreground="#FFE5E5E5" FontSize="12" VerticalAlignment="Center"/>
+                                                                <TextBlock Grid.Column="2" Text="{Binding Version}" Foreground="#FFE5E5E5" FontSize="12" VerticalAlignment="Center"/>
+                                                                <TextBlock Grid.Column="3" Text="{Binding DeletedAtLabel}" Foreground="#FF8E8E8E" FontSize="11" VerticalAlignment="Center"/>
+
+                                                                <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right">
+                                                                    <!-- Restore Button -->
+                                                                    <Button Style="{StaticResource SecondaryBtn}" 
+                                                                            Height="28" 
+                                                                            Padding="10,0" 
+                                                                            Margin="0,0,8,0" 
+                                                                            Content="恢复" 
+                                                                            Click="RestoreRecycleBinExtensionButton_Click"
+                                                                            ToolTip="恢复扩展"/>
+                                                                    <!-- Permanent Delete Button -->
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Margin="0,0,4,0" 
+                                                                            Click="DeleteRecycleBinExtensionButton_Click"
+                                                                            ToolTip="永久删除">
+                                                                        <Viewbox Width="14" Height="14">
+                                                                            <Path Data="{local:IconGeometry trash}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                        </Viewbox>
+                                                                    </Button>
                                                                 </StackPanel>
                                                             </Grid>
                                                         </Border>
@@ -1203,244 +2105,6 @@
                             </Border>
                         </StackPanel>
 
-                        <!-- Recycle Bin View -->
-                        <StackPanel Visibility="{Binding IsRecycleBinSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <TextBlock Text="扩展回收站" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
-
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding RecycleBinSummary}" Foreground="White" FontSize="13"/>
-                                    <TextBlock Text="已删除的扩展会先留在这里，可恢复；彻底删除会同步到其他设备，清理本地扩展与回收站副本。" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                                        <Button Content="刷新回收站" Style="{StaticResource SecondaryBtn}" Click="RefreshRecycleBinButton_Click" IsEnabled="{Binding CanRefreshExtensions}"/>
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
-
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16" Margin="0,16,0,0">
-                                <StackPanel>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBox Text="{Binding RecycleBinSearchText, UpdateSourceTrigger=PropertyChanged}"
-                                                 Height="34"
-                                                 Padding="12,8"
-                                                 VerticalContentAlignment="Center"
-                                                 ToolTip="按名称、ID、分类搜索回收站扩展"
-                                                 IsEnabled="{Binding CanRefreshExtensions}" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding RecycleBinSearchSummary}"
-                                                   Foreground="#FF8E8E8E"
-                                                   FontSize="12"
-                                                   Margin="12,0,0,0"
-                                                   VerticalAlignment="Center" />
-                                    </Grid>
-
-                                    <Border Background="#FF181818" CornerRadius="6" BorderBrush="#FF262626" BorderThickness="1">
-                                        <Grid>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="*" />
-                                            </Grid.RowDefinitions>
-
-                                            <Grid Margin="14,12,14,10">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="2.3*" />
-                                                    <ColumnDefinition Width="1.1*" />
-                                                    <ColumnDefinition Width="0.8*" />
-                                                    <ColumnDefinition Width="1.3*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Text="扩展" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold"/>
-                                                <TextBlock Grid.Column="1" Text="分类" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold"/>
-                                                <TextBlock Grid.Column="2" Text="版本" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold"/>
-                                                <TextBlock Grid.Column="3" Text="删除时间" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold"/>
-                                                <TextBlock Grid.Column="4" Text="操作" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Right"/>
-                                            </Grid>
-
-                                            <ItemsControl Grid.Row="1"
-                                                          ItemsSource="{Binding RecycleBinItems}"
-                                                          Visibility="{Binding ExtensionsListVisibility}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <Border BorderBrush="#FF252525" BorderThickness="0,1,0,0" Padding="14,12">
-                                                            <Grid>
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="2.3*" />
-                                                                    <ColumnDefinition Width="1.1*" />
-                                                                    <ColumnDefinition Width="0.8*" />
-                                                                    <ColumnDefinition Width="1.3*" />
-                                                                    <ColumnDefinition Width="Auto" />
-                                                                </Grid.ColumnDefinitions>
-
-                                                                <StackPanel>
-                                                                    <TextBlock Text="{Binding Title}" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
-                                                                    <TextBlock Text="{Binding ExtensionId}" Foreground="#FF8E8E8E" FontSize="11" Margin="0,4,0,0"/>
-                                                                </StackPanel>
-                                                                <TextBlock Grid.Column="1" Text="{Binding Category}" Foreground="#FFE5E5E5" FontSize="12" VerticalAlignment="Center"/>
-                                                                <TextBlock Grid.Column="2" Text="{Binding Version}" Foreground="#FFE5E5E5" FontSize="12" VerticalAlignment="Center"/>
-                                                                <TextBlock Grid.Column="3" Text="{Binding DeletedAtLabel}" Foreground="#FF8E8E8E" FontSize="11" VerticalAlignment="Center"/>
-
-                                                                <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right">
-                                                                    <Button Style="{StaticResource PrimaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" IsEnabled="{Binding RestoreButtonEnabled}" Click="RestoreRecycleBinExtensionButton_Click">
-                                                                        <StackPanel Orientation="Horizontal">
-                                                                            <Grid Width="12" Height="12" Margin="0,0,6,0" Visibility="{Binding RestoreSpinnerVisibility}">
-                                                                                <Ellipse Stroke="#FF93C5FD" StrokeThickness="2"/>
-                                                                                <Path Data="M 6,1 A 5,5 0 1 1 5.99,1"
-                                                                                      Stroke="#FFFFFFFF"
-                                                                                      StrokeThickness="2"
-                                                                                      StrokeStartLineCap="Round"
-                                                                                      StrokeEndLineCap="Round">
-                                                                                    <Path.RenderTransform>
-                                                                                        <RotateTransform CenterX="6" CenterY="6"/>
-                                                                                    </Path.RenderTransform>
-                                                                                    <Path.Triggers>
-                                                                                        <EventTrigger RoutedEvent="Loaded">
-                                                                                            <BeginStoryboard>
-                                                                                                <Storyboard RepeatBehavior="Forever">
-                                                                                                    <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
-                                                                                                                     From="0"
-                                                                                                                     To="360"
-                                                                                                                     Duration="0:0:0.8"/>
-                                                                                                </Storyboard>
-                                                                                            </BeginStoryboard>
-                                                                                        </EventTrigger>
-                                                                                    </Path.Triggers>
-                                                                                </Path>
-                                                                            </Grid>
-                                                                            <TextBlock Text="{Binding RestoreButtonText}" VerticalAlignment="Center"/>
-                                                                        </StackPanel>
-                                                                    </Button>
-                                                                    <Button Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" IsEnabled="{Binding DeleteButtonEnabled}" Click="DeleteRecycleBinExtensionButton_Click">
-                                                                        <StackPanel Orientation="Horizontal">
-                                                                            <Grid Width="12" Height="12" Margin="0,0,6,0" Visibility="{Binding DeleteSpinnerVisibility}">
-                                                                                <Ellipse Stroke="#FF4B5563" StrokeThickness="2"/>
-                                                                                <Path Data="M 6,1 A 5,5 0 1 1 5.99,1"
-                                                                                      Stroke="#FFFFFFFF"
-                                                                                      StrokeThickness="2"
-                                                                                      StrokeStartLineCap="Round"
-                                                                                      StrokeEndLineCap="Round">
-                                                                                    <Path.RenderTransform>
-                                                                                        <RotateTransform CenterX="6" CenterY="6"/>
-                                                                                    </Path.RenderTransform>
-                                                                                    <Path.Triggers>
-                                                                                        <EventTrigger RoutedEvent="Loaded">
-                                                                                            <BeginStoryboard>
-                                                                                                <Storyboard RepeatBehavior="Forever">
-                                                                                                    <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
-                                                                                                                     From="0"
-                                                                                                                     To="360"
-                                                                                                                     Duration="0:0:0.8"/>
-                                                                                                </Storyboard>
-                                                                                            </BeginStoryboard>
-                                                                                        </EventTrigger>
-                                                                                    </Path.Triggers>
-                                                                                </Path>
-                                                                            </Grid>
-                                                                            <TextBlock Text="{Binding DeleteButtonText}" VerticalAlignment="Center"/>
-                                                                        </StackPanel>
-                                                                    </Button>
-                                                                </StackPanel>
-                                                            </Grid>
-                                                        </Border>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-
-                                            <Grid Grid.Row="1" Visibility="{Binding ExtensionsLoadingVisibility}">
-                                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                    <Grid Width="36" Height="36">
-                                                        <Ellipse Stroke="#FF2F2F2F" StrokeThickness="3"/>
-                                                        <Path Data="M 18,3 A 15,15 0 1 1 17.99,3"
-                                                              Stroke="#FFEF4444"
-                                                              StrokeThickness="3"
-                                                              StrokeStartLineCap="Round"
-                                                              StrokeEndLineCap="Round">
-                                                            <Path.RenderTransform>
-                                                                <RotateTransform CenterX="18" CenterY="18"/>
-                                                            </Path.RenderTransform>
-                                                            <Path.Triggers>
-                                                                <EventTrigger RoutedEvent="Loaded">
-                                                                    <BeginStoryboard>
-                                                                        <Storyboard RepeatBehavior="Forever">
-                                                                            <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
-                                                                                             From="0"
-                                                                                             To="360"
-                                                                                             Duration="0:0:0.8"/>
-                                                                        </Storyboard>
-                                                                    </BeginStoryboard>
-                                                                </EventTrigger>
-                                                            </Path.Triggers>
-                                                        </Path>
-                                                    </Grid>
-                                                    <TextBlock Text="正在刷新回收站..."
-                                                               Foreground="#FFE5E5E5"
-                                                               FontSize="12"
-                                                               HorizontalAlignment="Center"
-                                                               Margin="0,12,0,0"/>
-                                                </StackPanel>
-                                            </Grid>
-                                        </Grid>
-                                    </Border>
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
-
-                        <!-- Shortcuts View -->
-                        <StackPanel Visibility="{Binding IsShortcutsSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <TextBlock Text="快捷键" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
-
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16">
-                                <StackPanel>
-                                    <Grid Margin="0,0,0,12">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel>
-                                            <TextBlock Text="主程序快捷键" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
-                                            <TextBlock Text="用于呼出或隐藏启动器。" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0"/>
-                                        </StackPanel>
-                                        <Border Grid.Column="1" Background="#FF2D2D2D" CornerRadius="4" Padding="8,4" VerticalAlignment="Center">
-                                            <TextBlock Text="{Binding LauncherHotkey}" Foreground="White" FontSize="12"/>
-                                        </Border>
-                                    </Grid>
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                                        <Button Content="修改主快捷键" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" Click="EditLauncherHotkeyButton_Click"/>
-                                        <Button Content="重置为 Alt+Space" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Click="ResetLauncherHotkeyButton_Click"/>
-                                    </StackPanel>
-                                    <TextBlock Text="主程序快捷键修改后会立即重新注册。支持常规组合键，也支持录制 DoubleCtrl / DoubleAlt。" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12"/>
-                                    <Rectangle Height="1" Fill="#FF2A2A2A" Margin="0,0,0,12"/>
-                                    <ItemsControl ItemsSource="{Binding ShortcutItems}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate>
-                                                <Border BorderBrush="#FF2A2A2A" BorderThickness="0,0,0,1" Padding="0,12">
-                                                    <Grid>
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                        </Grid.ColumnDefinitions>
-                                                        <StackPanel>
-                                                            <TextBlock Text="{Binding Title}" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
-                                                            <TextBlock Text="{Binding Category}" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0"/>
-                                                        </StackPanel>
-                                                        <Border Grid.Column="1" Background="#FF2D2D2D" CornerRadius="4" Padding="8,4" VerticalAlignment="Center" Margin="12,0,8,0">
-                                                            <TextBlock Text="{Binding ShortcutLabel}" Foreground="White" FontSize="12"/>
-                                                        </Border>
-                                                        <Button Grid.Column="2" Content="编辑" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Margin="0,0,8,0" Click="EditShortcutButton_Click"/>
-                                                        <Button Grid.Column="3" Content="清除" Style="{StaticResource SecondaryBtn}" Height="28" Padding="10,0" Click="ClearShortcutButton_Click" IsEnabled="{Binding HasShortcut}"/>
-                                                    </Grid>
-                                                </Border>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
 
                     </StackPanel>
                 </ScrollViewer>
@@ -1556,6 +2220,37 @@
                     </ControlTemplate>
                 </Thumb.Template>
             </Thumb>
+            
+            <!-- Toast Notification -->
+            <Border x:Name="ToastNotification"
+                    Grid.ColumnSpan="2"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Top"
+                    Margin="0,60,20,0"
+                    Background="#FF22C55E"
+                    CornerRadius="8"
+                    Padding="16,12"
+                    Visibility="Collapsed"
+                    Panel.ZIndex="1000">
+                <Border.Effect>
+                    <DropShadowEffect Color="Black" Opacity="0.15" BlurRadius="12" ShadowDepth="4" Direction="270"/>
+                </Border.Effect>
+                <Border.RenderTransform>
+                    <TranslateTransform x:Name="ToastTransform" X="400"/>
+                </Border.RenderTransform>
+                <StackPanel Orientation="Horizontal">
+                    <Viewbox Width="16" Height="16" VerticalAlignment="Center">
+                        <Path Data="{local:IconGeometry check}" Fill="White" Stretch="Uniform"/>
+                    </Viewbox>
+                    <TextBlock x:Name="ToastMessage" 
+                               Text="已保存" 
+                               Foreground="White" 
+                               FontSize="13" 
+                               FontWeight="Medium"
+                               Margin="10,0,0,0"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
+            </Border>
         </Grid>
     </Border>
 </Window>

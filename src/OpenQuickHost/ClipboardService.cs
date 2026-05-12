@@ -35,6 +35,16 @@ public static class ClipboardService
         throw new InvalidOperationException($"写入剪贴板失败：{error}");
     }
 
+    public static string? GetText()
+    {
+        if (TryGetText(out var text, out var error))
+        {
+            return text;
+        }
+
+        throw new InvalidOperationException($"读取剪贴板失败：{error}");
+    }
+
     public static bool TrySetText(string text, out string? error)
     {
         return RunStaClipboardAction(() => Forms.Clipboard.SetText(text, Forms.TextDataFormat.UnicodeText), out error);
@@ -45,6 +55,16 @@ public static class ClipboardService
         return RunStaClipboardAction(
             () => Forms.Clipboard.SetDataObject(dataObject, copy, RetryCount, RetryDelayMilliseconds),
             out error);
+    }
+
+    public static bool TryGetText(out string? text, out string? error)
+    {
+        var textResult = string.Empty;
+        var ok = RunStaClipboardAction(
+            () => textResult = Forms.Clipboard.ContainsText() ? Forms.Clipboard.GetText() : string.Empty,
+            out error);
+        text = ok ? textResult : null;
+        return ok;
     }
 
     private static bool RunStaClipboardAction(Action action, out string? error)
