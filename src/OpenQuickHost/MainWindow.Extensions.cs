@@ -1971,6 +1971,12 @@ public partial class MainWindow
 
     public void OpenSettingsWindow(string? sectionKey = null)
     {
+        if (System.Windows.Application.Current is App app)
+        {
+            app.OpenSettingsWindow(sectionKey);
+            return;
+        }
+
         var settingsWindow = new SettingsWindow(this);
         if (sectionKey != null) settingsWindow.NavigateTo(sectionKey);
         settingsWindow.Show();

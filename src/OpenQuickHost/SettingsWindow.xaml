@@ -806,15 +806,10 @@
 <StackPanel Visibility="{Binding IsQuickPanelSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
                             <TextBlock Text="鼠标触发" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
                             
-                            <!-- Header with title, badge, and save button -->
                             <Grid Margin="0,5">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="全局手势与触发" Foreground="White" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                    <Border Background="#FF3B82F6" CornerRadius="4" Padding="8,3" Margin="10,0,0,0">
-                                        <TextBlock Text="统一控制中心" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
-                                    </Border>
                                 </StackPanel>
-                                <Button Content="保存配置" Style="{StaticResource PrimaryBtn}" HorizontalAlignment="Right" Click="SaveQuickPanelTrigger_Click"/>
                             </Grid>
                             <TextBlock Foreground="#FF8E8E8E" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap">
                                 <Run Text="选择呼出快捷方式的手势，并将它们分配给 "/>
@@ -1424,6 +1419,9 @@
                                                       Height="30"
                                                       ItemsSource="{Binding RadialMenuPages}"
                                                       DisplayMemberPath="Name"
+                                                      Text="{Binding SelectedRadialMenuPageName}"
+                                                      IsEditable="True"
+                                                      IsReadOnly="True"
                                                       SelectedValuePath="Id"
                                                       SelectedValue="{Binding SelectedRadialMenuPageId, Mode=TwoWay}"
                                                       ToolTip="滚轮会在这些轮盘页面之间切换"/>
@@ -1443,11 +1441,36 @@
                                         <Border Width="360"
                                                 Height="360"
                                                 HorizontalAlignment="Left"
-                                                Background="#99101010"
+                                                Background="Transparent"
                                                 BorderBrush="#22FFFFFF"
-                                                BorderThickness="1"
+                                                BorderThickness="0"
                                                 CornerRadius="180">
                                             <Canvas Width="360" Height="360">
+                                                <Ellipse Width="360"
+                                                         Height="360"
+                                                         Fill="#AA101010"
+                                                         Stroke="#22FFFFFF"
+                                                         StrokeThickness="1"
+                                                         Canvas.Left="0"
+                                                         Canvas.Top="0"/>
+
+                                                <Ellipse Width="226"
+                                                         Height="226"
+                                                         Fill="#CC101010"
+                                                         Stroke="#22FFFFFF"
+                                                         StrokeThickness="1"
+                                                         Canvas.Left="67"
+                                                         Canvas.Top="67"/>
+
+                                                <Ellipse Width="226"
+                                                         Height="226"
+                                                         Fill="Transparent"
+                                                         Stroke="#33FFFFFF"
+                                                         StrokeThickness="1.5"
+                                                         Canvas.Left="67"
+                                                         Canvas.Top="67"
+                                                         IsHitTestVisible="False"/>
+
                                                 <ItemsControl ItemsSource="{Binding RadialMenuPreviewSeparators}">
                                                     <ItemsControl.ItemsPanel>
                                                         <ItemsPanelTemplate>
@@ -1460,17 +1483,7 @@
                                                         </DataTemplate>
                                                     </ItemsControl.ItemTemplate>
                                                 </ItemsControl>
-                                                
-                                                <!-- Ring line around inner circle -->
-                                                <Ellipse Width="70"
-                                                         Height="70"
-                                                         Canvas.Left="145"
-                                                         Canvas.Top="145"
-                                                         Fill="Transparent"
-                                                         Stroke="#33FFFFFF"
-                                                         StrokeThickness="1.5"
-                                                         IsHitTestVisible="False"/>
-                                                
+
                                                 <Border Width="70"
                                                         Height="70"
                                                         Canvas.Left="145"
@@ -1501,6 +1514,42 @@
                                                                    IsHitTestVisible="False"/>
                                                     </Grid>
                                                 </Border>
+
+                                                <ItemsControl ItemsSource="{Binding RadialMenuSlots}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <Canvas/>
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Path Data="{Binding SectorGeometry}"
+                                                                  Stroke="#1FFFFFFF"
+                                                                  StrokeThickness="1"
+                                                                  Fill="Transparent"
+                                                                  MouseLeftButtonDown="RadialSlot_MouseLeftButtonDown"
+                                                                  MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
+                                                                  MouseEnter="RadialSlot_MouseEnter"
+                                                                  MouseLeave="RadialSlot_MouseLeave"
+                                                                  AllowDrop="True"
+                                                                  DragOver="RadialSlot_DragOver"
+                                                                  Drop="RadialSlot_Drop">
+                                                                <Path.Style>
+                                                                    <Style TargetType="Path">
+                                                                        <Setter Property="Fill" Value="Transparent"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsHovered}" Value="True">
+                                                                                <Setter Property="Fill" Value="#16FFFFFF"/>
+                                                                                <Setter Property="Stroke" Value="#40FFFFFF"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Path.Style>
+                                                            </Path>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+
                                                 <ItemsControl ItemsSource="{Binding RadialMenuSlots}">
                                                     <ItemsControl.ItemsPanel>
                                                         <ItemsPanelTemplate>
@@ -1515,11 +1564,11 @@
                                                     </ItemsControl.ItemContainerStyle>
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate>
-                                                            <Border Width="112"
-                                                                    Height="82"
+                                                            <Border Width="{Binding SlotWidth}"
+                                                                    Height="{Binding SlotHeight}"
                                                                     Background="Transparent"
                                                                     BorderThickness="0"
-                                                                    Padding="8"
+                                                                    Padding="{Binding SlotPadding}"
                                                                     AllowDrop="True"
                                                                     MouseLeftButtonDown="RadialSlot_MouseLeftButtonDown"
                                                                     MouseRightButtonDown="RadialSlot_MouseRightButtonDown"
@@ -1527,17 +1576,6 @@
                                                                     MouseLeave="RadialSlot_MouseLeave"
                                                                     DragOver="RadialSlot_DragOver"
                                                                     Drop="RadialSlot_Drop">
-                                                                <Border.Style>
-                                                                    <Style TargetType="Border">
-                                                                        <Setter Property="Background" Value="Transparent"/>
-                                                                        <Style.Triggers>
-                                                                            <!-- Highlight sector when hovered -->
-                                                                            <DataTrigger Binding="{Binding IsHovered}" Value="True">
-                                                                                <Setter Property="Background" Value="#15FFFFFF"/>
-                                                                            </DataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </Border.Style>
                                                                 <Border.ContextMenu>
                                                                     <ContextMenu>
                                                                         <MenuItem Header="添加扩展/应用/系统项" Click="RadialSlotAddCommandMenuItem_Click"/>
@@ -1549,36 +1587,12 @@
                                                                     </ContextMenu>
                                                                 </Border.ContextMenu>
                                                                 <Grid>
-                                                                    <!-- Hover highlight circle for empty slots -->
-                                                                    <Ellipse Width="50" 
-                                                                             Height="50" 
-                                                                             Fill="#20FFFFFF"
-                                                                             Stroke="#40FFFFFF"
-                                                                             StrokeThickness="1">
-                                                                        <Ellipse.Style>
-                                                                            <Style TargetType="Ellipse">
-                                                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                                                                <Style.Triggers>
-                                                                                    <!-- Show highlight when empty and hovered -->
-                                                                                    <MultiDataTrigger>
-                                                                                        <MultiDataTrigger.Conditions>
-                                                                                            <Condition Binding="{Binding IsEmpty}" Value="True"/>
-                                                                                            <Condition Binding="{Binding IsHovered}" Value="True"/>
-                                                                                        </MultiDataTrigger.Conditions>
-                                                                                        <Setter Property="Visibility" Value="Visible"/>
-                                                                                    </MultiDataTrigger>
-                                                                                </Style.Triggers>
-                                                                            </Style>
-                                                                        </Ellipse.Style>
-                                                                    </Ellipse>
-                                                                    
                                                                     <StackPanel>
-                                                                        <!-- Show ➕ for empty slots when hovered -->
-                                                                        <TextBlock Text="➕" 
-                                                                                   Foreground="#90FFFFFF" 
-                                                                                   FontSize="20" 
+                                                                        <TextBlock Text="➕"
+                                                                                   Foreground="#90FFFFFF"
+                                                                                   FontSize="{Binding PlusFontSize}"
                                                                                    HorizontalAlignment="Center"
-                                                                                   Margin="0,8,0,0">
+                                                                                   VerticalAlignment="Center">
                                                                             <TextBlock.Style>
                                                                                 <Style TargetType="TextBlock">
                                                                                     <Setter Property="Visibility" Value="Collapsed"/>
@@ -1598,16 +1612,58 @@
                                                                         
                                                                         <!-- Show normal content for filled slots -->
                                                                         <StackPanel Visibility="{Binding IsNotEmpty, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                            <Border Width="30"
+                                                                                    Height="30"
+                                                                                    CornerRadius="8"
+                                                                                    Background="{Binding AccentBrush}"
+                                                                                    HorizontalAlignment="Center"
+                                                                                    Visibility="{Binding HasPresentationIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                                <Grid>
+                                                                                    <Image Source="{Binding IconSource}"
+                                                                                           Width="{Binding IconSize}"
+                                                                                           Height="{Binding IconSize}"
+                                                                                           Stretch="UniformToFill"
+                                                                                           Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                                    <Viewbox Width="{Binding VectorIconSize}"
+                                                                                             Height="{Binding VectorIconSize}"
+                                                                                             Stretch="Uniform"
+                                                                                             HorizontalAlignment="Center"
+                                                                                             VerticalAlignment="Center"
+                                                                                             Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                                        <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
+                                                                                    </Viewbox>
+                                                                                    <TextBlock Text="{Binding DisplayGlyph}"
+                                                                                               Foreground="White"
+                                                                                               FontSize="{Binding GlyphFontSize}"
+                                                                                               FontWeight="SemiBold"
+                                                                                               HorizontalAlignment="Center"
+                                                                                               VerticalAlignment="Center"
+                                                                                               Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                                </Grid>
+                                                                            </Border>
                                                                             <TextBlock Text="{Binding Label}"
                                                                                        Foreground="#FF60A5FA"
                                                                                        FontWeight="SemiBold"
                                                                                        HorizontalAlignment="Center"
-                                                                                       FontSize="11"/>
+                                                                                       FontSize="10"
+                                                                                       >
+                                                                                <TextBlock.Style>
+                                                                                    <Style TargetType="TextBlock">
+                                                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding HasPresentationIcon}" Value="True">
+                                                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </TextBlock.Style>
+                                                                            </TextBlock>
                                                                             <TextBlock Text="{Binding ExtensionTitle}"
                                                                                        Foreground="#FFE5E5E5"
                                                                                        FontSize="10"
                                                                                        Margin="0,5,0,0"
                                                                                        TextAlignment="Center"
+                                                                                       Width="{Binding TitleWidth}"
                                                                                        TextTrimming="CharacterEllipsis"
                                                                                        ToolTip="把右侧扩展拖到这里"/>
                                                                             <TextBlock Text="{Binding ChildPageTitle}"
@@ -1615,6 +1671,7 @@
                                                                                        FontSize="10"
                                                                                        Margin="0,3,0,0"
                                                                                        TextAlignment="Center"
+                                                                                       Width="{Binding TitleWidth}"
                                                                                        TextTrimming="CharacterEllipsis"
                                                                                        Visibility="{Binding HasChildPageTitle, Converter={StaticResource BooleanToVisibilityConverter}}"
                                                                                        ToolTip="子环入口"/>
@@ -1637,7 +1694,8 @@
                                                 <StackPanel>
                                                     <TextBlock Text="搜索添加到方向槽位" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
                                                     <TextBlock Text="{Binding RadialMenuSelectedSlotSummary}" Foreground="#FF8E8E8E" FontSize="11" Margin="0,4,0,10" TextWrapping="Wrap"/>
-                                                    <TextBox Text="{Binding RadialMenuSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                    <TextBox x:Name="RadialMenuSearchBox"
+                                                             Text="{Binding RadialMenuSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                              Height="30"
                                                              Margin="0,0,0,8"
                                                              ToolTip="搜索扩展、应用、系统设置项。按 ↓ 选择，Enter 添加到当前槽位。"

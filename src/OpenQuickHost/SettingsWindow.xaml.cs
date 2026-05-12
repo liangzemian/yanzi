@@ -42,11 +42,13 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private string _aiApiKey = string.Empty;
     private string _aiModel = string.Empty;
     private string _aiSettingsStatusText = "尚未配置 AI。";
+    private string _radialPreviewDebugLog = "预览日志：等待交互。";
     private string _recycleBinSummary = "回收站为空。";
     private string _recycleBinSearchText = string.Empty;
     private bool _isExtensionsLoading;
     private int _extensionsRefreshVersion;
     private bool _hasLoadedExtensions; // 标记是否已加载过扩展
+    private bool _hasInitializedRadialEditor;
     private IReadOnlyList<SettingsExtensionItem> _cachedExtensionItems = [];
     private IReadOnlyList<SettingsRecycleBinItem> _cachedRecycleBinItems = [];
     private bool _suppressWindowBoundsPersistence;
@@ -86,7 +88,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             new SettingsNavigationItem("sync", "mdi:sync", "同步", "#FF22C55E"),
             new SettingsNavigationItem("extensions", "mdi:dashboard", "扩展", "#FFF97316"),
             new SettingsNavigationItem("quickpanel", "mdi:mouse-panel", "鼠标触发", "#FFEC4899"),
-            new SettingsNavigationItem("radial", "mdi:gesture-tap", "燕环", "#FFA855F7"),
+            new SettingsNavigationItem("radial", "mdi:circle-outline", "燕环", "#FFA855F7"),
             new SettingsNavigationItem("yarnselect", "mdi:shortcut", "燕选", "#FF14B8A6"),
             new SettingsNavigationItem("yanm", "mdi:monitor-dashboard", "燕幕", "#FF60A5FA"),
             new SettingsNavigationItem("about", "mdi:about", "关于", "#FF8B5CF6")
@@ -222,6 +224,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             else if (IsSyncSelected)
             {
                 RefreshSyncActivityLog();
+            }
+            else if (IsRadialSelected)
+            {
+                EnsureRadialEditorLoaded();
             }
         }
     }
@@ -1118,8 +1124,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         RefreshAccountSummary();
         RefreshQuickPanelTriggerBindings();
         RefreshYarnSelectBindings();
-        // 在窗口加载后执行，避免构造函数卡顿
-        RefreshRadialMenuSlots();
+        if (IsRadialSelected)
+        {
+            EnsureRadialEditorLoaded();
+        }
         OnPropertyChanged(nameof(RadialMouseTriggerMode));
         SyncStatusText = _mainWindow.SyncStatus;
         RefreshVisibleSectionData();
@@ -1158,7 +1166,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         LauncherHotkey = _settings.LauncherHotkey;
         RefreshQuickPanelTriggerBindings();
         RefreshYarnSelectBindings();
-        RefreshRadialMenuSlots();
+        if (IsRadialSelected || _hasInitializedRadialEditor)
+        {
+            EnsureRadialEditorLoaded(forceRefresh: true);
+        }
         EnableWebDavSync = _settings.EnableWebDavSync;
         WebDavServerUrl = string.IsNullOrWhiteSpace(_settings.WebDavServerUrl) ? "https://dav.jianguoyun.com/dav/" : _settings.WebDavServerUrl;
         WebDavRootPath = _settings.WebDavRootPath;
@@ -1186,6 +1197,17 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         
         // Refresh gesture card colors after settings reload
         UpdateAllGestureCardColors();
+    }
+
+    private void EnsureRadialEditorLoaded(bool forceRefresh = false)
+    {
+        if (_hasInitializedRadialEditor && !forceRefresh)
+        {
+            return;
+        }
+
+        RefreshRadialMenuSlots();
+        _hasInitializedRadialEditor = true;
     }
 
     private void RefreshVisibleSectionData()
@@ -1519,13 +1541,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         HostAssets.AppendLog($"AssignGesture_Click: gesture={gestureName}, target={target}");
 
-        // Implement mutual exclusion: clear this gesture from all other targets
-        // and clear the selected target from all other gestures
+        // Keep each gesture assigned to only one target, but allow one target
+        // to be triggered by multiple different gestures.
         ClearGestureFromAllTargets(gestureName);
-        if (target != "None")
-        {
-            ClearTargetFromAllGestures(target, gestureName);
-        }
 
         // Assign the gesture to the selected target
         AssignGestureToTarget(gestureName, target);
@@ -1598,35 +1616,6 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                 radial.TriggerCtrlMiddleClick = false;
                 yanm.TriggerCtrlMiddleClick = false;
                 break;
-        }
-    }
-
-    private void ClearTargetFromAllGestures(string target, string exceptGesture)
-    {
-        // Clear all gestures from the specified target except the one being assigned
-        var allGestures = new[]
-        {
-            "RightButtonLongPress", "MiddleButtonLongPress", "RightButtonDrag",
-            "MiddleButtonDown", "X1ButtonDown", "X2ButtonDown", "HorizontalWheel",
-            "CtrlLeftClick", "CtrlRightClick", "CtrlMiddleClick"
-        };
-
-        foreach (var gesture in allGestures)
-        {
-            if (gesture == exceptGesture) continue;
-            
-            switch (target)
-            {
-                case "Panel":
-                    SetGestureForPanel(gesture, false);
-                    break;
-                case "Radial":
-                    SetGestureForRadial(gesture, false);
-                    break;
-                case "Yanm":
-                    SetGestureForYanm(gesture, false);
-                    break;
-            }
         }
     }
 
@@ -3375,6 +3364,37 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public string RadialPreviewDebugLog
+    {
+        get => _radialPreviewDebugLog;
+        private set
+        {
+            if (value == _radialPreviewDebugLog)
+            {
+                return;
+            }
+
+            _radialPreviewDebugLog = value;
+            OnPropertyChanged();
+        }
+    }
+
+    private static void SyncRadialMouseTriggerModeFromFlags(RadialMenuSettings radial)
+    {
+        radial.MouseTriggerMode =
+            radial.TriggerRightButtonDrag ? MouseTriggerModes.RightDrag :
+            radial.TriggerRightButtonLongPress ? MouseTriggerModes.RightLongPress :
+            radial.TriggerMiddleButtonLongPress ? MouseTriggerModes.MiddleLongPress :
+            radial.TriggerMiddleButtonDown ? MouseTriggerModes.MiddleDown :
+            radial.TriggerX1ButtonDown ? MouseTriggerModes.X1Down :
+            radial.TriggerX2ButtonDown ? MouseTriggerModes.X2Down :
+            radial.TriggerHorizontalWheel ? MouseTriggerModes.HorizontalWheel :
+            radial.TriggerCtrlLeftClick ? MouseTriggerModes.CtrlLeftClick :
+            radial.TriggerCtrlRightClick ? MouseTriggerModes.CtrlRightClick :
+            radial.TriggerCtrlMiddleClick ? MouseTriggerModes.CtrlMiddleClick :
+            MouseTriggerModes.None;
+    }
+
     private static void ApplyMouseTriggerModeToYanmFlags(YanmSettings yanm)
     {
         var mode = MouseTriggerModes.Normalize(yanm.MouseTriggerMode);
@@ -3413,6 +3433,22 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private static void SyncYanmMouseTriggerModeFromFlags(YanmSettings yanm)
+    {
+        yanm.MouseTriggerMode =
+            yanm.TriggerRightButtonDrag ? MouseTriggerModes.RightDrag :
+            yanm.TriggerRightButtonLongPress ? MouseTriggerModes.RightLongPress :
+            yanm.TriggerMiddleButtonLongPress ? MouseTriggerModes.MiddleLongPress :
+            yanm.TriggerMiddleButtonDown ? MouseTriggerModes.MiddleDown :
+            yanm.TriggerX1ButtonDown ? MouseTriggerModes.X1Down :
+            yanm.TriggerX2ButtonDown ? MouseTriggerModes.X2Down :
+            yanm.TriggerHorizontalWheel ? MouseTriggerModes.HorizontalWheel :
+            yanm.TriggerCtrlLeftClick ? MouseTriggerModes.CtrlLeftClick :
+            yanm.TriggerCtrlRightClick ? MouseTriggerModes.CtrlRightClick :
+            yanm.TriggerCtrlMiddleClick ? MouseTriggerModes.CtrlMiddleClick :
+            MouseTriggerModes.None;
+    }
+
     private void SaveQuickPanelTriggerSettings()
     {
         SaveRadialMenuSlots();
@@ -3421,6 +3457,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         _settings.QuickPanelMouseTriggers ??= new QuickPanelMouseTriggerSettings();
         ApplyMouseTriggerModeToRadialFlags(_settings.RadialMenu);
         ApplyMouseTriggerModeToYanmFlags(_settings.Yanm);
+        SyncRadialMouseTriggerModeFromFlags(_settings.RadialMenu);
+        SyncYanmMouseTriggerModeFromFlags(_settings.Yanm);
         AppSettingsStore.Save(_settings);
         _mainWindow.RefreshAppSettings();
         _mainWindow.NotifyQuickPanelSettingsChanged("quickpanel-trigger-settings-saved");
@@ -3480,6 +3518,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         _settings.Yanm.ActivationKey = YanmActivationKeys.Normalize(_settings.Yanm.ActivationKey);
         _settings.Yanm.MouseTriggerMode = MouseTriggerModes.Normalize(_settings.Yanm.MouseTriggerMode);
         ApplyMouseTriggerModeToYanmFlags(_settings.Yanm);
+        SyncYanmMouseTriggerModeFromFlags(_settings.Yanm);
         if (requireCustomShortcut &&
             string.Equals(_settings.Yanm.ActivationKey, YanmActivationKeys.Custom, StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(_settings.Yanm.CustomShortcut))
@@ -3642,8 +3681,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             RadialMenuSlots.Clear();
             BuildRadialPreviewSeparators();
             var center = 180.0;
-            var innerRadius = 92.0;
-            var outerRadius = 137.0;
+            var innerRadius = 78.0;
+            var outerRadius = 142.0;
+            var runtimeItems = _mainWindow.GetRadialMenuItems(selectedPage.Id);
             for (var index = 0; index < RadialMenuSettings.TotalSlotCount; index++)
             {
                 var isOuter = index >= RadialMenuSettings.InnerSlotCount;
@@ -3651,17 +3691,27 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                 var step = isOuter ? 22.5 : 45.0;
                 var angle = (-90 + offset * step) * Math.PI / 180.0;
                 var radius = isOuter ? outerRadius : innerRadius;
+                var startAngleDegrees = isOuter ? -101.25 + offset * step : -112.5 + offset * step;
+                var runtimeItem = runtimeItems.ElementAtOrDefault(index);
+                var runtimeCommand = runtimeItem?.Command;
+                var childPageId = selectedPage.ChildPageIds.ElementAtOrDefault(index) ?? string.Empty;
                 RadialMenuSlots.Add(new RadialMenuSlotEditorItem(
                     index,
                     selectedPage.Slots.ElementAtOrDefault(index) ?? string.Empty,
                     selectedPage.SlotTitles.ElementAtOrDefault(index) ?? string.Empty,
-                    selectedPage.ChildPageIds.ElementAtOrDefault(index) ?? string.Empty,
+                    childPageId,
                     ResolveRadialExtensionTitle(
                         selectedPage.Slots.ElementAtOrDefault(index),
                         selectedPage.SlotTitles.ElementAtOrDefault(index)),
-                    ResolveRadialChildPageTitle(selectedPage.ChildPageIds.ElementAtOrDefault(index)),
-                    center + Math.Cos(angle) * radius - 52,
-                    center + Math.Sin(angle) * radius - 32));
+                    ResolveRadialChildPageTitle(childPageId),
+                    center + Math.Cos(angle) * radius - (isOuter ? 31 : 38),
+                    center + Math.Sin(angle) * radius - (isOuter ? 25 : 30),
+                    isOuter,
+                    BuildRadialSectorGeometry(center, center, isOuter ? 113.0 : 28.0, isOuter ? 176.0 : 113.0, startAngleDegrees, step),
+                    runtimeCommand?.IconSource,
+                    runtimeCommand?.VectorIcon,
+                    runtimeCommand?.AccentBrush ?? System.Windows.Media.Brushes.Transparent,
+                    runtimeCommand?.DisplayGlyph ?? (string.IsNullOrWhiteSpace(childPageId) ? string.Empty : "环")));
             }
 
             OnPropertyChanged(nameof(SelectedRadialMenuPageId));
@@ -3681,21 +3731,54 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         {
             var angle = (-112.5 + index * 45) * Math.PI / 180.0;
             RadialMenuPreviewSeparators.Add(new RadialSeparatorViewModel(
-                center + Math.Cos(angle) * 46,
-                center + Math.Sin(angle) * 46,
-                center + Math.Cos(angle) * 135,
-                center + Math.Sin(angle) * 135));
+                center + Math.Cos(angle) * 28,
+                center + Math.Sin(angle) * 28,
+                center + Math.Cos(angle) * 113,
+                center + Math.Sin(angle) * 113));
         }
 
         for (var index = 0; index < RadialMenuSettings.OuterSlotCount; index++)
         {
             var angle = (-101.25 + index * 22.5) * Math.PI / 180.0;
             RadialMenuPreviewSeparators.Add(new RadialSeparatorViewModel(
-                center + Math.Cos(angle) * 135,
-                center + Math.Sin(angle) * 135,
-                center + Math.Cos(angle) * 180,
-                center + Math.Sin(angle) * 180));
+                center + Math.Cos(angle) * 113,
+                center + Math.Sin(angle) * 113,
+                center + Math.Cos(angle) * 176,
+                center + Math.Sin(angle) * 176));
         }
+    }
+
+    private static Geometry BuildRadialSectorGeometry(double centerX, double centerY, double innerRadius, double outerRadius, double startAngleDegrees, double sweepDegrees)
+    {
+        static System.Windows.Point PointOnCircle(double cx, double cy, double radius, double angleDegrees)
+        {
+            var radians = angleDegrees * Math.PI / 180.0;
+            return new System.Windows.Point(
+                cx + Math.Cos(radians) * radius,
+                cy + Math.Sin(radians) * radius);
+        }
+
+        var endAngleDegrees = startAngleDegrees + sweepDegrees;
+        var outerStart = PointOnCircle(centerX, centerY, outerRadius, startAngleDegrees);
+        var outerEnd = PointOnCircle(centerX, centerY, outerRadius, endAngleDegrees);
+        var innerEnd = PointOnCircle(centerX, centerY, innerRadius, endAngleDegrees);
+        var innerStart = PointOnCircle(centerX, centerY, innerRadius, startAngleDegrees);
+        var isLargeArc = sweepDegrees >= 180.0;
+
+        var figure = new PathFigure
+        {
+            StartPoint = outerStart,
+            IsClosed = true,
+            IsFilled = true
+        };
+        figure.Segments.Add(new ArcSegment(outerEnd, new System.Windows.Size(outerRadius, outerRadius), 0, isLargeArc, SweepDirection.Clockwise, true));
+        figure.Segments.Add(new LineSegment(innerEnd, true));
+        figure.Segments.Add(new ArcSegment(innerStart, new System.Windows.Size(innerRadius, innerRadius), 0, isLargeArc, SweepDirection.Counterclockwise, true));
+
+        var geometry = new PathGeometry();
+        geometry.Figures.Add(figure);
+        geometry.Freeze();
+        return geometry;
     }
 
     private void SaveRadialMenuSlots()
@@ -3828,6 +3911,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         slot.ExtensionId = option.ExtensionId;
         slot.DisplayTitle = string.Empty;
         slot.ExtensionTitle = option.Title;
+        UpdateRadialSlotPresentation(slot);
         SaveQuickPanelTriggerSettings();
         RefreshRadialMenuSlots();
     }
@@ -3992,6 +4076,19 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         if (sender is FrameworkElement { DataContext: RadialMenuSlotEditorItem slot })
         {
             SelectRadialMenuSlot(slot);
+            if (slot.IsEmpty)
+            {
+                OpenRadialSlotPicker(slot);
+                e.Handled = true;
+                return;
+            }
+
+            var command = ResolveRadialSlotCommand(slot);
+            if (command != null)
+            {
+                _mainWindow.ExecuteCommandExternally(command, launchSource: "settings-radial-preview");
+                e.Handled = true;
+            }
         }
     }
 
@@ -4000,14 +4097,6 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         if (sender is FrameworkElement { DataContext: RadialMenuSlotEditorItem slot })
         {
             SelectRadialMenuSlot(slot);
-            if (!string.IsNullOrWhiteSpace(slot.ExtensionId))
-            {
-                slot.ExtensionId = string.Empty;
-                slot.DisplayTitle = string.Empty;
-                slot.ExtensionTitle = ResolveRadialExtensionTitle(string.Empty);
-                SaveQuickPanelTriggerSettings();
-                e.Handled = true;
-            }
         }
     }
 
@@ -4026,9 +4115,12 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
 
         slot.ExtensionId = e.Data.GetData(System.Windows.DataFormats.StringFormat) as string ?? string.Empty;
+        slot.DisplayTitle = string.Empty;
         slot.ExtensionTitle = ResolveRadialExtensionTitle(slot.ExtensionId);
+        UpdateRadialSlotPresentation(slot);
         e.Handled = true;
         SaveQuickPanelTriggerSettings();
+        RefreshRadialMenuSlots();
     }
 
     private void RadialSlot_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
@@ -4036,6 +4128,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         if (sender is FrameworkElement { DataContext: RadialMenuSlotEditorItem slot })
         {
             slot.IsHovered = true;
+            SelectRadialMenuSlot(slot);
         }
     }
 
@@ -4056,8 +4149,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
 
         SelectRadialMenuSlot(slot);
-        RadialMenuSearchText = string.Empty;
-        RefreshRadialMenuCommandCandidates(string.Empty);
+        OpenRadialSlotPicker(slot);
     }
 
     private void RadialSlotSetSimulatedKeyMenuItem_Click(object sender, RoutedEventArgs e)
@@ -4129,6 +4221,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         slot.ExtensionId = string.Empty;
         slot.DisplayTitle = string.Empty;
         slot.ExtensionTitle = ResolveRadialExtensionTitle(string.Empty);
+        UpdateRadialSlotPresentation(slot);
         SaveQuickPanelTriggerSettings();
     }
 
@@ -4141,19 +4234,112 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
 
         SelectRadialMenuSlot(slot);
+        CreateRadialChildPageForSlot(slot, GetNextRadialChildPageName());
+    }
+
+    private void CreateRadialChildPageForSlot(RadialMenuSlotEditorItem slot, string pageName)
+    {
         SaveRadialMenuSlots();
         _settings.RadialMenu ??= new RadialMenuSettings();
         _settings.RadialMenu.Pages ??= [];
         var page = new RadialMenuPageSettings
         {
             Id = Guid.NewGuid().ToString("N"),
-            Name = $"子环 {slot.Label}"
+            Name = pageName.Trim()
         };
         _settings.RadialMenu.Pages.Add(page);
         slot.ChildPageId = page.Id;
         slot.ChildPageTitle = ResolveRadialChildPageTitle(page.Id);
+        UpdateRadialSlotPresentation(slot);
         SaveQuickPanelTriggerSettings();
         RefreshRadialMenuSlots();
+    }
+
+    private void OpenRadialSlotPicker(RadialMenuSlotEditorItem slot)
+    {
+        var picker = new RadialSlotPickerWindow(
+            keyword => _mainWindow.GetRadialMenuCommandCandidates(keyword),
+            allowAddChildPage: !slot.HasChildPageTitle,
+            createExtension: owner => _mainWindow.OpenAddExtensionForSlot(owner))
+        {
+            Owner = this
+        };
+        if (picker.ShowDialog() != true)
+        {
+            return;
+        }
+
+        if (picker.SelectedAction == RadialSlotPickerWindow.PickerAction.AddChildPage)
+        {
+            CreateRadialChildPageForSlot(slot, GetNextRadialChildPageName());
+            return;
+        }
+
+        if (picker.SelectedCommand == null)
+        {
+            return;
+        }
+
+        ApplyRadialMenuCommandToSlot(slot, new YarnSelectExtensionOption(picker.SelectedCommand));
+    }
+
+    private CommandItem? ResolveRadialSlotCommand(RadialMenuSlotEditorItem slot)
+    {
+        return _mainWindow
+            .GetRadialMenuItems(SelectedRadialMenuPageId)
+            .ElementAtOrDefault(slot.Index)?
+            .Command;
+    }
+
+    private string GetNextRadialChildPageName()
+    {
+        _settings.RadialMenu ??= new RadialMenuSettings();
+        _settings.RadialMenu.Pages ??= [];
+        var usedNumbers = _settings.RadialMenu.Pages
+            .Select(page => page.Name ?? string.Empty)
+            .Select(name =>
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(name, @"^子环\s*(\d+)$");
+                return match.Success && int.TryParse(match.Groups[1].Value, out var number) ? number : (int?)null;
+            })
+            .Where(number => number.HasValue)
+            .Select(number => number!.Value)
+            .ToHashSet();
+        var next = 1;
+        while (usedNumbers.Contains(next))
+        {
+            next++;
+        }
+
+        return $"子环 {next}";
+    }
+
+    private void UpdateRadialSlotPresentation(RadialMenuSlotEditorItem slot)
+    {
+        var command = ResolveRadialSlotCommand(slot);
+        if (command != null)
+        {
+            slot.IconSource = command.IconSource;
+            slot.VectorIcon = command.VectorIcon;
+            slot.AccentBrush = command.AccentBrush;
+            slot.DisplayGlyph = command.DisplayGlyph;
+            slot.ExtensionTitle = command.Title;
+            return;
+        }
+
+        if (slot.HasChildPageTitle)
+        {
+            slot.IconSource = null;
+            slot.VectorIcon = null;
+            slot.AccentBrush = System.Windows.Media.Brushes.Transparent;
+            slot.DisplayGlyph = "环";
+            return;
+        }
+
+        slot.IconSource = null;
+        slot.VectorIcon = null;
+        slot.AccentBrush = System.Windows.Media.Brushes.Transparent;
+        slot.DisplayGlyph = string.Empty;
     }
 
     private void RadialSlotClearChildPageMenuItem_Click(object sender, RoutedEventArgs e)
@@ -4613,8 +4799,12 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
     private string _extensionTitle;
     private string _childPageTitle;
     private bool _isHovered;
+    private ImageSource? _iconSource;
+    private Geometry? _vectorIcon;
+    private System.Windows.Media.Brush _accentBrush;
+    private string _displayGlyph;
 
-    public RadialMenuSlotEditorItem(int index, string extensionId, string displayTitle, string childPageId, string extensionTitle, string childPageTitle, double x, double y)
+    public RadialMenuSlotEditorItem(int index, string extensionId, string displayTitle, string childPageId, string extensionTitle, string childPageTitle, double x, double y, bool isOuter, Geometry sectorGeometry, ImageSource? iconSource, Geometry? vectorIcon, System.Windows.Media.Brush accentBrush, string displayGlyph)
     {
         Index = index;
         _extensionId = extensionId;
@@ -4624,6 +4814,12 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
         _childPageTitle = childPageTitle;
         X = x;
         Y = y;
+        IsOuter = isOuter;
+        SectorGeometry = sectorGeometry;
+        _iconSource = iconSource;
+        _vectorIcon = vectorIcon;
+        _accentBrush = accentBrush;
+        _displayGlyph = displayGlyph;
     }
 
     public int Index { get; }
@@ -4633,6 +4829,101 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
     public double X { get; }
 
     public double Y { get; }
+
+    public bool IsOuter { get; }
+
+    public Geometry SectorGeometry { get; }
+
+    public double SlotWidth => IsOuter ? 62 : 76;
+
+    public double SlotHeight => IsOuter ? 50 : 60;
+
+    public double TitleWidth => IsOuter ? 50 : 60;
+
+    public double IconSize => IsOuter ? 23 : 32;
+
+    public double VectorIconSize => IsOuter ? 14 : 19;
+
+    public double GlyphFontSize => IsOuter ? 11 : 13;
+
+    public double PlusFontSize => IsOuter ? 20 : 24;
+
+    public Thickness SlotPadding => IsOuter ? new Thickness(4, 2, 4, 0) : new Thickness(6, 4, 6, 0);
+
+    public ImageSource? IconSource
+    {
+        get => _iconSource;
+        set
+        {
+            if (Equals(value, _iconSource))
+            {
+                return;
+            }
+
+            _iconSource = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasImageIcon));
+            OnPropertyChanged(nameof(HasPresentationIcon));
+        }
+    }
+
+    public Geometry? VectorIcon
+    {
+        get => _vectorIcon;
+        set
+        {
+            if (Equals(value, _vectorIcon))
+            {
+                return;
+            }
+
+            _vectorIcon = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasVectorIcon));
+            OnPropertyChanged(nameof(HasPresentationIcon));
+        }
+    }
+
+    public System.Windows.Media.Brush AccentBrush
+    {
+        get => _accentBrush;
+        set
+        {
+            if (Equals(value, _accentBrush))
+            {
+                return;
+            }
+
+            _accentBrush = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public string DisplayGlyph
+    {
+        get => _displayGlyph;
+        set
+        {
+            value ??= string.Empty;
+            if (value == _displayGlyph)
+            {
+                return;
+            }
+
+            _displayGlyph = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(UseGlyphIcon));
+            OnPropertyChanged(nameof(HasPresentationIcon));
+        }
+    }
+
+    public bool HasImageIcon => IconSource != null;
+
+    public bool HasVectorIcon => VectorIcon != null;
+
+    public bool UseGlyphIcon => !HasImageIcon && !HasVectorIcon && !string.IsNullOrWhiteSpace(DisplayGlyph);
+
+    public bool HasPresentationIcon => HasImageIcon || HasVectorIcon || UseGlyphIcon;
 
     public bool IsEmpty => string.IsNullOrWhiteSpace(_extensionId) && string.IsNullOrWhiteSpace(_childPageId);
 

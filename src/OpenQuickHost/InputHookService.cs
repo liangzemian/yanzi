@@ -52,6 +52,7 @@ public class InputHookService
     private static bool _releaseShouldExecute;
     private static bool _rightButtonDownSwallowed;
     private static ActiveTriggerTarget _activeTriggerTarget = ActiveTriggerTarget.None;
+    private static ActiveTriggerTarget _pendingLongPressTarget = ActiveTriggerTarget.None;
     private static bool _capsRadialActive;
     private static TrackedMouseButton _trackedButton = TrackedMouseButton.None;
     private static POINT _downPoint;
@@ -100,7 +101,8 @@ public class InputHookService
             _longPressTimer.Stop();
             _dragTriggered = true;
             _releaseShouldExecute = true;
-            // _activeTriggerTarget is already set by StartLongPressTimer
+            _activeTriggerTarget = _pendingLongPressTarget;
+            _pendingLongPressTarget = ActiveTriggerTarget.None;
             HostAssets.AppendLog($"Input hook: {_trackedButton} long press triggered for {_activeTriggerTarget}.");
             
             // Invoke the appropriate show method based on the target
@@ -235,7 +237,7 @@ public class InputHookService
             else if (message == WM_RBUTTONDOWN)
             {
                 BeginTracking(TrackedMouseButton.Right, mouse.pt);
-                HostAssets.AppendLog($"Input hook: right button down, rightLong={_settings.RightButtonLongPress}, rightDrag={_settings.RightButtonDrag}, radialTrigger={_radialSettings.MouseTriggerMode}, yanmTrigger={_yanmSettings.MouseTriggerMode}, ctrlRight={_settings.CtrlRightClick}, ctrlDown={IsControlDown()}, pt=({mouse.pt.x},{mouse.pt.y}).");
+                HostAssets.AppendLog($"Input hook: right button down, rightLong={_settings.RightButtonLongPress}, rightDrag={_settings.RightButtonDrag}, radialTrigger={_radialSettings.MouseTriggerMode}, radialRightDrag={_radialSettings.TriggerRightButtonDrag}, yanmTrigger={_yanmSettings.MouseTriggerMode}, yanmRightDrag={_yanmSettings.TriggerRightButtonDrag}, ctrlRight={_settings.CtrlRightClick}, ctrlDown={IsControlDown()}, pt=({mouse.pt.x},{mouse.pt.y}).");
                 _rightButtonDownSwallowed = ShouldDelayRightButtonClick();
                 if (_settings.CtrlRightClick && IsControlDown())
                 {
@@ -423,6 +425,7 @@ public class InputHookService
         _downPoint = point;
         _dragTriggered = false;
         _releaseShouldExecute = false;
+        _pendingLongPressTarget = ActiveTriggerTarget.None;
         if (button == TrackedMouseButton.Right)
         {
             _rightButtonDownSwallowed = false;
@@ -442,9 +445,9 @@ public class InputHookService
     {
         ReloadSettings();
         _longPressTimer?.Stop();
-        _activeTriggerTarget = ResolveLongPressTarget(_trackedButton);
+        _pendingLongPressTarget = ResolveLongPressTarget(_trackedButton);
         _longPressTimer?.Start();
-        HostAssets.AppendLog($"Input hook: long press timer started for {_trackedButton}, target={_activeTriggerTarget}, interval={Math.Clamp(_settings.LongPressMilliseconds, 150, 2000)}ms.");
+        HostAssets.AppendLog($"Input hook: long press timer started for {_trackedButton}, target={_pendingLongPressTarget}, interval={Math.Clamp(_settings.LongPressMilliseconds, 150, 2000)}ms.");
     }
 
     private static void HandleMouseMove(POINT point)
@@ -468,6 +471,21 @@ public class InputHookService
                 : Math.Clamp(_settings.DragThresholdPixels, 8, 120);
         var dx = point.x - _downPoint.x;
         var dy = point.y - _downPoint.y;
+        var distanceSquared = (dx * dx) + (dy * dy);
+
+        // If a right-button drag gesture is configured, small but intentional
+        // movement should cancel the long-press timer so long-press does not
+        // steal the gesture before drag has a chance to cross its full threshold.
+        if (_longPressTimer?.IsEnabled == true && (radialDrag || yanmDrag || _settings.RightButtonDrag))
+        {
+            const int dragIntentPixels = 6;
+            if (distanceSquared >= dragIntentPixels * dragIntentPixels)
+            {
+                _longPressTimer.Stop();
+                HostAssets.AppendLog("Input hook: canceled right-button long press because drag intent was detected.");
+            }
+        }
+
         if ((dx * dx) + (dy * dy) < threshold * threshold)
         {
             return;
@@ -528,6 +546,7 @@ public class InputHookService
         _dragTriggered = false;
         _releaseShouldExecute = false;
         _activeTriggerTarget = ActiveTriggerTarget.None;
+        _pendingLongPressTarget = ActiveTriggerTarget.None;
         if (button == TrackedMouseButton.Right)
         {
             _rightButtonDownSwallowed = false;

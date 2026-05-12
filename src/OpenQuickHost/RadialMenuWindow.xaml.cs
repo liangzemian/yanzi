@@ -373,7 +373,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         UpdateCenterText();
         var center = new System.Windows.Point(Width / 2, Height / 2);
         BuildSeparators(MainSeparators, center.X, center.Y, 34, 135, RadialMenuSettings.InnerSlotCount);
-        BuildSeparators(OuterSeparators, center.X, center.Y, 135, 222, RadialMenuSettings.OuterSlotCount);
+        BuildSeparators(OuterSeparators, center.X, center.Y, 135, 215, RadialMenuSettings.OuterSlotCount);
         for (var index = 0; index < RadialMenuSettings.InnerSlotCount; index++)
         {
             var angle = (-90 + index * 45) * Math.PI / 180.0;
@@ -812,6 +812,52 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
 
         OpenEditMenuForCurrentSelection();
         e.Handled = true;
+    }
+
+    private void RadialSlot_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: RadialMenuItemViewModel item })
+        {
+            return;
+        }
+
+        SetSelectedForItem(item);
+
+        if (_editModeLocked || Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
+        {
+            _editModeLocked = true;
+            _selectionTimer.Stop();
+            UpdateEditModeState();
+            var target = new RadialEditTarget(item.OwnerPageId, item.Index, item);
+            if (item.Command == null && !item.HasChildPage)
+            {
+                AddCommandToTarget(target);
+            }
+            else
+            {
+                OpenEditMenuForTarget(target);
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        if (item.Command != null)
+        {
+            _selectionTimer.Stop();
+            Hide();
+            _isExecuting = true;
+            HostAssets.AppendLog($"Radial menu clicked execute: index={item.Index}, command={item.Command.Title}, ring={item.Ring}.");
+            _ = ExecuteCommandAfterForegroundRestoreAsync(item.Command, "radial-menu-click");
+            e.Handled = true;
+            return;
+        }
+
+        if (item.Command == null && !item.HasChildPage)
+        {
+            TryHandleEmptySlotRelease(item);
+            e.Handled = true;
+        }
     }
 
     private void RadialSlot_MouseRightButtonDown(object sender, MouseButtonEventArgs e)
@@ -1289,7 +1335,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         var childPage = new RadialMenuPageSettings
         {
             Id = Guid.NewGuid().ToString("N"),
-            Name = $"子环 {target.Index + 1}"
+            Name = GetNextRadialChildPageName(settings)
         };
         settings.RadialMenu.Pages.Add(childPage);
         page.ChildPageIds[target.Index] = childPage.Id;
@@ -1459,6 +1505,29 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         UpdateEditModeState();
         AddCommandToTarget(new RadialEditTarget(item.OwnerPageId, item.Index, item));
         return true;
+    }
+
+    private static string GetNextRadialChildPageName(AppSettings settings)
+    {
+        settings.RadialMenu ??= new RadialMenuSettings();
+        settings.RadialMenu.Pages ??= [];
+        var usedNumbers = settings.RadialMenu.Pages
+            .Select(page => page.Name ?? string.Empty)
+            .Select(name =>
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(name, @"^子环\s*(\d+)$");
+                return match.Success && int.TryParse(match.Groups[1].Value, out var number) ? number : (int?)null;
+            })
+            .Where(number => number.HasValue)
+            .Select(number => number!.Value)
+            .ToHashSet();
+        var next = 1;
+        while (usedNumbers.Contains(next))
+        {
+            next++;
+        }
+
+        return $"子环 {next}";
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
