@@ -85,7 +85,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             new SettingsNavigationItem("ai", "mdi:ai", "AI", "#FF8B5CF6"),
             new SettingsNavigationItem("sync", "mdi:sync", "同步", "#FF22C55E"),
             new SettingsNavigationItem("extensions", "mdi:dashboard", "扩展", "#FFF97316"),
-            new SettingsNavigationItem("quickpanel", "mdi:mouse-panel", "鼠标面板", "#FFEC4899"),
+            new SettingsNavigationItem("quickpanel", "mdi:mouse-panel", "鼠标触发", "#FFEC4899"),
+            new SettingsNavigationItem("radial", "mdi:gesture-tap", "燕环", "#FFA855F7"),
             new SettingsNavigationItem("yarnselect", "mdi:shortcut", "燕选", "#FF14B8A6"),
             new SettingsNavigationItem("yanm", "mdi:monitor-dashboard", "燕幕", "#FF60A5FA"),
             new SettingsNavigationItem("about", "mdi:about", "关于", "#FF8B5CF6")
@@ -206,6 +207,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(IsExtensionsSelected));
             OnPropertyChanged(nameof(IsRecycleBinSelected));
             OnPropertyChanged(nameof(IsQuickPanelSelected));
+            OnPropertyChanged(nameof(IsRadialSelected));
             OnPropertyChanged(nameof(IsYarnSelectSelected));
             OnPropertyChanged(nameof(IsYanmSelected));
             OnPropertyChanged(nameof(IsAboutSelected));
@@ -977,9 +979,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                 if (_settings.Yanm.TriggerWinHold) actions.Add($"按住 {key} 临时显示");
                 if (_settings.Yanm.TriggerWinDoubleTap) actions.Add($"双击 {key} 固定显示");
             }
-            if (MouseTriggerModes.Normalize(_settings.Yanm.MouseTriggerMode) != MouseTriggerModes.None)
+            if (YanmAssignedMouseTriggerSummary != "未分配")
             {
-                actions.Add($"鼠标：{MouseTriggerLabel(YanmMouseTriggerMode)}");
+                actions.Add($"鼠标：{YanmAssignedMouseTriggerSummary}");
             }
             return actions.Count == 0 ? "燕幕已启用，但没有开启触发方式。" : string.Join("；", actions);
         }
@@ -1005,9 +1007,47 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
     }
 
+    public string RadialAssignedMouseTriggerSummary => BuildAssignedMouseTriggerSummary(
+    [
+        (_settings.RadialMenu.TriggerMiddleButtonDown, "按下中键"),
+        (_settings.RadialMenu.TriggerX1ButtonDown, "按下 X1 键"),
+        (_settings.RadialMenu.TriggerX2ButtonDown, "按下 X2 键"),
+        (_settings.RadialMenu.TriggerCtrlLeftClick, "Ctrl+左键单击"),
+        (_settings.RadialMenu.TriggerCtrlRightClick, "Ctrl+右键单击"),
+        (_settings.RadialMenu.TriggerCtrlMiddleClick, "Ctrl+中键单击"),
+        (_settings.RadialMenu.TriggerMiddleButtonLongPress, "长按中键"),
+        (_settings.RadialMenu.TriggerRightButtonLongPress, "长按右键"),
+        (_settings.RadialMenu.TriggerRightButtonDrag, "按右键移动"),
+        (_settings.RadialMenu.TriggerHorizontalWheel, "滚轮左右")
+    ]);
+
+    public string YanmAssignedMouseTriggerSummary => BuildAssignedMouseTriggerSummary(
+    [
+        (_settings.Yanm.TriggerMiddleButtonDown, "按下中键"),
+        (_settings.Yanm.TriggerX1ButtonDown, "按下 X1 键"),
+        (_settings.Yanm.TriggerX2ButtonDown, "按下 X2 键"),
+        (_settings.Yanm.TriggerCtrlLeftClick, "Ctrl+左键单击"),
+        (_settings.Yanm.TriggerCtrlRightClick, "Ctrl+右键单击"),
+        (_settings.Yanm.TriggerCtrlMiddleClick, "Ctrl+中键单击"),
+        (_settings.Yanm.TriggerMiddleButtonLongPress, "长按中键"),
+        (_settings.Yanm.TriggerRightButtonLongPress, "长按右键"),
+        (_settings.Yanm.TriggerRightButtonDrag, "按右键移动"),
+        (_settings.Yanm.TriggerHorizontalWheel, "滚轮左右")
+    ]);
+
     public string RadialMenuSummary => _settings.RadialMenu.Enabled
-        ? $"燕环已启用：{MouseTriggerLabel(RadialMouseTriggerMode)} 触发，支持滚轮切页、子环和搜索配置。"
+        ? $"燕环已启用：鼠标触发 {RadialAssignedMouseTriggerSummary}；支持滚轮切页、子环和搜索配置。"
         : "燕环未启用：当前仍使用传统鼠标面板。";
+
+    private static string BuildAssignedMouseTriggerSummary(IEnumerable<(bool Enabled, string Label)> triggers)
+    {
+        var labels = triggers
+            .Where(static item => item.Enabled)
+            .Select(static item => item.Label)
+            .ToList();
+
+        return labels.Count == 0 ? "未分配" : string.Join("、", labels);
+    }
 
     private string MouseTriggerLabel(string mode)
     {
@@ -1023,9 +1063,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         "sync" => "管理云账号状态、同步入口和当前服务端连接信息。",
         "extensions" => "查看本地扩展目录和当前机器已发现的扩展数量。",
         "recycle" => "查看已删除扩展，支持恢复和彻底删除。",
-        "quickpanel" => "控制悬浮网格的操作面板，包括触发逻辑和槽位预设。",
+        "quickpanel" => "统一分配鼠标手势给面板、燕环和燕幕，避免触发方式重叠。",
+        "radial" => "配置燕环的启用状态、键盘触发和轮盘内容；鼠标触发只在“鼠标触发”页统一分配。",
         "yarnselect" => "按住左键选中文本时，用字母或鼠标键快速复制、搜索、运行或粘贴。",
-        "yanm" => "配置全局信息层燕幕，包括启用状态、按住显示和双击固定的触发键。",
+        "yanm" => "配置全局信息层燕幕，包括启用状态、按住显示和双击固定的触发键；鼠标触发只做只读展示。",
         "about" => "查看当前版本与这套设置窗口的结构定位。",
         _ => "燕子设置"
     };
@@ -1041,6 +1082,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     public bool IsRecycleBinSelected => SelectedNavigation?.Key == "recycle";
 
     public bool IsQuickPanelSelected => SelectedNavigation?.Key == "quickpanel";
+
+    public bool IsRadialSelected => SelectedNavigation?.Key == "radial";
 
     public bool IsYarnSelectSelected => SelectedNavigation?.Key == "yarnselect";
 
@@ -3230,7 +3273,11 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         ],
         "quickpanel" =>
         [
-            "鼠标面板", "快捷面板", "面板", "鼠标", "右键", "中键", "x1", "x2", "长按", "滚轮", "松开", "quick panel", "mouse", "middle", "right click"
+            "鼠标触发", "鼠标面板", "快捷面板", "面板", "鼠标", "右键", "中键", "x1", "x2", "长按", "滚轮", "松开", "quick panel", "mouse", "middle", "right click"
+        ],
+        "radial" =>
+        [
+            "燕环", "轮盘", "游戏轮盘", "capslock", "caps", "radial", "ring", "wheel", "gesture"
         ],
         "yarnselect" =>
         [
@@ -3293,22 +3340,24 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private void SaveQuickPanelTriggerSettings()
     {
         SaveRadialMenuSlots();
+        _settings.RadialMenu ??= new RadialMenuSettings();
+        _settings.Yanm ??= new YanmSettings();
         _settings.QuickPanelMouseTriggers ??= new QuickPanelMouseTriggerSettings();
+        _settings.RadialMenu.MouseTriggerMode = MouseTriggerModes.None;
+        _settings.Yanm.MouseTriggerMode = MouseTriggerModes.None;
         if (_settings.QuickPanelMouseTriggers.RightButtonDrag)
         {
-            _settings.Yanm ??= new YanmSettings();
             _settings.Yanm.MouseTriggerMode = MouseTriggerModes.None;
-            _settings.RadialMenu ??= new RadialMenuSettings();
-            if (IsRightMouseTriggerMode(_settings.RadialMenu.MouseTriggerMode))
-            {
-                _settings.RadialMenu.MouseTriggerMode = MouseTriggerModes.None;
-            }
+            _settings.RadialMenu.MouseTriggerMode = MouseTriggerModes.None;
         }
         AppSettingsStore.Save(_settings);
         _mainWindow.RefreshAppSettings();
         _mainWindow.NotifyQuickPanelSettingsChanged("quickpanel-trigger-settings-saved");
         SyncStatusText = $"鼠标面板触发已保存：{QuickPanelTriggerSummary}";
         OnPropertyChanged(nameof(YanmSummary));
+        OnPropertyChanged(nameof(RadialAssignedMouseTriggerSummary));
+        OnPropertyChanged(nameof(YanmAssignedMouseTriggerSummary));
+        OnPropertyChanged(nameof(RadialMenuSummary));
     }
 
     private void SaveYarnSelectSettings_Click(object sender, RoutedEventArgs e)
@@ -3334,6 +3383,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(YanmMouseTriggerMode));
         OnPropertyChanged(nameof(YanmMouseTriggerRightDrag));
         OnPropertyChanged(nameof(YanmSummary));
+        OnPropertyChanged(nameof(YanmAssignedMouseTriggerSummary));
         OnPropertyChanged(nameof(QuickPanelTriggerSummary));
     }
 
@@ -3357,7 +3407,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     {
         _settings.Yanm ??= new YanmSettings();
         _settings.Yanm.ActivationKey = YanmActivationKeys.Normalize(_settings.Yanm.ActivationKey);
-        _settings.Yanm.MouseTriggerMode = MouseTriggerModes.Normalize(_settings.Yanm.MouseTriggerMode);
+        _settings.Yanm.MouseTriggerMode = MouseTriggerModes.None;
         if (requireCustomShortcut &&
             string.Equals(_settings.Yanm.ActivationKey, YanmActivationKeys.Custom, StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(_settings.Yanm.CustomShortcut))
@@ -3385,6 +3435,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(YanmMouseTriggerMode));
         OnPropertyChanged(nameof(YanmMouseTriggerRightDrag));
         OnPropertyChanged(nameof(YanmSummary));
+        OnPropertyChanged(nameof(YanmAssignedMouseTriggerSummary));
     }
 
     private void SaveYarnSelectSettings()
@@ -4355,6 +4406,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(QuickPanelTriggerSummary));
         OnPropertyChanged(nameof(EnableRadialMenu));
         OnPropertyChanged(nameof(EnableRadialCapsLockHold));
+        OnPropertyChanged(nameof(RadialAssignedMouseTriggerSummary));
+        OnPropertyChanged(nameof(YanmAssignedMouseTriggerSummary));
         OnPropertyChanged(nameof(RadialMenuSummary));
         RefreshRadialMenuSlots();
     }

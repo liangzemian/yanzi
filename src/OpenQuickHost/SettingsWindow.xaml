@@ -147,6 +147,12 @@
             <Setter Property="Background" Value="#FF16A34A" />
         </Style>
 
+        <Style x:Key="GestureAssignBtn" TargetType="Button" BasedOn="{StaticResource SecondaryBtn}">
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="Padding" Value="4,0" />
+            <Setter Property="FontWeight" Value="Medium" />
+        </Style>
+
         <!-- Icon Button Style -->
         <Style x:Key="IconButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
@@ -719,14 +725,17 @@
                                                Foreground="#FFB8B8B8"
                                                FontSize="12"
                                                Margin="0,10,0,0"/>
-                                    <ComboBox ItemsSource="{Binding MouseTriggerOptions}"
-                                              DisplayMemberPath="Label"
-                                              SelectedValuePath="Value"
-                                              SelectedValue="{Binding YanmMouseTriggerMode, Mode=TwoWay}"
-                                              Margin="0,6,0,0"
-                                              Height="36"
-                                              SelectionChanged="SaveYanmSettings_Click"/>
-                                    <TextBlock Text="右键相关触发会与鼠标面板互斥；如果鼠标面板已经占用了右键，下面的右键项会自动失效。"
+                                    <Border Margin="0,6,0,0"
+                                            Background="#FF101014"
+                                            BorderBrush="#FF2A2A2A"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Padding="12,9">
+                                        <TextBlock Text="{Binding YanmAssignedMouseTriggerSummary}"
+                                                   Foreground="White"
+                                                   FontSize="12"/>
+                                    </Border>
+                                    <TextBlock Text="鼠标触发统一在“鼠标触发”页分配，这里只展示当前结果；键盘快捷键仍可在本页设置。"
                                                Foreground="#FF666666"
                                                FontSize="11"
                                                Margin="0,6,0,0"
@@ -795,7 +804,7 @@
 
                         <!-- Mouse Panel View -->
 <StackPanel Visibility="{Binding IsQuickPanelSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <TextBlock Text="鼠标面板" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
+                            <TextBlock Text="鼠标触发" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
                             
                             <!-- Header with title, badge, and save button -->
                             <Grid Margin="0,5">
@@ -861,13 +870,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonLongPress:None" x:Name="RightButtonLongPress_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonLongPress:Panel" x:Name="RightButtonLongPress_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonLongPress:Radial" x:Name="RightButtonLongPress_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="24" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonLongPress:Yanm" x:Name="RightButtonLongPress_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -908,13 +917,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonLongPress:None" x:Name="MiddleButtonLongPress_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonLongPress:Panel" x:Name="MiddleButtonLongPress_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonLongPress:Radial" x:Name="MiddleButtonLongPress_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="24" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonLongPress:Yanm" x:Name="MiddleButtonLongPress_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -957,13 +966,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonDrag:None" x:Name="RightButtonDrag_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonDrag:Panel" x:Name="RightButtonDrag_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonDrag:Radial" x:Name="RightButtonDrag_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="24" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="RightButtonDrag:Yanm" x:Name="RightButtonDrag_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1007,13 +1016,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonDown:None" x:Name="MiddleButtonDown_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonDown:Panel" x:Name="MiddleButtonDown_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonDown:Radial" x:Name="MiddleButtonDown_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="22" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="MiddleButtonDown:Yanm" x:Name="MiddleButtonDown_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1053,13 +1062,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X1ButtonDown:None" x:Name="X1ButtonDown_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X1ButtonDown:Panel" x:Name="X1ButtonDown_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X1ButtonDown:Radial" x:Name="X1ButtonDown_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="22" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X1ButtonDown:Yanm" x:Name="X1ButtonDown_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1099,13 +1108,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X2ButtonDown:None" x:Name="X2ButtonDown_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X2ButtonDown:Panel" x:Name="X2ButtonDown_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X2ButtonDown:Radial" x:Name="X2ButtonDown_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="22" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="X2ButtonDown:Yanm" x:Name="X2ButtonDown_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1145,13 +1154,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="HorizontalWheel:None" x:Name="HorizontalWheel_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="HorizontalWheel:Panel" x:Name="HorizontalWheel_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="22" Margin="0,0,1,0" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="22" Margin="0,0,1,0" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="HorizontalWheel:Radial" x:Name="HorizontalWheel_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="22" FontSize="9" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="22" FontSize="10" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="HorizontalWheel:Yanm" x:Name="HorizontalWheel_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1207,13 +1216,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlLeftClick:None" x:Name="CtrlLeftClick_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlLeftClick:Panel" x:Name="CtrlLeftClick_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlLeftClick:Radial" x:Name="CtrlLeftClick_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="24" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlLeftClick:Yanm" x:Name="CtrlLeftClick_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1259,13 +1268,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlRightClick:None" x:Name="CtrlRightClick_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlRightClick:Panel" x:Name="CtrlRightClick_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlRightClick:Radial" x:Name="CtrlRightClick_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="24" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlRightClick:Yanm" x:Name="CtrlRightClick_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1310,13 +1319,13 @@
                                                         <ColumnDefinition Width="*"/>
                                                     </Grid.ColumnDefinitions>
                                                     
-                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="0" Content="禁用" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlMiddleClick:None" x:Name="CtrlMiddleClick_None"/>
-                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="1" Content="面板" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlMiddleClick:Panel" x:Name="CtrlMiddleClick_Panel"/>
-                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource SecondaryBtn}" Height="24" Margin="0,0,1,0" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="2" Content="燕环" Style="{StaticResource GestureAssignBtn}" Height="24" Margin="0,0,1,0" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlMiddleClick:Radial" x:Name="CtrlMiddleClick_Radial"/>
-                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource SecondaryBtn}" Height="24" FontSize="10" Padding="6,0"
+                                                    <Button Grid.Column="3" Content="燕幕" Style="{StaticResource GestureAssignBtn}" Height="24" FontSize="11" Padding="6,0"
                                                             Click="AssignGesture_Click" Tag="CtrlMiddleClick:Yanm" x:Name="CtrlMiddleClick_Yanm"/>
                                                 </Grid>
                                             </Border>
@@ -1337,14 +1346,43 @@
                                 </Grid>
                             </Border>
 
-                            <TextBlock Text="燕环" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15" Margin="0,20,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="燕环与燕幕的鼠标触发已独立管理" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                    <TextBlock Text="这里统一分配每个鼠标手势的归属。燕环和燕幕页只展示当前分配结果，不能再单独修改鼠标触发。" Foreground="#FF8E8E8E" FontSize="12" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+
+                            <TextBlock Text="配置指南" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
+                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
+                                <StackPanel>
+                                    <TextBlock Text="1. 在主界面搜索您需要的扩展。" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8"/>
+                                    <TextBlock Text="2. 在搜索结果上点击右键，选择“添加到鼠标面板”。" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8"/>
+                                    <TextBlock Text="3. 面板将自动占用第一个可用槽位（共 28 个）。" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8"/>
+                                    <TextBlock Text="4. 长按或拖动触发时，如果启用“松开后执行”，移动到扩展上松开即可自动运行。" Foreground="#FFE5E5E5" FontSize="13"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                        <!-- Radial View -->
+                        <StackPanel Visibility="{Binding IsRadialSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <TextBlock Text="燕环" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
+
+                            <Grid Margin="0,5">
+                                <StackPanel>
+                                    <TextBlock Text="游戏轮盘模式" Foreground="White" FontSize="13"/>
+                                    <TextBlock Text="{Binding RadialMenuSummary}" Foreground="#FF666666" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                                <Button Content="保存配置" Style="{StaticResource PrimaryBtn}" HorizontalAlignment="Right" Click="SaveQuickPanelTrigger_Click"/>
+                            </Grid>
+                            <Rectangle Height="1" Fill="#FF222222" Margin="0,12"/>
+
                             <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
                                 <StackPanel>
                                     <Grid>
                                         <StackPanel>
-                                            <TextBlock Text="游戏轮盘模式" Foreground="White" FontSize="13"/>
-                                            <TextBlock Text="{Binding RadialMenuSummary}" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                                            <TextBlock Text="右键相关触发会和鼠标面板互斥；可改用中键、X1/X2、Ctrl 组合或滚轮等方式。滚轮切页，子环可无限嵌套。" Foreground="#FF666666" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                                            <TextBlock Text="启用燕环" Foreground="White" FontSize="13"/>
+                                            <TextBlock Text="鼠标触发统一在“鼠标触发”页分配；本页负责燕环本身的开关、键盘触发和轮盘内容。" Foreground="#FF8E8E8E" FontSize="12" Margin="0,4,0,0" TextWrapping="Wrap"/>
                                             <CheckBox Content="按住 CapsLock 呼出燕环，松开执行"
                                                       Foreground="#FFE5E5E5"
                                                       FontSize="12"
@@ -1359,13 +1397,21 @@
                                                Foreground="#FFB8B8B8"
                                                FontSize="12"
                                                Margin="0,12,0,0"/>
-                                    <ComboBox ItemsSource="{Binding MouseTriggerOptions}"
-                                              DisplayMemberPath="Label"
-                                              SelectedValuePath="Value"
-                                              SelectedValue="{Binding RadialMouseTriggerMode, Mode=TwoWay}"
-                                              Margin="0,6,0,0"
-                                              Height="36"
-                                              SelectionChanged="SaveQuickPanelTrigger_Click"/>
+                                    <Border Margin="0,6,0,0"
+                                            Background="#FF101014"
+                                            BorderBrush="#FF2A2A2A"
+                                            BorderThickness="1"
+                                            CornerRadius="8"
+                                            Padding="12,9">
+                                        <TextBlock Text="{Binding RadialAssignedMouseTriggerSummary}"
+                                                   Foreground="White"
+                                                   FontSize="12"/>
+                                    </Border>
+                                    <TextBlock Text="鼠标触发统一在“鼠标触发”页分配，这里只展示当前结果。"
+                                               Foreground="#FF666666"
+                                               FontSize="11"
+                                               Margin="0,6,0,0"
+                                               TextWrapping="Wrap"/>
 
                                     <Grid Margin="0,16,0,0">
                                         <Grid.ColumnDefinitions>
@@ -1566,16 +1612,6 @@
                                             </Grid>
                                         </Border>
                                     </Grid>
-                                </StackPanel>
-                            </Border>
-
-                            <TextBlock Text="配置指南" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,20,0,10"/>
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="15">
-                                <StackPanel>
-                                    <TextBlock Text="1. 在主界面搜索您需要的扩展。" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8"/>
-                                    <TextBlock Text="2. 在搜索结果上点击右键，选择“添加到鼠标面板”。" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8"/>
-                                    <TextBlock Text="3. 面板将自动占用第一个可用槽位（共 28 个）。" Foreground="#FFE5E5E5" FontSize="13" Margin="0,0,0,8"/>
-                                    <TextBlock Text="4. 长按或拖动触发时，如果启用“松开后执行”，移动到扩展上松开即可自动运行。" Foreground="#FFE5E5E5" FontSize="13"/>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
