@@ -1,13 +1,24 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Http;
 using System.Net.NetworkInformation;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace OpenQuickHost;
 
 public sealed class YanmBridgeService
 {
+    private static readonly HttpClient WebFetchClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(8)
+    };
+
     private readonly Func<IReadOnlyList<CommandItem>> _getAllCommands;
     private readonly Func<string, YanmComponentSettings?> _findCurrentComponent;
     private readonly Action<string, string> _sendComponentState;
@@ -83,6 +94,7 @@ public sealed class YanmBridgeService
             "file.list" => BuildFileListResult(args),
             "file.copy" => BuildFileCopyResult(args),
             "file.move" => BuildFileMoveResult(args),
+            "web.fetch" => BuildWebFetchResult(args),
             _ => throw new InvalidOperationException($"未知能力：{method}")
         };
     }
@@ -187,6 +199,8 @@ public sealed class YanmBridgeService
     private object BuildCommandListResult(JsonElement args)
     {
         var query = GetArgString(args, "query");
+        var source = GetArgString(args, "source");
+        var limit = Math.Clamp(GetArgInt(args, "limit", 120), 1, 500);
         var items = string.IsNullOrWhiteSpace(query)
             ? _getAllCommands()
             : _getAllCommands().Where(item =>
@@ -194,6 +208,11 @@ public sealed class YanmBridgeService
                 item.Subtitle.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 item.Category.Contains(query, StringComparison.OrdinalIgnoreCase) ||
                 item.ExtensionId.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        items = FilterCommandsBySource(items, source)
+            .OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .ToList();
 
         return new
         {
@@ -204,11 +223,27 @@ public sealed class YanmBridgeService
                 subtitle = item.Subtitle,
                 category = item.Category,
                 icon = item.IconReference,
+                iconDataUrl = BuildIconDataUrl(item.IconSource),
                 hasHostedView = item.HasHostedView,
                 hasScriptEntry = item.HasScriptEntry,
                 uiMode = item.UiMode,
                 runtime = item.Runtime
             }).ToList()
+        };
+    }
+
+    private static IReadOnlyList<CommandItem> FilterCommandsBySource(IReadOnlyList<CommandItem> items, string source)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return items;
+        }
+
+        return source.Trim().ToLowerInvariant() switch
+        {
+            "application" or "app" => items.Where(static item => item.Source == CommandSource.Application).ToList(),
+            "extension" => items.Where(static item => item.Source != CommandSource.Application).ToList(),
+            _ => items
         };
     }
 
@@ -443,6 +478,45 @@ public sealed class YanmBridgeService
         throw new FileNotFoundException("源路径不存在。", source);
     }
 
+    private object BuildWebFetchResult(JsonElement args)
+    {
+        var urlText = GetArgString(args, "url");
+        if (string.IsNullOrWhiteSpace(urlText) ||
+            !Uri.TryCreate(urlText, UriKind.Absolute, out var url) ||
+            (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidOperationException("web.fetch 只支持 http/https URL。");
+        }
+
+        var maxChars = Math.Clamp(GetArgInt(args, "maxChars", 1200), 200, 20000);
+        var stopwatch = Stopwatch.StartNew();
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.UserAgent.ParseAdd("OpenQuickHost-Yanm/1.0");
+        using var response = WebFetchClient.Send(request);
+        var html = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        stopwatch.Stop();
+
+        if (html.Length > maxChars)
+        {
+            html = html[..maxChars];
+        }
+
+        var title = ExtractHtmlTitle(html);
+        var snippet = ExtractHtmlSnippet(html, maxChars);
+        return new
+        {
+            ok = response.IsSuccessStatusCode,
+            url = url.ToString(),
+            finalUrl = response.RequestMessage?.RequestUri?.ToString() ?? url.ToString(),
+            status = (int)response.StatusCode,
+            title,
+            snippet,
+            hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(snippet))),
+            checkedAt = DateTime.UtcNow.ToString("O"),
+            elapsedMs = stopwatch.ElapsedMilliseconds
+        };
+    }
+
     private static string GetString(JsonElement root, string name)
     {
         return root.TryGetProperty(name, out var property)
@@ -504,6 +578,46 @@ public sealed class YanmBridgeService
         {
             return Encoding.UTF8;
         }
+    }
+
+    private static string ExtractHtmlTitle(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return string.Empty;
+        }
+
+        var match = Regex.Match(html, "<title[^>]*>(.*?)</title>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value.Trim()) : string.Empty;
+    }
+
+    private static string ExtractHtmlSnippet(string html, int maxChars)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return string.Empty;
+        }
+
+        var text = Regex.Replace(html, "<script[^>]*>.*?</script>", " ", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        text = Regex.Replace(text, "<style[^>]*>.*?</style>", " ", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        text = Regex.Replace(text, "<[^>]+>", " ");
+        text = WebUtility.HtmlDecode(text);
+        text = Regex.Replace(text, "\\s+", " ").Trim();
+        return text.Length > maxChars ? text[..maxChars] : text;
+    }
+
+    private static string BuildIconDataUrl(ImageSource? imageSource)
+    {
+        if (imageSource is not BitmapSource bitmap)
+        {
+            return string.Empty;
+        }
+
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = new MemoryStream();
+        encoder.Save(stream);
+        return $"data:image/png;base64,{Convert.ToBase64String(stream.ToArray())}";
     }
 
     private static void CopyDirectory(string sourceDirectory, string destinationDirectory, bool overwrite)

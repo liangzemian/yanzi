@@ -411,6 +411,8 @@ public sealed record AppSettings
 
     public YanmSettings Yanm { get; set; } = new();
 
+    public string LauncherConfigUpdatedAtUtc { get; set; } = string.Empty;
+
     public double? SettingsWindowLeft { get; set; }
 
     public double? SettingsWindowTop { get; set; }
@@ -614,7 +616,7 @@ public sealed class RadialMenuPageSettings
 
 public sealed class YanmSettings
 {
-    public const int CurrentDefaultComponentVersion = 9;
+    public const int CurrentDefaultComponentVersion = 11;
 
     public bool Enabled { get; set; } = false;
 
@@ -763,7 +765,7 @@ public sealed class YanmComponentSettings
             },
             new YanmComponentSettings
             {
-                Title = "网页监控",
+                Title = "网页书签",
                 X = 840,
                 Y = 90,
                 Width = 390,
@@ -790,9 +792,18 @@ public sealed class YanmComponentSettings
             },
             new YanmComponentSettings
             {
-                Title = "便签",
-                X = 1000,
+                Title = "应用启动台",
+                X = 980,
                 Y = 360,
+                Width = 360,
+                Height = 340,
+                Html = CreateAppLauncherHtml()
+            },
+            new YanmComponentSettings
+            {
+                Title = "便签",
+                X = 80,
+                Y = 580,
                 Width = 320,
                 Height = 220,
                 Html = CreateStickyNoteHtml()
@@ -800,8 +811,8 @@ public sealed class YanmComponentSettings
             new YanmComponentSettings
             {
                 Title = "番茄时钟",
-                X = 80,
-                Y = 580,
+                X = 430,
+                Y = 590,
                 Width = 320,
                 Height = 220,
                 Html = CreatePomodoroHtml()
@@ -809,7 +820,7 @@ public sealed class YanmComponentSettings
             new YanmComponentSettings
             {
                 Title = "倒计时",
-                X = 430,
+                X = 780,
                 Y = 590,
                 Width = 340,
                 Height = 210,
@@ -817,18 +828,38 @@ public sealed class YanmComponentSettings
             },
             new YanmComponentSettings
             {
-                Title = "下载目录",
-                X = 800,
+                Title = "桌面文件",
+                X = 1150,
                 Y = 580,
                 Width = 340,
-                Height = 220,
-                Html = CreateDownloadFolderHtml()
+                Height = 230,
+                Html = CreateDesktopFolderHtml()
             }
         ];
     }
 
     public static void UpgradeDefaultComponents(List<YanmComponentSettings> components)
     {
+        var legacyDownload = components.FirstOrDefault(item =>
+            item.Title.Equals("下载目录", StringComparison.OrdinalIgnoreCase));
+        if (legacyDownload != null &&
+            components.All(item => !item.Title.Equals("桌面文件", StringComparison.OrdinalIgnoreCase)))
+        {
+            legacyDownload.Title = "桌面文件";
+            legacyDownload.Html = CreateDesktopFolderHtml();
+            legacyDownload.Width = Math.Max(legacyDownload.Width, 340);
+            legacyDownload.Height = Math.Max(legacyDownload.Height, 230);
+        }
+
+        var legacyWebMonitor = components.FirstOrDefault(item =>
+            item.Title.Equals("网页监控", StringComparison.OrdinalIgnoreCase));
+        if (legacyWebMonitor != null &&
+            components.All(item => !item.Title.Equals("网页书签", StringComparison.OrdinalIgnoreCase)))
+        {
+            legacyWebMonitor.Title = "网页书签";
+            legacyWebMonitor.Html = CreateWebMonitorHtml();
+        }
+
         var latest = CreateDefaultComponents();
         foreach (var template in latest)
         {
@@ -1106,17 +1137,23 @@ function tick(){var d=new Date();document.getElementById('clock').innerText=d.to
     private static string CreateTodoHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:18px;border-radius:28px;background:radial-gradient(circle at 100% 0%,rgba(34,197,94,.35),transparent 34%),linear-gradient(160deg,rgba(18,48,38,.96),rgba(8,13,16,.92));border:1px solid rgba(255,255,255,.14);box-shadow:0 22px 70px rgba(0,0,0,.35)}
+.card{box-sizing:border-box;height:100%;padding:18px;border-radius:28px;background:radial-gradient(circle at 100% 0%,rgba(34,197,94,.35),transparent 34%),linear-gradient(160deg,rgba(18,48,38,.96),rgba(8,13,16,.92));border:1px solid rgba(255,255,255,.14);box-shadow:0 22px 70px rgba(0,0,0,.35);display:flex;flex-direction:column}
 .head{display:flex;justify-content:space-between;align-items:center}h1{font-size:22px;margin:0}.count{font-size:12px;color:#86efac;background:rgba(34,197,94,.12);padding:5px 9px;border-radius:999px}
-.add{display:flex;gap:8px;margin:14px 0}input{flex:1;border:0;outline:0;border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.1);color:white}button{border:0;border-radius:14px;padding:0 13px;background:#22c55e;color:#06200f;font-weight:800;cursor:pointer}.list{height:145px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.list::-webkit-scrollbar{width:6px;height:6px}.list::-webkit-scrollbar-track{background:transparent}.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}.item{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid rgba(255,255,255,.08)}.check{width:18px;height:18px;border-radius:9px;background:#22c55e;cursor:pointer}.done .text{text-decoration:line-through;color:rgba(255,255,255,.42)}.text{flex:1;font-size:13px}.del{background:rgba(255,255,255,.1);color:#fecaca;height:26px}
-</style></head><body><section class="card"><div class="head"><h1>待办清单</h1><span id="count" class="count">0 项</span></div><div class="add"><input id="todoInput" placeholder="添加一条待办..." /><button id="addButton" type="button">添加</button></div><div id="todoList" class="list"></div></section><script>
-(function(){var todos=[];function fallback(){return[{text:"把常用信息组件化",done:false},{text:"接入脚本数据源",done:false},{text:"固定到顺手的位置",done:false}];}
-function load(){try{var raw=localStorage.getItem("yanm.todos.v2");todos=raw?JSON.parse(raw):fallback();}catch(e){todos=fallback();}}
-function save(){try{localStorage.setItem("yanm.todos.v2",JSON.stringify(todos));}catch(e){}}
+.add{display:flex;gap:8px;margin:14px 0}input{flex:1;border:0;outline:0;border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.1);color:white}button{border:0;border-radius:14px;padding:0 13px;background:#22c55e;color:#06200f;font-weight:800;cursor:pointer}.ghost{background:rgba(255,255,255,.1);color:#d1fae5}.list{flex:1;min-height:80px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.list::-webkit-scrollbar{width:6px;height:6px}.list::-webkit-scrollbar-track{background:transparent}.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}.item{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid rgba(255,255,255,.08)}.check{width:18px;height:18px;border-radius:9px;background:#22c55e;cursor:pointer;box-shadow:0 0 0 1px rgba(255,255,255,.18) inset}.done .text{text-decoration:line-through;color:rgba(255,255,255,.42)}.text{flex:1;font-size:13px}.del{background:rgba(255,255,255,.1);color:#fecaca;height:26px}.foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,.58)}
+</style></head><body><section class="card"><div class="head"><h1>待办清单</h1><span id="count" class="count">0 项</span></div><div class="add"><input id="todoInput" placeholder="添加一条待办..." /><button id="addButton" type="button">添加</button></div><div id="todoList" class="list"></div><div class="foot"><span id="syncHint">本机缓存</span><button id="clearDoneButton" type="button" class="ghost">清理已完成</button></div></section><script>
+(function(){var hostKey='yanm.todo.items.'+(((window.yanm&&window.yanm.componentId)||window.__yanmComponentId||'default'));var legacyKey='yanm.todos.v2';var todos=[];var hostLoaded=false;
+function fallback(){return[{text:"把常用信息组件化",done:false},{text:"接入脚本数据源",done:false},{text:"固定到顺手的位置",done:false}];}
+function loadLocal(){try{var raw=localStorage.getItem(hostKey)||localStorage.getItem(legacyKey);todos=raw?JSON.parse(raw):fallback();}catch(e){todos=fallback();}}
+function saveLocal(){try{localStorage.setItem(hostKey,JSON.stringify(todos));localStorage.setItem(legacyKey,JSON.stringify(todos));}catch(e){}}
+function saveHost(){if(window.yanm&&window.yanm.invoke){window.yanm.invoke('state.set',{key:hostKey,value:JSON.stringify(todos)}).then(function(){hostLoaded=true;render();}).catch(function(){render();});}}
 function el(tag,cls,text){var n=document.createElement(tag);if(cls)n.className=cls;if(text)n.appendChild(document.createTextNode(text));return n;}
-function render(){var list=document.getElementById("todoList");var count=document.getElementById("count");list.innerHTML="";var open=0;for(var i=0;i<todos.length;i++){(function(index){var item=todos[index];if(!item.done)open++;var row=el("div","item "+(item.done?"done":""));var check=el("span","check");var text=el("span","text",item.text);var del=el("button","del","×");check.onclick=function(){item.done=!item.done;save();render();};del.onclick=function(){todos.splice(index,1);save();render();};row.appendChild(check);row.appendChild(text);row.appendChild(del);list.appendChild(row);})(i);}count.innerText=open+" 项";}
-function add(){var input=document.getElementById("todoInput");var v=input.value.replace(/^\s+|\s+$/g,"");if(!v){input.focus();return;}todos.unshift({text:v,done:false});input.value="";save();render();input.focus();}
-function init(){if(window.__yanmTodoReady)return;window.__yanmTodoReady=true;load();render();document.getElementById("addButton").onclick=add;document.getElementById("todoInput").onkeydown=function(e){e=e||window.event;if(e.keyCode===13)add();};}
+function persist(){saveLocal();render();saveHost();}
+function render(){var list=document.getElementById("todoList");var count=document.getElementById("count");var syncHint=document.getElementById("syncHint");list.innerHTML="";var open=0;for(var i=0;i<todos.length;i++){(function(index){var item=todos[index];if(!item.done)open++;var row=el("div","item "+(item.done?"done":""));var check=el("span","check");var text=el("span","text",item.text);var del=el("button","del","×");check.onclick=function(){item.done=!item.done;persist();};del.onclick=function(){todos.splice(index,1);persist();};row.appendChild(check);row.appendChild(text);row.appendChild(del);list.appendChild(row);})(i);}count.innerText=open+" 项";syncHint.innerText=hostLoaded?'已接入宿主同步':'本机缓存';}
+function add(){var input=document.getElementById("todoInput");var v=input.value.replace(/^\s+|\s+$/g,"");if(!v){input.focus();return;}todos.unshift({text:v,done:false});input.value="";persist();input.focus();}
+function clearDone(){todos=todos.filter(function(item){return !item.done;});persist();}
+function requestHost(){if(window.yanm&&window.yanm.invoke){window.yanm.invoke('state.get',{key:hostKey}).then(function(res){var value=res&&typeof res.value==='string'?res.value:'';if(value){try{todos=JSON.parse(value)||fallback();hostLoaded=true;saveLocal();}catch(e){}}render();}).catch(function(){render();});return true;}return false;}
+function init(){if(window.__yanmTodoReady)return;window.__yanmTodoReady=true;loadLocal();render();document.getElementById("addButton").onclick=add;document.getElementById("clearDoneButton").onclick=clearDone;document.getElementById("todoInput").onkeydown=function(e){e=e||window.event;if(e.keyCode===13)add();};if(!requestHost()){setTimeout(requestHost,300);}}
+window.addEventListener('yanm:message',function(e){var d=e.detail||{};if(d.type==='host.state'&&d.key===hostKey&&typeof d.value==='string'&&d.value){try{todos=JSON.parse(d.value)||fallback();hostLoaded=true;saveLocal();render();}catch(_e){}}});
 window.addTodo=add;if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",init);}else{init();}})();
 </script></body></html>
 """;
@@ -1124,9 +1161,19 @@ window.addTodo=add;if(document.readyState==="loading"){document.addEventListener
     private static string CreateWebMonitorHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:20px;border-radius:24px;background:linear-gradient(135deg,rgba(57,38,20,.95),rgba(16,14,12,.9));border:1px solid rgba(255,255,255,.13)}
-.tag{color:#fbbf24;font-size:12px;letter-spacing:.18em}h1{margin:10px 0;font-size:24px}.url{padding:10px 12px;border-radius:14px;background:rgba(255,255,255,.08);font-size:12px;color:#fde68a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.p{font-size:13px;line-height:1.7;color:rgba(255,255,255,.66);margin-top:12px}
-</style></head><body><section class="card"><div class="tag">WEB WATCH</div><h1>网页监控</h1><div class="url">https://example.com/profile</div><div class="p">后续可用脚本定期抓取网页、RSS、接口或账号数据，例如小红书、B 站、GitHub、公众号等。</div></section></body></html>
+ .card{box-sizing:border-box;height:100%;padding:18px;border-radius:24px;background:radial-gradient(circle at 100% 0%,rgba(251,191,36,.22),transparent 34%),linear-gradient(135deg,rgba(57,38,20,.95),rgba(16,14,12,.92));border:1px solid rgba(255,255,255,.13);box-shadow:0 22px 70px rgba(0,0,0,.34);display:flex;flex-direction:column}
+.top{display:flex;justify-content:space-between;align-items:center}.tag{color:#fbbf24;font-size:12px;letter-spacing:.18em}button{border:0;border-radius:13px;padding:8px 12px;background:rgba(255,255,255,.1);color:#fff;cursor:pointer}h1{margin:10px 0 12px;font-size:24px}.row{display:flex;gap:8px;margin-bottom:10px}input{flex:1;min-width:0;border:0;outline:0;border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.1);color:#fff}button.primary{background:#fbbf24;color:#2b1800;font-weight:800}.list{flex:1;min-height:80px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.list::-webkit-scrollbar{width:6px;height:6px}.list::-webkit-scrollbar-track{background:transparent}.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}.item{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid rgba(255,255,255,.08);cursor:pointer}.left{min-width:0;flex:1}.url{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fde68a;font-size:12px}.title{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px}.meta{font-size:12px;color:rgba(255,255,255,.58)}.remove{background:rgba(255,255,255,.08);color:#fecaca;height:28px;min-width:44px}.empty{font-size:12px;color:rgba(255,255,255,.55);padding-top:16px}
+</style></head><body><section class="card"><div class="top"><div class="tag">BOOKMARKS</div><button id="addBtn" type="button">添加书签</button></div><h1>网页书签</h1><div class="row"><input id="urlInput" placeholder="输入网址后回车，或点击右上角添加书签" /></div><div id="list" class="list"></div></section><script>
+(function(){var hostKey='yanm.bookmarks.items.'+(((window.yanm&&window.yanm.componentId)||window.__yanmComponentId||'default'));var urls=[];
+function fallback(){return['https://github.com','https://www.bilibili.com','https://www.zhihu.com'];}
+function loadLocal(){try{urls=JSON.parse(localStorage.getItem(hostKey)||'null')||fallback();}catch(e){urls=fallback();}}
+function save(){try{localStorage.setItem(hostKey,JSON.stringify(urls));}catch(e){} if(window.yanm&&window.yanm.invoke){window.yanm.invoke('state.set',{key:hostKey,value:JSON.stringify(urls)}).catch(function(){});}}
+function hostName(url){try{return new URL(url).host;}catch(e){return url;}}
+function render(){var list=document.getElementById('list');list.innerHTML='';if(!urls.length){list.innerHTML='<div class=\"empty\">还没有书签，点击右上角或输入网址添加。</div>';return;}urls.forEach(function(url,index){var row=document.createElement('div');row.className='item';row.innerHTML='<div class=\"left\"><div class=\"title\">'+hostName(url)+'</div><div class=\"url\">'+url+'</div></div><div class=\"meta\">打开</div>';row.onclick=function(){if(window.yanm&&window.yanm.invoke){window.yanm.invoke('path.open',{path:url});}};var remove=document.createElement('button');remove.className='remove';remove.type='button';remove.innerText='删';remove.onclick=function(e){e.stopPropagation();urls.splice(index,1);save();render();};row.appendChild(remove);list.appendChild(row);});}
+function addUrl(prefill){var input=document.getElementById('urlInput');var raw=(typeof prefill==='string'&&prefill?prefill:input.value||'').replace(/^\s+|\s+$/g,'');if(!raw){input.focus();return;}var v=/^https?:\/\//i.test(raw)?raw:'https://'+raw;if(urls.indexOf(v)>=0){input.value='';input.focus();return;}urls.unshift(v);input.value='';save();render();}
+function init(){loadLocal();render();document.getElementById('addBtn').onclick=function(){addUrl();};document.getElementById('urlInput').onkeydown=function(e){e=e||window.event;if(e.keyCode===13)addUrl();};if(window.yanm&&window.yanm.invoke){window.yanm.invoke('state.get',{key:hostKey}).then(function(res){var value=res&&typeof res.value==='string'?res.value:'';if(value){try{urls=JSON.parse(value)||fallback();save();render();}catch(e){}}});}else{setTimeout(init,250);}}
+init();})();
+</script></body></html>
 """;
 
     private static string CreateSystemHtml() => """
@@ -1155,6 +1202,7 @@ html,body{margin:0;width:100%;height:100%;background:transparent;color:#1b1608;f
 .card{box-sizing:border-box;height:100%;padding:18px;border-radius:26px;background:linear-gradient(145deg,#fde68a,#facc15);border:1px solid rgba(255,255,255,.5);box-shadow:0 22px 70px rgba(0,0,0,.28)}
 .head{display:flex;justify-content:space-between;align-items:center;color:#713f12}.tag{font-size:12px;letter-spacing:.16em;font-weight:800}.hint{font-size:11px;opacity:.65}
 textarea{box-sizing:border-box;width:100%;height:150px;margin-top:12px;border:0;outline:0;resize:none;background:rgba(255,255,255,.28);border-radius:18px;padding:14px;color:#241a05;font-size:15px;line-height:1.6}
+textarea{height:calc(100% - 46px)}
 </style></head><body><section class="card"><div class="head"><div class="tag">NOTE</div><div class="hint">自动保存</div></div><textarea id="note" placeholder="写下临时想法、链接、会议重点..."></textarea></section><script>
 (function(){var key='yanm.sticky.note.v1';var el=document.getElementById('note');function local(){try{return localStorage.getItem(key)||'';}catch(e){return '';}}function saveLocal(v){try{localStorage.setItem(key,v);}catch(e){}}
 function applyValue(v){el.value=typeof v==='string'?v:'';saveLocal(el.value);}
@@ -1193,19 +1241,33 @@ document.getElementById('reset').onclick=function(){clearInterval(timer);timer=n
 </script></body></html>
 """;
 
-    private static string CreateDownloadFolderHtml() => """
+    private static string CreateAppLauncherHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:18px;border-radius:24px;background:radial-gradient(circle at 100% 0%,rgba(14,165,233,.35),transparent 36%),linear-gradient(135deg,rgba(11,18,31,.96),rgba(9,12,20,.92));border:1px solid rgba(255,255,255,.13);box-shadow:0 22px 70px rgba(0,0,0,.34)}
+.card{box-sizing:border-box;height:100%;padding:18px;border-radius:26px;background:radial-gradient(circle at 100% 0%,rgba(96,165,250,.24),transparent 36%),linear-gradient(135deg,rgba(15,23,42,.96),rgba(10,12,20,.92));border:1px solid rgba(255,255,255,.13);box-shadow:0 22px 70px rgba(0,0,0,.34);display:flex;flex-direction:column}
+.top{display:flex;justify-content:space-between;align-items:center}.tag{font-size:12px;letter-spacing:.18em;color:#93c5fd}.search{margin-top:12px}.search input{width:100%;box-sizing:border-box;border:0;outline:0;border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.09);color:#fff}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px;flex:1;min-height:120px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.grid::-webkit-scrollbar{width:6px;height:6px}.grid::-webkit-scrollbar-track{background:transparent}.grid::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}.item{padding:10px 8px;border-radius:18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.05);cursor:pointer;text-align:center}.item:hover{background:rgba(255,255,255,.1)}.icon{width:44px;height:44px;border-radius:14px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08);overflow:hidden;font-size:16px;font-weight:800}.icon img{width:100%;height:100%;object-fit:cover}.title{font-size:12px;line-height:1.3;height:32px;overflow:hidden}.meta{font-size:11px;color:rgba(255,255,255,.52)}.empty{margin-top:18px;font-size:12px;color:rgba(255,255,255,.55)}
+</style></head><body><section class="card"><div class="top"><div class="tag">APPLICATIONS</div><div class="meta" id="count">加载中</div></div><div class="search"><input id="queryInput" placeholder="筛选应用..." /></div><div id="grid" class="grid"></div><div id="empty" class="empty" style="display:none">没有匹配的应用。</div></section><script>
+(function(){var all=[];var filtered=[];function glyph(title){return (title||'?').replace(/^\s+/,'').slice(0,1).toUpperCase();}
+function render(){var grid=document.getElementById('grid');var empty=document.getElementById('empty');grid.innerHTML='';document.getElementById('count').innerText=(filtered.length||0)+' 个';empty.style.display=filtered.length?'none':'block';filtered.forEach(function(item){var card=document.createElement('div');card.className='item';var icon=item.iconDataUrl?'<img src=\"'+item.iconDataUrl+'\" alt=\"\">':glyph(item.title);card.innerHTML='<div class=\"icon\">'+icon+'</div><div class=\"title\">'+(item.title||'未命名应用')+'</div>';card.onclick=function(){if(window.yanm&&window.yanm.invoke){window.yanm.invoke('command.execute',{extensionId:item.extensionId,launchSource:'yanm-app-grid'});}};grid.appendChild(card);});}
+function applyQuery(){var q=(document.getElementById('queryInput').value||'').toLowerCase();filtered=all.filter(function(item){if(!q)return true;var text=((item.title||'')+' '+(item.subtitle||'')+' '+(item.extensionId||'')).toLowerCase();return text.indexOf(q)>=0;});render();}
+function load(){if(!(window.yanm&&window.yanm.invoke)){setTimeout(load,250);return;}window.yanm.invoke('command.list',{source:'application',limit:120}).then(function(res){all=(res&&res.items)||[];filtered=all.slice();render();}).catch(function(){all=[];filtered=[];render();});}
+document.getElementById('queryInput').addEventListener('input',applyQuery);load();})();
+</script></body></html>
+""";
+
+    private static string CreateDesktopFolderHtml() => """
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
+.card{box-sizing:border-box;height:100%;padding:18px;border-radius:24px;background:radial-gradient(circle at 100% 0%,rgba(14,165,233,.35),transparent 36%),linear-gradient(135deg,rgba(11,18,31,.96),rgba(9,12,20,.92));border:1px solid rgba(255,255,255,.13);box-shadow:0 22px 70px rgba(0,0,0,.34);display:flex;flex-direction:column}
 .top{display:flex;justify-content:space-between;align-items:center}.tag{font-size:12px;letter-spacing:.18em;color:#7dd3fc}.btn{border:0;border-radius:14px;padding:8px 12px;background:rgba(255,255,255,.1);color:#fff;cursor:pointer}
 .path{margin-top:12px;padding:12px;border-radius:16px;background:rgba(255,255,255,.08);font-size:12px;color:rgba(255,255,255,.72);word-break:break-all;min-height:44px}
-.list{margin-top:12px;height:94px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.list::-webkit-scrollbar{width:6px;height:6px}.list::-webkit-scrollbar-track{background:transparent}.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}
-.item{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);font-size:12px;cursor:pointer}.name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.open{color:#93c5fd}
-</style></head><body><section class="card"><div class="top"><div class="tag">DOWNLOADS</div><button class="btn" id="refreshBtn" type="button">刷新</button></div><div class="path" id="folderPath">正在定位下载目录...</div><div id="list" class="list"></div></section><script>
-(function(){var folder='';var items=[];function render(){document.getElementById('folderPath').innerText=folder||'未找到下载目录，已回退到桌面。';var list=document.getElementById('list');list.innerHTML='';for(var i=0;i<items.length&&i<5;i++){(function(item){var row=document.createElement('div');row.className='item';var left=document.createElement('div');left.className='name';left.innerText=item.name||(item.path||'');var right=document.createElement('div');right.className='open';right.innerText=item.isDirectory?'打开文件夹':'打开文件';row.onclick=function(){if(window.yanm&&window.yanm.invoke){window.yanm.invoke('path.open',{path:item.path});}};row.appendChild(left);row.appendChild(right);list.appendChild(row);})(items[i]);}}
-function loadFolder(){if(window.yanm&&window.yanm.invoke){window.yanm.invoke('path.downloads').then(function(res){folder=res&&res.path?res.path:'';render();refresh();}).catch(function(){folder='';render();});}else{folder='';render();}}
-function refresh(){if(!folder){items=[];render();return;}if(window.yanm&&window.yanm.invoke){window.yanm.invoke('file.list',{path:folder,limit:20}).then(function(res){items=(res&&res.items)||[];render();}).catch(function(){items=[];render();});}}
-document.getElementById('refreshBtn').onclick=function(){loadFolder();};loadFolder();})();
+.list{margin-top:12px;flex:1;min-height:80px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.list::-webkit-scrollbar{width:6px;height:6px}.list::-webkit-scrollbar-track{background:transparent}.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}
+.item{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-top:1px solid rgba(255,255,255,.08);font-size:12px;cursor:pointer}.name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.open{color:#93c5fd}.meta{font-size:11px;color:rgba(255,255,255,.52);margin-top:2px}
+</style></head><body><section class="card"><div class="top"><div class="tag">DESKTOP</div><button class="btn" id="refreshBtn" type="button">刷新</button></div><div class="path" id="folderPath">正在读取桌面目录...</div><div id="list" class="list"></div></section><script>
+(function(){var folder='';var items=[];function fmtTime(v){if(!v)return'';var d=new Date(v);if(isNaN(d.getTime()))return'';return d.toLocaleDateString('zh-CN',{month:'2-digit',day:'2-digit'})+' '+d.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});}
+function render(){document.getElementById('folderPath').innerText=folder||'未找到桌面目录';var list=document.getElementById('list');list.innerHTML='';for(var i=0;i<items.length&&i<12;i++){(function(item){var row=document.createElement('div');row.className='item';var left=document.createElement('div');left.className='name';left.innerHTML='<div>'+(item.name||(item.path||''))+'</div><div class=\"meta\">'+(item.isDirectory?'文件夹':'文件')+(item.modifiedTime?' · '+fmtTime(item.modifiedTime):'')+'</div>';var right=document.createElement('div');right.className='open';right.innerText=item.isDirectory?'打开':'查看';row.onclick=function(){if(window.yanm&&window.yanm.invoke){window.yanm.invoke('path.open',{path:item.path});}};row.appendChild(left);row.appendChild(right);list.appendChild(row);})(items[i]);}}
+function refresh(){if(window.yanm&&window.yanm.invoke){window.yanm.invoke('desktop.list').then(function(res){folder=res&&res.root?res.root:'';items=(res&&res.items)||[];render();}).catch(function(){folder='';items=[];render();});}else{setTimeout(refresh,250);}}
+document.getElementById('refreshBtn').onclick=refresh;refresh();})();
 </script></body></html>
 """;
 }

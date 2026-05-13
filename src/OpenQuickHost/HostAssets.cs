@@ -118,7 +118,7 @@ public static class HostAssets
         RotateFileIfTooLarge(HostLogPath, MaxLogFileBytes);
         File.AppendAllText(
             HostLogPath,
-            $"{Environment.NewLine}[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
+            $"{Environment.NewLine}[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}");
     }
 
     public static void AppendDevLog(string message)
@@ -132,7 +132,7 @@ public static class HostAssets
         RotateFileIfTooLarge(DevDebugLogPath, MaxLogFileBytes);
         File.AppendAllText(
             DevDebugLogPath,
-            $"{Environment.NewLine}[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}");
+            $"{Environment.NewLine}[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}");
     }
 
     public static IReadOnlyList<string> ReadHostLogTailLines(int maxBytes, int maxLines)

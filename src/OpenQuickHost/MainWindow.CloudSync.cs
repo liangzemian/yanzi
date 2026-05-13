@@ -1027,6 +1027,8 @@ public partial class MainWindow
             settings.Yanm = incoming.Yanm;
         }
 
+        settings.LauncherConfigUpdatedAtUtc = DateTime.UtcNow.ToString("O");
+
         AppSettingsStore.Save(settings);
         _appSettings = AppSettingsStore.Load();
         if (!_listenerServicesPaused)
@@ -1359,7 +1361,10 @@ public partial class MainWindow
 
     public void NotifyQuickPanelSettingsChanged(string reason, bool refreshYanmOverlay = true)
     {
-        _appSettings = AppSettingsStore.Load();
+        var settings = AppSettingsStore.Load();
+        settings.LauncherConfigUpdatedAtUtc = DateTime.UtcNow.ToString("O");
+        AppSettingsStore.Save(settings);
+        _appSettings = settings;
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();
@@ -1409,13 +1414,46 @@ public partial class MainWindow
         {
             var service = new WebDavSyncService(AppSettingsStore.Load());
             var result = await service.SyncExtensionsAsync();
-            ReloadLocalExtensionsFromWebDav();
-            return (true, $"个人扩展同步完成：上传 {result.UploadedCount} 个，拉取 {result.PulledCount} 个。");
+            ApplyWebDavSyncResult(result);
+            var configSummary = result.ConfigPulled
+                ? "，配置已拉取"
+                : result.ConfigUploaded
+                    ? "，配置已上传"
+                    : string.Empty;
+            return (true, $"个人扩展同步完成：上传 {result.UploadedCount} 个，拉取 {result.PulledCount} 个{configSummary}。");
         }
         catch (Exception ex)
         {
             return (false, $"个人扩展同步失败：{FormatExceptionMessage(ex)}");
         }
+    }
+
+    public async Task<(bool ok, string message, bool uploaded, bool pulled, int payloadBytes)> SyncYanmStateNowAsync()
+    {
+        try
+        {
+            var service = new WebDavSyncService(AppSettingsStore.Load());
+            var result = await service.SyncYanmStateAsync();
+            if (result.Pulled)
+            {
+                RefreshAppSettings();
+                _quickPanel?.RefreshSettingsFromStore();
+            }
+
+            var action = result.Pulled ? "已拉取" : result.Uploaded ? "已上传" : "无变化";
+            return (true, $"燕幕同步{action}，数据 {FormatBytes(result.PayloadBytes)}。", result.Uploaded, result.Pulled, result.PayloadBytes);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"燕幕同步失败：{FormatExceptionMessage(ex)}", false, false, 0);
+        }
+    }
+
+    private static string FormatBytes(int bytes)
+    {
+        return bytes < 1024
+            ? $"{bytes} B"
+            : $"{bytes / 1024.0:0.#} KB";
     }
 
     public bool TryUpdateLauncherHotkey(string shortcut, out string message)

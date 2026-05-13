@@ -7,6 +7,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Xml.Linq;
 
 namespace OpenQuickHost.Sync;
 
@@ -238,6 +239,102 @@ public sealed class WebDavSyncService
         return new WebDavSyncResult(uploaded, pulled, SyncRootDisplay, configUploaded, configPulled);
     }
 
+    public async Task<WebDavYanmStateSyncResult> SyncYanmStateAsync(CancellationToken cancellationToken = default)
+    {
+        EnsureConfigured();
+        await EnsureCollectionAsync("state", cancellationToken);
+
+        var localSettings = AppSettingsStore.Load();
+        localSettings.Yanm ??= new YanmSettings();
+        localSettings.Yanm.ComponentState ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var localYanm = CloneByJson(localSettings.Yanm);
+        var localUpdatedAtUtc = TryParseUtc(localSettings.LauncherConfigUpdatedAtUtc) ?? DateTime.MinValue;
+        var remoteInfo = await TryGetRemoteFileInfoAsync("state/yanm-state.json", cancellationToken);
+        if (remoteInfo != null && localUpdatedAtUtc > DateTime.MinValue)
+        {
+            if (remoteInfo.LastModifiedUtc <= localUpdatedAtUtc.AddSeconds(1) &&
+                localUpdatedAtUtc <= remoteInfo.LastModifiedUtc.AddSeconds(1))
+            {
+                HostAssets.AppendLog(
+                    $"WebDAV Yanm state sync: metadata unchanged, bytes={remoteInfo.ContentLength}.");
+                return new WebDavYanmStateSyncResult(false, false, SyncRootDisplay, remoteInfo.LastModifiedUtc, (int)Math.Min(remoteInfo.ContentLength, int.MaxValue));
+            }
+
+            if (localUpdatedAtUtc > remoteInfo.LastModifiedUtc.AddSeconds(1))
+            {
+                var uploadedAtUtc = DateTime.UtcNow;
+                await UploadYanmStateAsync(localYanm, uploadedAtUtc, cancellationToken);
+                SaveLauncherConfigUpdatedAtUtc(uploadedAtUtc);
+                var uploadedBytes = Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(new WebDavYanmStateSnapshot { UpdatedAtUtc = uploadedAtUtc.ToString("O"), Yanm = localYanm }, JsonOptions));
+                HostAssets.AppendLog(
+                    $"WebDAV Yanm state uploaded by metadata: localUpdated={localUpdatedAtUtc:O}, remoteModified={remoteInfo.LastModifiedUtc:O}, bytes={uploadedBytes}.");
+                return new WebDavYanmStateSyncResult(true, false, SyncRootDisplay, uploadedAtUtc, uploadedBytes);
+            }
+        }
+
+        var remoteBytes = await TryGetBytesAsync("state/yanm-state.json", cancellationToken);
+        var remote = remoteBytes is { Length: > 0 }
+            ? JsonSerializer.Deserialize<WebDavYanmStateSnapshot>(Encoding.UTF8.GetString(remoteBytes), JsonOptions)
+            : null;
+
+        if (remote?.Yanm == null)
+        {
+            var legacyRemote = await TryLoadLegacyRemoteYanmStateAsync(cancellationToken);
+            if (legacyRemote?.Yanm != null)
+            {
+                var legacyUpdatedAtUtc = TryParseUtc(legacyRemote.UpdatedAtUtc) ?? DateTime.MinValue;
+                var shouldApplyLegacy =
+                    legacyUpdatedAtUtc > localUpdatedAtUtc.AddSeconds(1) ||
+                    !HasYanmComponentState(localYanm);
+                if (shouldApplyLegacy)
+                {
+                    ApplyYanmStateSnapshot(legacyRemote.Yanm, legacyUpdatedAtUtc);
+                    await UploadYanmStateAsync(legacyRemote.Yanm, legacyUpdatedAtUtc, cancellationToken);
+                    HostAssets.AppendLog(
+                        $"WebDAV Yanm state bootstrapped from launcher config: legacyUpdated={legacyUpdatedAtUtc:O}, localUpdated={localUpdatedAtUtc:O}.");
+                    return new WebDavYanmStateSyncResult(false, true, SyncRootDisplay, legacyUpdatedAtUtc, Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(legacyRemote, JsonOptions)));
+                }
+            }
+
+            var uploadedAtUtc = DateTime.UtcNow;
+            await UploadYanmStateAsync(localYanm, uploadedAtUtc, cancellationToken);
+            SaveLauncherConfigUpdatedAtUtc(uploadedAtUtc);
+            var uploadedBytes = Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(new WebDavYanmStateSnapshot { UpdatedAtUtc = uploadedAtUtc.ToString("O"), Yanm = localYanm }, JsonOptions));
+            HostAssets.AppendLog($"WebDAV Yanm state uploaded: remote missing, bytes={uploadedBytes}.");
+            return new WebDavYanmStateSyncResult(true, false, SyncRootDisplay, uploadedAtUtc, uploadedBytes);
+        }
+
+        var remoteUpdatedAtUtc = TryParseUtc(remote.UpdatedAtUtc) ?? DateTime.MinValue;
+        var equivalent = AreJsonPayloadsEqual(localYanm, remote.Yanm);
+        var payloadBytes = remoteBytes?.Length ?? Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(remote, JsonOptions));
+        if (equivalent)
+        {
+            if (localUpdatedAtUtc == DateTime.MinValue && remoteUpdatedAtUtc > DateTime.MinValue)
+            {
+                SaveLauncherConfigUpdatedAtUtc(remoteUpdatedAtUtc);
+            }
+
+            HostAssets.AppendLog($"WebDAV Yanm state sync: no changes detected, bytes={payloadBytes}.");
+            return new WebDavYanmStateSyncResult(false, false, SyncRootDisplay, remoteUpdatedAtUtc, payloadBytes);
+        }
+
+        if (remoteUpdatedAtUtc > localUpdatedAtUtc.AddSeconds(1) || localUpdatedAtUtc == DateTime.MinValue)
+        {
+            ApplyYanmStateSnapshot(remote.Yanm, remoteUpdatedAtUtc);
+            HostAssets.AppendLog(
+                $"WebDAV Yanm state pulled: remoteUpdated={remoteUpdatedAtUtc:O}, localUpdated={localUpdatedAtUtc:O}, bytes={payloadBytes}.");
+            return new WebDavYanmStateSyncResult(false, true, SyncRootDisplay, remoteUpdatedAtUtc, payloadBytes);
+        }
+
+        var updatedAtUtc = DateTime.UtcNow;
+        await UploadYanmStateAsync(localYanm, updatedAtUtc, cancellationToken);
+        SaveLauncherConfigUpdatedAtUtc(updatedAtUtc);
+        var uploadBytes = Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(new WebDavYanmStateSnapshot { UpdatedAtUtc = updatedAtUtc.ToString("O"), Yanm = localYanm }, JsonOptions));
+        HostAssets.AppendLog(
+            $"WebDAV Yanm state uploaded: localUpdated={localUpdatedAtUtc:O}, remoteUpdated={remoteUpdatedAtUtc:O}, bytes={uploadBytes}.");
+        return new WebDavYanmStateSyncResult(true, false, SyncRootDisplay, updatedAtUtc, uploadBytes);
+    }
+
     public async Task ClearCloudAsync(CancellationToken cancellationToken = default)
     {
         EnsureConfigured();
@@ -369,9 +466,11 @@ public sealed class WebDavSyncService
 
         var localSettings = AppSettingsStore.Load();
         var localConfig = CloudQuickPanelConfigSnapshot.FromSettings(localSettings);
-        var localUpdatedAtUtc = File.Exists(AppSettingsStore.SettingsPath)
+        var explicitLocalUpdatedAtUtc = TryParseUtc(localSettings.LauncherConfigUpdatedAtUtc);
+        var legacyLocalUpdatedAtUtc = explicitLocalUpdatedAtUtc == null && HasMeaningfulLauncherConfig(localConfig) && File.Exists(AppSettingsStore.SettingsPath)
             ? File.GetLastWriteTimeUtc(AppSettingsStore.SettingsPath)
-            : DateTime.UtcNow;
+            : (DateTime?)null;
+        var localUpdatedAtUtc = explicitLocalUpdatedAtUtc ?? legacyLocalUpdatedAtUtc ?? DateTime.MinValue;
         var remoteBytes = await TryGetBytesAsync("state/launcher-config.json", cancellationToken);
         var remote = remoteBytes is { Length: > 0 }
             ? JsonSerializer.Deserialize<WebDavLauncherConfigSnapshot>(Encoding.UTF8.GetString(remoteBytes), JsonOptions)
@@ -379,7 +478,9 @@ public sealed class WebDavSyncService
 
         if (remote?.Config == null)
         {
-            await UploadLauncherConfigAsync(localConfig, DateTime.UtcNow, cancellationToken);
+            var uploadedAtUtc = DateTime.UtcNow;
+            await UploadLauncherConfigAsync(localConfig, uploadedAtUtc, cancellationToken);
+            SaveLauncherConfigUpdatedAtUtc(uploadedAtUtc);
             HostAssets.AppendLog("WebDAV launcher config uploaded: remote missing.");
             return (true, false);
         }
@@ -388,19 +489,34 @@ public sealed class WebDavSyncService
         var equivalent = AreJsonPayloadsEqual(localConfig, remote.Config);
         if (equivalent)
         {
+            if (explicitLocalUpdatedAtUtc == null && remoteUpdatedAtUtc > DateTime.MinValue)
+            {
+                SaveLauncherConfigUpdatedAtUtc(remoteUpdatedAtUtc);
+            }
+
             HostAssets.AppendLog("WebDAV launcher config sync: no changes detected.");
             return (false, false);
         }
 
+        if (explicitLocalUpdatedAtUtc == null && legacyLocalUpdatedAtUtc == null)
+        {
+            ApplyLauncherConfigSnapshot(remote.Config, remoteUpdatedAtUtc);
+            HostAssets.AppendLog(
+                $"WebDAV launcher config pulled: local timestamp missing, remoteUpdated={remoteUpdatedAtUtc:O}.");
+            return (false, true);
+        }
+
         if (remoteUpdatedAtUtc > localUpdatedAtUtc.AddSeconds(1))
         {
-            ApplyLauncherConfigSnapshot(remote.Config);
+            ApplyLauncherConfigSnapshot(remote.Config, remoteUpdatedAtUtc);
             HostAssets.AppendLog(
                 $"WebDAV launcher config pulled: remoteUpdated={remoteUpdatedAtUtc:O}, localUpdated={localUpdatedAtUtc:O}.");
             return (false, true);
         }
 
-        await UploadLauncherConfigAsync(localConfig, DateTime.UtcNow, cancellationToken);
+        var updatedAtUtc = DateTime.UtcNow;
+        await UploadLauncherConfigAsync(localConfig, updatedAtUtc, cancellationToken);
+        SaveLauncherConfigUpdatedAtUtc(updatedAtUtc);
         HostAssets.AppendLog(
             $"WebDAV launcher config uploaded: localUpdated={localUpdatedAtUtc:O}, remoteUpdated={remoteUpdatedAtUtc:O}.");
         return (true, false);
@@ -426,7 +542,42 @@ public sealed class WebDavSyncService
         }
     }
 
-    private static void ApplyLauncherConfigSnapshot(CloudQuickPanelConfigSnapshot snapshot)
+    private async Task<WebDavYanmStateSnapshot?> TryLoadLegacyRemoteYanmStateAsync(CancellationToken cancellationToken)
+    {
+        var remoteBytes = await TryGetBytesAsync("state/launcher-config.json", cancellationToken);
+        var remote = remoteBytes is { Length: > 0 }
+            ? JsonSerializer.Deserialize<WebDavLauncherConfigSnapshot>(Encoding.UTF8.GetString(remoteBytes), JsonOptions)
+            : null;
+        return remote?.Config?.Yanm == null
+            ? null
+            : new WebDavYanmStateSnapshot
+            {
+                UpdatedAtUtc = remote.UpdatedAtUtc,
+                Yanm = remote.Config.Yanm
+            };
+    }
+
+    private async Task UploadYanmStateAsync(
+        YanmSettings yanm,
+        DateTime updatedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = new WebDavYanmStateSnapshot
+        {
+            UpdatedAtUtc = updatedAtUtc.ToString("O"),
+            Yanm = CloneByJson(yanm)
+        };
+        var json = JsonSerializer.Serialize(snapshot, JsonOptions);
+        using var request = CreateRequest(HttpMethod.Put, "state/yanm-state.json");
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            await ThrowWebDavFailureAsync(request, response, cancellationToken);
+        }
+    }
+
+    private static void ApplyLauncherConfigSnapshot(CloudQuickPanelConfigSnapshot snapshot, DateTime updatedAtUtc)
     {
         var settings = AppSettingsStore.Load();
         var incoming = snapshot.ToAppSettings();
@@ -458,6 +609,23 @@ public sealed class WebDavSyncService
             settings.Yanm = incoming.Yanm;
         }
 
+        settings.LauncherConfigUpdatedAtUtc = updatedAtUtc.ToString("O");
+
+        AppSettingsStore.Save(settings);
+    }
+
+    private static void ApplyYanmStateSnapshot(YanmSettings yanm, DateTime updatedAtUtc)
+    {
+        var settings = AppSettingsStore.Load();
+        settings.Yanm = CloneByJson(yanm);
+        settings.LauncherConfigUpdatedAtUtc = updatedAtUtc.ToString("O");
+        AppSettingsStore.Save(settings);
+    }
+
+    private static void SaveLauncherConfigUpdatedAtUtc(DateTime updatedAtUtc)
+    {
+        var settings = AppSettingsStore.Load();
+        settings.LauncherConfigUpdatedAtUtc = updatedAtUtc.ToString("O");
         AppSettingsStore.Save(settings);
     }
 
@@ -471,6 +639,46 @@ public sealed class WebDavSyncService
     private static bool AreJsonPayloadsEqual<T>(T left, T right)
     {
         return string.Equals(JsonSerializer.Serialize(left, JsonOptions), JsonSerializer.Serialize(right, JsonOptions), StringComparison.Ordinal);
+    }
+
+    private static T CloneByJson<T>(T value)
+    {
+        var json = JsonSerializer.Serialize(value, JsonOptions);
+        return JsonSerializer.Deserialize<T>(json, JsonOptions) ?? value;
+    }
+
+    private static bool HasMeaningfulLauncherConfig(CloudQuickPanelConfigSnapshot config)
+    {
+        return config.QuickPanelSlots.Any(static slot => !string.IsNullOrWhiteSpace(slot)) ||
+               HasGroupContent(config.QuickPanelGlobalGroups) ||
+               HasGroupContent(config.QuickPanelContextGroups) ||
+               config.GlobalFavoriteExtensionIds.Count > 0 ||
+               config.ContextFavoriteExtensionIds.Count > 0 ||
+               config.YanyuRules?.Count > 0 ||
+               HasRadialContent(config.RadialMenu) ||
+               HasYanmComponentState(config.Yanm);
+    }
+
+    private static bool HasGroupContent(IEnumerable<QuickPanelGroupSettings> groups)
+    {
+        return groups.Any(static group =>
+            group.Slots.Any(static slot => !string.IsNullOrWhiteSpace(slot)) ||
+            group.SlotItems.Any(static slot => slot != null));
+    }
+
+    private static bool HasRadialContent(RadialMenuSettings? settings)
+    {
+        return settings != null &&
+               (settings.Enabled ||
+                settings.Slots.Any(static slot => !string.IsNullOrWhiteSpace(slot)) ||
+                settings.Pages.Any(static page =>
+                    page.Slots.Any(static slot => !string.IsNullOrWhiteSpace(slot)) ||
+                    page.ChildPageIds.Any(static pageId => !string.IsNullOrWhiteSpace(pageId))));
+    }
+
+    private static bool HasYanmComponentState(YanmSettings? settings)
+    {
+        return settings?.ComponentState?.Any(static item => !string.IsNullOrEmpty(item.Value)) == true;
     }
 
     private async Task SyncSearchMemoryAsync(CancellationToken cancellationToken)
@@ -1012,6 +1220,62 @@ public sealed class WebDavSyncService
                response.StatusCode == HttpStatusCode.OK;
     }
 
+    private async Task<WebDavRemoteFileInfo?> TryGetRemoteFileInfoAsync(string relativePath, CancellationToken cancellationToken)
+    {
+        using var request = CreateRequest(new HttpMethod("PROPFIND"), relativePath);
+        request.Headers.Add("Depth", "0");
+        request.Content = new StringContent(
+            """
+<?xml version="1.0" encoding="utf-8" ?>
+<propfind xmlns="DAV:">
+  <prop>
+    <getlastmodified />
+    <getcontentlength />
+  </prop>
+</propfind>
+""",
+            Encoding.UTF8,
+            "application/xml");
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        if (response.StatusCode != HttpStatusCode.MultiStatus && response.StatusCode != HttpStatusCode.OK)
+        {
+            await ThrowWebDavFailureAsync(request, response, cancellationToken);
+        }
+
+        var xml = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(xml))
+        {
+            return null;
+        }
+
+        try
+        {
+            XNamespace dav = "DAV:";
+            var document = XDocument.Parse(xml);
+            var prop = document.Descendants(dav + "prop").FirstOrDefault();
+            var modifiedText = prop?.Element(dav + "getlastmodified")?.Value;
+            var lengthText = prop?.Element(dav + "getcontentlength")?.Value;
+            var modifiedUtc = DateTimeOffset.TryParse(modifiedText, out var modified)
+                ? modified.UtcDateTime
+                : DateTime.MinValue;
+            var length = long.TryParse(lengthText, out var parsedLength) ? parsedLength : 0;
+            return modifiedUtc == DateTime.MinValue
+                ? null
+                : new WebDavRemoteFileInfo(modifiedUtc, length);
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"WebDAV remote file metadata parse failed: path={relativePath}, error={ex.Message}");
+            return null;
+        }
+    }
+
     private async Task DeleteRemotePackageTreeAsync(string extensionId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(extensionId))
@@ -1269,6 +1533,8 @@ public sealed class WebDavSyncService
     private sealed record LocalSnapshot(
         IReadOnlyList<WebDavSyncEntry> Items,
         IReadOnlyDictionary<string, byte[]> PackageBytesByExtensionId);
+
+    private sealed record WebDavRemoteFileInfo(DateTime LastModifiedUtc, long ContentLength);
 }
 
 public sealed record WebDavSyncResult(
@@ -1278,6 +1544,13 @@ public sealed record WebDavSyncResult(
     bool ConfigUploaded = false,
     bool ConfigPulled = false);
 
+public sealed record WebDavYanmStateSyncResult(
+    bool Uploaded,
+    bool Pulled,
+    string RemoteRoot,
+    DateTime UpdatedAtUtc,
+    int PayloadBytes);
+
 public sealed class WebDavLauncherConfigSnapshot
 {
     public int SchemaVersion { get; set; } = 1;
@@ -1285,6 +1558,15 @@ public sealed class WebDavLauncherConfigSnapshot
     public string UpdatedAtUtc { get; set; } = string.Empty;
 
     public CloudQuickPanelConfigSnapshot? Config { get; set; }
+}
+
+public sealed class WebDavYanmStateSnapshot
+{
+    public int SchemaVersion { get; set; } = 1;
+
+    public string UpdatedAtUtc { get; set; } = string.Empty;
+
+    public YanmSettings? Yanm { get; set; }
 }
 
 public sealed class WebDavSyncIndex

@@ -1248,7 +1248,7 @@ public partial class MainWindow
 
     private void ShowYanmOverlayHold()
     {
-        var settings = AppSettingsStore.Load().Yanm ?? new YanmSettings();
+        var settings = _appSettings.Yanm ?? new YanmSettings();
         if (!settings.Enabled || !settings.TriggerWinHold)
         {
             return;
@@ -1264,7 +1264,7 @@ public partial class MainWindow
 
     private void ToggleYanmOverlayPinned()
     {
-        var settings = AppSettingsStore.Load().Yanm ?? new YanmSettings();
+        var settings = _appSettings.Yanm ?? new YanmSettings();
         if (!settings.Enabled || !settings.TriggerWinDoubleTap)
         {
             return;

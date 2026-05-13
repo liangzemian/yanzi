@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace OpenQuickHost;
 
@@ -48,9 +49,11 @@ public static class KeyboardDoubleTapService
     private static bool _winOverlayEnabled = true;
     private static bool _winHoldEnabled = true;
     private static bool _winDoubleTapEnabled = true;
+    private static bool _hasReleasedWinForYanmHold;
     private static string _yanmActivationKey = YanmActivationKeys.Win;
 
     public static bool IsRunning => _hookId != IntPtr.Zero;
+    public static bool IsYanmTriggerHeld => _winOverlayActive;
 
     public static void Start(
         Action<string> onDoubleTap,
@@ -239,6 +242,11 @@ public static class KeyboardDoubleTapService
                 return IsYanmTriggerKey(YanmActivationKeys.CapsLock) ? HandleYanmTriggerDown(YanmActivationKeys.CapsLock) : false;
         }
 
+        if (ShouldReleaseWinForYanmPassthrough())
+        {
+            ReleaseWinForYanmHold("key-passthrough");
+        }
+
         _sequenceDirty = true;
         return false;
     }
@@ -333,25 +341,38 @@ public static class KeyboardDoubleTapService
         }
 
         var now = Environment.TickCount64;
-        if (_winOverlayActive && _yanmTriggerDownTimestamp > 0 && now - _yanmTriggerDownTimestamp > 1500)
+        if (_winOverlayActive && !IsPhysicalYanmTriggerDown(key) && _yanmTriggerDownTimestamp > 0 && now - _yanmTriggerDownTimestamp > 30000)
         {
             HostAssets.AppendLog($"Keyboard {key} hold: stale active state detected, resetting Yanm trigger state.");
             _winOverlayActive = false;
+            _hasReleasedWinForYanmHold = false;
             _yanmTriggerDownTimestamp = 0;
         }
 
         if (!_winOverlayActive)
         {
             _winOverlayActive = true;
+            _hasReleasedWinForYanmHold = false;
             _yanmTriggerDownTimestamp = now;
             if (_winHoldEnabled)
             {
                 HostAssets.AppendLog($"Keyboard {key} hold: triggered Yanm overlay.");
-                System.Windows.Application.Current.Dispatcher.BeginInvoke(() => _onWinHold?.Invoke());
+                InvokeOnUiInputPriority(() => _onWinHold?.Invoke(), $"{key}-hold");
+                if (string.Equals(key, YanmActivationKeys.Win, StringComparison.OrdinalIgnoreCase))
+                {
+                    ReleaseWinForYanmHold("hold-trigger");
+                }
             }
         }
 
         return true;
+    }
+
+    private static bool IsPhysicalYanmTriggerDown(string key)
+    {
+        return string.Equals(key, YanmActivationKeys.Win, StringComparison.OrdinalIgnoreCase)
+            ? _leftWinDown || _rightWinDown
+            : GetAsyncKeyState(VkCapsLock) < 0;
     }
 
     private static bool HandleYanmTriggerUp(string key)
@@ -362,11 +383,12 @@ public static class KeyboardDoubleTapService
         }
 
         _winOverlayActive = false;
+        _hasReleasedWinForYanmHold = false;
         _yanmTriggerDownTimestamp = 0;
         var now = Environment.TickCount64;
         var isDoubleTap = _winDoubleTapEnabled && now - _lastWinTapTimestamp <= 350;
         _lastWinTapTimestamp = now;
-        System.Windows.Application.Current.Dispatcher.BeginInvoke(() =>
+        InvokeOnUiInputPriority(() =>
         {
             if (isDoubleTap)
             {
@@ -380,7 +402,7 @@ public static class KeyboardDoubleTapService
                     _onWinRelease?.Invoke();
                 }
             }
-        });
+        }, isDoubleTap ? $"{key}-double-tap" : $"{key}-release");
 
         return true;
     }
@@ -420,6 +442,52 @@ public static class KeyboardDoubleTapService
         _suppressCurrentAltTap = false;
         _winOverlayActive = false;
         _yanmTriggerDownTimestamp = 0;
+        _hasReleasedWinForYanmHold = false;
+    }
+
+    private static bool ShouldReleaseWinForYanmPassthrough()
+    {
+        return _winOverlayActive &&
+               IsYanmTriggerKey(YanmActivationKeys.Win) &&
+               (_leftWinDown || _rightWinDown);
+    }
+
+    private static void ReleaseWinForYanmHold(string reason)
+    {
+        if (_hasReleasedWinForYanmHold)
+        {
+            return;
+        }
+
+        if (_leftWinDown)
+        {
+            ReleaseVirtualKey(VkLWin);
+        }
+
+        if (_rightWinDown)
+        {
+            ReleaseVirtualKey(VkRWin);
+        }
+
+        _hasReleasedWinForYanmHold = true;
+        HostAssets.AppendLog($"Keyboard Win hold: released logical Win state for Yanm input passthrough, reason={reason}.");
+    }
+
+    private static void InvokeOnUiInputPriority(Action action, string reason)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher == null)
+        {
+            return;
+        }
+
+        var queuedAt = Stopwatch.GetTimestamp();
+        dispatcher.BeginInvoke(new Action(() =>
+        {
+            var delayMs = Stopwatch.GetElapsedTime(queuedAt).TotalMilliseconds;
+            HostAssets.AppendLog($"Keyboard Yanm UI callback running: reason={reason}, queueDelayMs={delayMs:0.0}.");
+            action();
+        }), DispatcherPriority.Input);
     }
 
     private static bool ShouldSuppressCurrentAltTap()
@@ -489,4 +557,7 @@ public static class KeyboardDoubleTapService
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
 }

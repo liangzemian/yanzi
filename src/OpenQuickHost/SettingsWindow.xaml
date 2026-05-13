@@ -1419,7 +1419,7 @@
                                                       Height="30"
                                                       ItemsSource="{Binding RadialMenuPages}"
                                                       DisplayMemberPath="Name"
-                                                      Text="{Binding SelectedRadialMenuPageName}"
+                                                      Text="{Binding SelectedRadialMenuPageName, Mode=OneWay}"
                                                       IsEditable="True"
                                                       IsReadOnly="True"
                                                       SelectedValuePath="Id"

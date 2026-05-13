@@ -41,9 +41,21 @@ public partial class YanmOverlayWindow : Window
     private readonly Dictionary<string, YanmComponentView> _componentViews = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _pendingComponentState = new(StringComparer.OrdinalIgnoreCase);
     private System.Windows.Threading.DispatcherTimer? _componentStateSaveTimer;
+    private System.Windows.Threading.DispatcherTimer? _webDavVisibleRefreshTimer;
+    private System.Windows.Threading.DispatcherTimer? _webDavLocalChangeSyncTimer;
+    private bool _webDavStateRefreshRunning;
+    private bool _webDavStateRefreshPending;
+    private bool _webDavStateRefreshPendingForce;
+    private string _webDavStateRefreshPendingReason = string.Empty;
+    private DateTime _lastWebDavStateRefreshUtc = DateTime.MinValue;
+    private bool _interactiveOutsideClickCandidate;
+    private WpfPoint _interactiveOutsideClickStart;
     private bool _isWebView2Available = true;
     private CoreWebView2Environment? _webView2Environment;
     private const double ComponentMoveHandleHeight = 24;
+    private static readonly TimeSpan WebDavStateRefreshCooldown = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan WebDavVisibleRefreshInterval = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan WebDavLocalChangeSyncDelay = TimeSpan.FromSeconds(2);
     private const int SmXVirtualScreen = 76;
     private const int SmYVirtualScreen = 77;
     private const int SmCxVirtualScreen = 78;
@@ -84,11 +96,7 @@ public partial class YanmOverlayWindow : Window
 
         if (_isInteractiveHoldPinned && IsVisible)
         {
-            HostAssets.AppendLog("Yanm: temporary show closes existing interactive hold overlay.");
-            FlushPendingComponentState();
-            _isInteractiveHoldPinned = false;
-            ResetInteractionState(clearEditMode: true);
-            Hide();
+            HostAssets.AppendLog("Yanm: temporary show skipped because component interaction is active.");
             return;
         }
 
@@ -152,9 +160,7 @@ public partial class YanmOverlayWindow : Window
         _settings = AppSettingsStore.Load().Yanm ?? new YanmSettings();
         if (!_settings.Enabled)
         {
-            FlushPendingComponentState();
-            ResetInteractionState(clearEditMode: true);
-            Hide();
+            HideOverlay();
             HostAssets.AppendLog("Yanm: hidden because feature was disabled from settings.");
             return;
         }
@@ -193,6 +199,154 @@ public partial class YanmOverlayWindow : Window
         Show();
         ApplyScreenBounds();
         Activate();
+        StartWebDavVisibleRefreshTimer();
+        QueueWebDavStateRefresh("overlay-shown");
+    }
+
+    private void StartWebDavVisibleRefreshTimer()
+    {
+        _webDavVisibleRefreshTimer ??= new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = WebDavVisibleRefreshInterval
+        };
+        _webDavVisibleRefreshTimer.Tick -= WebDavVisibleRefreshTimer_Tick;
+        _webDavVisibleRefreshTimer.Tick += WebDavVisibleRefreshTimer_Tick;
+        _webDavVisibleRefreshTimer.Stop();
+        _webDavVisibleRefreshTimer.Start();
+    }
+
+    private void StopWebDavVisibleRefreshTimer()
+    {
+        _webDavVisibleRefreshTimer?.Stop();
+    }
+
+    private void WebDavVisibleRefreshTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!IsVisible)
+        {
+            StopWebDavVisibleRefreshTimer();
+            return;
+        }
+
+        QueueWebDavStateRefresh("visible-poll");
+    }
+
+    private void QueueWebDavStateRefresh(string reason, bool force = false)
+    {
+        var currentSettings = AppSettingsStore.Load();
+        if (!currentSettings.EnableWebDavSync || !_mainWindow.HasWebDavCredential())
+        {
+            SetSyncStatus("未启用同步", WpfColor.FromRgb(148, 163, 184), visible: false);
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        if (_webDavStateRefreshRunning)
+        {
+            _webDavStateRefreshPending = true;
+            _webDavStateRefreshPendingForce |= force;
+            _webDavStateRefreshPendingReason = reason;
+            HostAssets.AppendLog($"Yanm: WebDAV state refresh deferred, reason={reason}, force={force}.");
+            return;
+        }
+
+        if (!force && now - _lastWebDavStateRefreshUtc < WebDavStateRefreshCooldown)
+        {
+            return;
+        }
+
+        _lastWebDavStateRefreshUtc = now;
+        _webDavStateRefreshRunning = true;
+        SetSyncStatus("同步中", WpfColor.FromRgb(96, 165, 250), visible: true);
+        HostAssets.AppendLog($"Yanm: WebDAV state refresh queued, reason={reason}, force={force}.");
+        _ = RefreshWebDavStateAsync();
+    }
+
+    private async Task RefreshWebDavStateAsync()
+    {
+        try
+        {
+            var result = await _mainWindow.SyncYanmStateNowAsync();
+            if (result.ok)
+            {
+                if (Dispatcher.CheckAccess())
+                {
+                    ApplyWebDavStateRefreshToComponents();
+                }
+                else
+                {
+                    await Dispatcher.InvokeAsync(ApplyWebDavStateRefreshToComponents);
+                }
+
+                await Dispatcher.InvokeAsync(() =>
+                    SetSyncStatus(
+                        result.pulled ? "已拉取" : result.uploaded ? "已上传" : "已同步",
+                        WpfColor.FromRgb(52, 211, 153),
+                        visible: true));
+            }
+            else
+            {
+                await Dispatcher.InvokeAsync(() => SetSyncStatus("同步失败", WpfColor.FromRgb(248, 113, 113), visible: true));
+            }
+
+            HostAssets.AppendLog($"Yanm: WebDAV state refresh {(result.ok ? "completed" : "failed")}: {result.message}");
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.InvokeAsync(() => SetSyncStatus("同步失败", WpfColor.FromRgb(248, 113, 113), visible: true));
+            HostAssets.AppendLog($"Yanm: WebDAV state refresh failed: {ex.Message}");
+        }
+        finally
+        {
+            _webDavStateRefreshRunning = false;
+            if (_webDavStateRefreshPending)
+            {
+                var pendingReason = string.IsNullOrWhiteSpace(_webDavStateRefreshPendingReason)
+                    ? "pending"
+                    : _webDavStateRefreshPendingReason;
+                var pendingForce = _webDavStateRefreshPendingForce;
+                _webDavStateRefreshPending = false;
+                _webDavStateRefreshPendingForce = false;
+                _webDavStateRefreshPendingReason = string.Empty;
+                await Dispatcher.InvokeAsync(() => QueueWebDavStateRefresh(pendingReason, pendingForce));
+            }
+        }
+    }
+
+    private void SetSyncStatus(string text, WpfColor color, bool visible)
+    {
+        if (SyncStatusPanel == null || SyncStatusText == null || SyncStatusDot == null)
+        {
+            return;
+        }
+
+        SyncStatusText.Text = text;
+        SyncStatusDot.Fill = new SolidColorBrush(color);
+        SyncStatusPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ApplyWebDavStateRefreshToComponents()
+    {
+        if (!IsVisible)
+        {
+            return;
+        }
+
+        _settings = AppSettingsStore.Load().Yanm ?? new YanmSettings();
+        _settings.ComponentState ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        UpdateDynamicTexts();
+        RenderAll();
+
+        var keys = _settings.ComponentState.Keys.ToList();
+        foreach (var view in _componentViews.Values)
+        {
+            foreach (var key in keys)
+            {
+                SendComponentState(view.Id, key);
+            }
+        }
+
+        HostAssets.AppendLog($"Yanm: component state broadcast after WebDAV refresh, components={_componentViews.Count}, keys={keys.Count}.");
     }
 
     private void ApplyScreenBounds()
@@ -337,6 +491,12 @@ public partial class YanmOverlayWindow : Window
         };
         frame.PreviewMouseRightButtonDown += (_, e) =>
         {
+            if (TryPromoteHeldTriggerToEditMode())
+            {
+                e.Handled = true;
+                return;
+            }
+
             var current = frame.Tag as YanmComponentSettings ?? view.Component;
             SelectComponent(current);
             frame.ContextMenu.PlacementTarget = frame;
@@ -347,6 +507,12 @@ public partial class YanmOverlayWindow : Window
         {
             if (FindAncestor<WebView2>(e.OriginalSource as DependencyObject) != null && !_isEditMode)
             {
+                return;
+            }
+
+            if (TryPromoteHeldTriggerToEditMode())
+            {
+                e.Handled = true;
                 return;
             }
 
@@ -585,6 +751,8 @@ public partial class YanmOverlayWindow : Window
     return false;
   }
   window.yanm = window.yanm || {};
+  window.yanm.componentId = '{{component.Id}}';
+  window.yanm.componentTitle = {{JsonSerializer.Serialize(component.Title)}};
   window.yanm.invoke = invoke;
   window.yanm.on = function(type, handler){
     window.addEventListener('yanm:message', function(e){
@@ -592,6 +760,7 @@ public partial class YanmOverlayWindow : Window
     });
   };
   window.yanmHost = window.yanmHost || {};
+  window.__yanmComponentId = '{{component.Id}}';
   window.yanmHost.requestSystemInfo = function(){ return invoke('system.info'); };
   window.yanmHost.getState = function(key){ return invoke('state.get', { key: String(key||'') }); };
   window.yanmHost.setState = function(key,value){ return invoke('state.set', { key: String(key||''), value: String(value||'') }); };
@@ -950,7 +1119,36 @@ public partial class YanmOverlayWindow : Window
         AppSettingsStore.Save(settings);
         _settings = AppSettingsStore.Load().Yanm;
         _mainWindow.NotifyQuickPanelSettingsChanged("yanm-component-state-saved", refreshYanmOverlay: false);
+        QueueWebDavLocalChangeSync("component-state-saved");
         HostAssets.AppendLog($"Yanm: component state saved, count={pending.Length}.");
+    }
+
+    private void QueueWebDavLocalChangeSync(string reason)
+    {
+        var currentSettings = AppSettingsStore.Load();
+        if (!currentSettings.EnableWebDavSync || !_mainWindow.HasWebDavCredential())
+        {
+            return;
+        }
+
+        _webDavLocalChangeSyncTimer ??= new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = WebDavLocalChangeSyncDelay
+        };
+        _webDavLocalChangeSyncTimer.Tag = reason;
+        _webDavLocalChangeSyncTimer.Tick -= WebDavLocalChangeSyncTimer_Tick;
+        _webDavLocalChangeSyncTimer.Tick += WebDavLocalChangeSyncTimer_Tick;
+        _webDavLocalChangeSyncTimer.Stop();
+        _webDavLocalChangeSyncTimer.Start();
+        SetSyncStatus("待同步", WpfColor.FromRgb(251, 191, 36), visible: true);
+        HostAssets.AppendLog($"Yanm: WebDAV local change sync scheduled, reason={reason}.");
+    }
+
+    private void WebDavLocalChangeSyncTimer_Tick(object? sender, EventArgs e)
+    {
+        _webDavLocalChangeSyncTimer?.Stop();
+        var reason = _webDavLocalChangeSyncTimer?.Tag as string ?? "local-change";
+        QueueWebDavStateRefresh(reason, force: true);
     }
 
     private void EnterInteractivePinnedMode()
@@ -1102,6 +1300,18 @@ public partial class YanmOverlayWindow : Window
             return;
         }
 
+        if (_isInteractiveHoldPinned ||
+            (_isEditMode && !_isSelecting && !_isMovingComponent && !_isResizingComponent) ||
+            (!_isPinned && !_isEditMode && KeyboardDoubleTapService.IsYanmTriggerHeld))
+        {
+            _interactiveOutsideClickCandidate = true;
+            _interactiveOutsideClickStart = e.GetPosition(Root);
+            var capturedForExit = Mouse.Capture(Root, CaptureMode.SubTree);
+            HostAssets.AppendLog($"Yanm: outside click candidate started, interactive={_isInteractiveHoldPinned}, editMode={_isEditMode}, captured={capturedForExit}.");
+            e.Handled = true;
+            return;
+        }
+
         if (!_isPinned)
         {
             _isPinned = true;
@@ -1110,13 +1320,20 @@ public partial class YanmOverlayWindow : Window
             UpdateCornerHint();
         }
 
+        TryPromoteHeldTriggerToEditMode();
         if (!_isEditMode)
         {
             EnterEditMode("拖拽框选已进入编辑模式。");
         }
 
+        BeginSelection(e.GetPosition(Root));
+        e.Handled = true;
+    }
+
+    private void BeginSelection(WpfPoint startPoint)
+    {
         _isSelecting = true;
-        _selectionStart = e.GetPosition(Root);
+        _selectionStart = startPoint;
         HostAssets.AppendLog($"Yanm: selection started at ({_selectionStart.X:0},{_selectionStart.Y:0}).");
         SelectionBox.Visibility = Visibility.Visible;
         WelcomePanel.Visibility = Visibility.Collapsed;
@@ -1124,11 +1341,30 @@ public partial class YanmOverlayWindow : Window
         UpdateSelectionBox(_selectionStart, _selectionStart, snap: true);
         var captured = Mouse.Capture(Root, CaptureMode.SubTree);
         HostAssets.AppendLog($"Yanm: mouse capture requested, captured={captured}.");
-        e.Handled = true;
     }
 
     private void Root_MouseMove(object sender, WpfMouseEventArgs e)
     {
+        if (_interactiveOutsideClickCandidate)
+        {
+            var current = e.GetPosition(Root);
+            var candidateRect = SnapRect(BuildRect(_interactiveOutsideClickStart, current));
+            var minSelectionSize = Math.Max(18, _settings.GridSizePixels * 2);
+            if (candidateRect.Width >= minSelectionSize || candidateRect.Height >= minSelectionSize)
+            {
+                _interactiveOutsideClickCandidate = false;
+                _isInteractiveHoldPinned = false;
+                _isPinned = true;
+                EnterEditMode("拖拽框选已进入编辑模式。");
+                BeginSelection(_interactiveOutsideClickStart);
+                UpdateSelectionBox(_selectionStart, current, snap: true);
+                HostAssets.AppendLog($"Yanm: outside click converted to selection drag, rect=({candidateRect.Width:0},{candidateRect.Height:0}).");
+            }
+
+            e.Handled = true;
+            return;
+        }
+
         if (_isResizingComponent)
         {
             ResizeComponentPreview(e.GetPosition(Root));
@@ -1165,6 +1401,16 @@ public partial class YanmOverlayWindow : Window
     private void Root_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         HostAssets.AppendLog($"Yanm: left up, selecting={_isSelecting}, captured={ReferenceEquals(Mouse.Captured, Root)}, source={e.OriginalSource?.GetType().Name}.");
+        if (_interactiveOutsideClickCandidate)
+        {
+            _interactiveOutsideClickCandidate = false;
+            Mouse.Capture(null);
+            HostAssets.AppendLog("Yanm: interactive outside single click detected, hiding overlay.");
+            HideOverlay();
+            e.Handled = true;
+            return;
+        }
+
         if (_isResizingComponent)
         {
             CommitComponentResize(e.GetPosition(Root));
@@ -1209,6 +1455,12 @@ public partial class YanmOverlayWindow : Window
             return;
         }
 
+        if (TryPromoteHeldTriggerToEditMode())
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (!_isEditMode)
         {
             e.Handled = true;
@@ -1247,15 +1499,18 @@ public partial class YanmOverlayWindow : Window
 
     private void OpenYanmSettingsButton_Click(object sender, RoutedEventArgs e)
     {
+        HostAssets.AppendLog("Yanm: open settings requested from overlay.");
         _isPinned = false;
         _isInteractiveHoldPinned = false;
-        FlushPendingComponentState();
-        ResetInteractionState(clearEditMode: true);
-        Hide();
+        HideOverlay();
 
         if (System.Windows.Application.Current is App app)
         {
-            app.OpenSettingsWindow("yanm");
+            Dispatcher.BeginInvoke(() => app.OpenSettingsWindow("yanm"));
+        }
+        else
+        {
+            HostAssets.AppendLog("Yanm: open settings skipped because current application is not App.");
         }
 
         e.Handled = true;
@@ -1530,6 +1785,7 @@ public partial class YanmOverlayWindow : Window
         AppSettingsStore.Save(settings);
         _settings = AppSettingsStore.Load().Yanm;
         _mainWindow.NotifyQuickPanelSettingsChanged(reason, refreshYanmOverlay: rerender);
+        QueueWebDavLocalChangeSync(reason);
         HostAssets.AppendLog($"Yanm: settings saved, reason={reason}, components={_settings.Components.Count}.");
         if (rerender)
         {
@@ -1570,9 +1826,7 @@ public partial class YanmOverlayWindow : Window
         {
             _isPinned = false;
             HostAssets.AppendLog("Yanm: escape pressed, hiding overlay.");
-            FlushPendingComponentState();
-            ResetInteractionState(clearEditMode: true);
-            Hide();
+            HideOverlay();
             e.Handled = true;
         }
     }
@@ -1587,6 +1841,7 @@ public partial class YanmOverlayWindow : Window
         _isSelecting = false;
         _isMovingComponent = false;
         _isResizingComponent = false;
+        _interactiveOutsideClickCandidate = false;
         _movingComponentId = string.Empty;
         _resizingComponentId = string.Empty;
         _selectedComponentId = string.Empty;
@@ -1631,6 +1886,7 @@ public partial class YanmOverlayWindow : Window
         AppSettingsStore.Save(settings);
         _settings = AppSettingsStore.Load().Yanm;
         _mainWindow.NotifyQuickPanelSettingsChanged("yanm-component-state-flushed", refreshYanmOverlay: false);
+        QueueWebDavLocalChangeSync("component-state-flushed");
         HostAssets.AppendLog($"Yanm: component state flushed, count={pending.Length}.");
     }
 
@@ -1665,27 +1921,62 @@ public partial class YanmOverlayWindow : Window
     private void EnterEditMode(string hint)
     {
         _isEditMode = true;
+        _isPinned = true;
+        _isInteractiveHoldPinned = false;
         HintText.Text = hint;
         UpdateDynamicTexts();
         UpdateCornerHint();
         DrawGrid();
     }
 
+    private bool TryPromoteHeldTriggerToEditMode()
+    {
+        if (!IsVisible || _isEditMode || _isPinned || !KeyboardDoubleTapService.IsYanmTriggerHeld)
+        {
+            return false;
+        }
+
+        EnterEditMode("检测到按住触发键并点击鼠标，已切换到编辑模式。");
+        HostAssets.AppendLog("Yanm: temporary overlay promoted to edit mode because trigger key was held during mouse click.");
+        return true;
+    }
+
+    private void CornerHintPanel_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        EnterEditMode("已通过左上角提示进入编辑模式。");
+        e.Handled = true;
+    }
+
+    private void SyncStatusPanel_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        FlushPendingComponentState();
+        QueueWebDavStateRefresh("manual-click", force: true);
+        e.Handled = true;
+    }
+
     private void UpdateCornerHint()
     {
+        if (CornerEditIcon != null)
+        {
+            CornerEditIcon.Foreground = new SolidColorBrush(
+                _isEditMode
+                    ? WpfColor.FromRgb(96, 165, 250)
+                    : WpfColor.FromRgb(244, 244, 245));
+        }
+
         var activationKey = YanmActivationKeys.Normalize(_settings.ActivationKey);
         if (string.Equals(activationKey, YanmActivationKeys.Custom, StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(_settings.CustomShortcut))
         {
             CornerHintText.Text = _isEditMode || _isPinned
-                ? $"Esc 退出 · {_settings.CustomShortcut} 隐藏"
-                : $"Esc 退出 · 再按 {_settings.CustomShortcut} 隐藏";
+                ? $"编辑模式 · Esc 退出 · {_settings.CustomShortcut} 隐藏"
+                : $"点击画笔编辑 · 再按 {_settings.CustomShortcut} 隐藏";
             return;
         }
 
         CornerHintText.Text = _isEditMode || _isPinned
-            ? "Esc 退出"
-            : $"Esc 退出 · 松开 {GetActivationKeyLabel()} 退出";
+            ? "编辑模式 · Esc 退出"
+            : $"点击画笔编辑 · 松开 {GetActivationKeyLabel()} 退出";
     }
 
     private void UpdateDynamicTexts()
@@ -1762,7 +2053,7 @@ public partial class YanmOverlayWindow : Window
             return $"再次按 {_settings.CustomShortcut} 隐藏；也可以直接拖拽空白区域新建组件。";
         }
 
-        return $"松开 {GetActivationKeyLabel()} 隐藏；按住 {GetActivationKeyLabel()} 时也可以直接拖拽区域新建组件。";
+        return $"松开 {GetActivationKeyLabel()} 隐藏；按住 {GetActivationKeyLabel()} 点击鼠标会进入编辑模式，也可以直接拖拽区域新建组件。";
     }
 
     private string GetActivationKeyLabel()
@@ -1779,6 +2070,12 @@ public partial class YanmOverlayWindow : Window
     private void HideOverlay()
     {
         FlushPendingComponentState();
+        StopWebDavVisibleRefreshTimer();
+        if (_webDavLocalChangeSyncTimer?.IsEnabled == true)
+        {
+            _webDavLocalChangeSyncTimer.Stop();
+            QueueWebDavStateRefresh("overlay-hidden", force: true);
+        }
         _isPinned = false;
         _isInteractiveHoldPinned = false;
         ResetInteractionState(clearEditMode: true);
@@ -1856,6 +2153,13 @@ public partial class YanmOverlayWindow : Window
             Math.Min(a.Y, b.Y),
             Math.Abs(a.X - b.X),
             Math.Abs(a.Y - b.Y));
+    }
+
+    private static double Distance(WpfPoint a, WpfPoint b)
+    {
+        var dx = a.X - b.X;
+        var dy = a.Y - b.Y;
+        return Math.Sqrt(dx * dx + dy * dy);
     }
 
     private sealed class YanmComponentView(

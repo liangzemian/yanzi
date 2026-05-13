@@ -457,6 +457,8 @@ public partial class App : WpfApplication
         try
         {
             HostAssets.AppendLog($"Settings window open requested: section={sectionKey ?? "default"}, existing={_settingsWindow != null && _settingsWindow.IsLoaded}.");
+            EnsureMainWindowVisibleForOwnedDialogs(mainWindow);
+
             if (_settingsWindow == null || !_settingsWindow.IsLoaded)
             {
                 _settingsWindow = new SettingsWindow(mainWindow);
@@ -484,6 +486,22 @@ public partial class App : WpfApplication
         catch (Exception ex)
         {
             HostAssets.AppendLog($"Settings window open failed: {ex}");
+        }
+    }
+
+    private static void EnsureMainWindowVisibleForOwnedDialogs(MainWindow mainWindow)
+    {
+        if (!mainWindow.IsVisible)
+        {
+            mainWindow.ShowInTaskbar = true;
+            mainWindow.Show();
+            HostAssets.AppendLog("Settings window prerequisite: main window restored from tray.");
+        }
+
+        if (mainWindow.WindowState == System.Windows.WindowState.Minimized)
+        {
+            mainWindow.WindowState = System.Windows.WindowState.Normal;
+            HostAssets.AppendLog("Settings window prerequisite: main window restored from minimized state.");
         }
     }
 

@@ -26,11 +26,48 @@
                 CornerRadius="14"
                 Background="#D9111318"
                 BorderBrush="#22FFFFFF"
-                BorderThickness="1">
-            <TextBlock x:Name="CornerHintText"
-                       Foreground="#F4FFFFFF"
-                       FontSize="12.5"
-                       Text=""/>
+                BorderThickness="1"
+                Cursor="Hand"
+                ToolTip="点击进入编辑模式"
+                PreviewMouseLeftButtonDown="CornerHintPanel_PreviewMouseLeftButtonDown">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock x:Name="CornerEditIcon"
+                           Text="✎"
+                           Foreground="#F4FFFFFF"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Margin="0,0,7,0"/>
+                <TextBlock x:Name="CornerHintText"
+                           Foreground="#F4FFFFFF"
+                           FontSize="12.5"
+                           Text=""/>
+            </StackPanel>
+        </Border>
+        <Border x:Name="SyncStatusPanel"
+                Panel.ZIndex="95"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="0,22,22,0"
+                Padding="10,7"
+                CornerRadius="14"
+                Background="#D9111318"
+                BorderBrush="#22FFFFFF"
+                BorderThickness="1"
+                Visibility="Collapsed"
+                Cursor="Hand"
+                ToolTip="点击立即同步燕幕"
+                PreviewMouseLeftButtonDown="SyncStatusPanel_PreviewMouseLeftButtonDown">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Ellipse x:Name="SyncStatusDot"
+                         Width="7"
+                         Height="7"
+                         Fill="#FF94A3B8"
+                         Margin="0,0,7,0"/>
+                <TextBlock x:Name="SyncStatusText"
+                           Foreground="#F4FFFFFF"
+                           FontSize="12.5"
+                           Text="燕幕同步"/>
+            </StackPanel>
         </Border>
         <Border x:Name="WelcomePanel"
                 Panel.ZIndex="5"
