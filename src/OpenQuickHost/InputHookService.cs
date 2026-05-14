@@ -47,6 +47,7 @@ public class InputHookService
     private static QuickPanelMouseTriggerSettings _settings = new();
     private static RadialMenuSettings _radialSettings = new();
     private static YanmSettings _yanmSettings = new();
+    private static YarnSelectSettings _yarnSelectSettings = new();
     private static bool _isEnabled;
     private static bool _dragTriggered;
     private static bool _releaseShouldExecute;
@@ -56,6 +57,8 @@ public class InputHookService
     private static bool _capsRadialActive;
     private static TrackedMouseButton _trackedButton = TrackedMouseButton.None;
     private static POINT _downPoint;
+    private static string _lastSuppressedForegroundProcess = string.Empty;
+    private static DateTimeOffset _lastSuppressedForegroundProcessLogAt = DateTimeOffset.MinValue;
 
     public static bool IsRunning => _isEnabled;
 
@@ -126,22 +129,30 @@ public class InputHookService
 
     public static void Stop()
     {
-        if (!_isEnabled) return;
+        if (!_isEnabled)
+        {
+            ResetTransientMouseState();
+            return;
+        }
+
         var mouseUnhooked = _mouseHookID == IntPtr.Zero || UnhookWindowsHookEx(_mouseHookID);
         var keyboardUnhooked = _keyboardHookID == IntPtr.Zero || UnhookWindowsHookEx(_keyboardHookID);
         HostAssets.AppendLog($"Input hook: stopped. mouseUnhooked={mouseUnhooked}, keyboardUnhooked={keyboardUnhooked}.");
         _longPressTimer?.Stop();
         _mouseHookID = IntPtr.Zero;
         _keyboardHookID = IntPtr.Zero;
-        _capsRadialActive = false;
+        ResetTransientMouseState();
         _isEnabled = false;
     }
 
     public static void ReloadSettings()
     {
-        _settings = AppSettingsStore.Load().QuickPanelMouseTriggers ?? new QuickPanelMouseTriggerSettings();
-        _radialSettings = AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings();
-        _yanmSettings = AppSettingsStore.Load().Yanm ?? new YanmSettings();
+        var appSettings = AppSettingsStore.Load();
+        _settings = appSettings.QuickPanelMouseTriggers ?? new QuickPanelMouseTriggerSettings();
+        _radialSettings = appSettings.RadialMenu ?? new RadialMenuSettings();
+        _yanmSettings = appSettings.Yanm ?? new YanmSettings();
+        _yarnSelectSettings = appSettings.YarnSelect ?? new YarnSelectSettings();
+        _yarnSelectSettings.BlacklistedProcesses ??= [];
         if (!_settings.MiddleButtonDown &&
             !_settings.X1ButtonDown &&
             !_settings.X2ButtonDown &&
@@ -159,6 +170,9 @@ public class InputHookService
         {
             _longPressTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(_settings.LongPressMilliseconds, 150, 2000));
         }
+
+        ResetTransientMouseState();
+        HostAssets.AppendLog($"Input hook: settings reloaded, transient mouse state reset, triggers={DescribeSettings()}, yarnSelectBlacklist={_yarnSelectSettings.BlacklistedProcesses.Count}.");
     }
 
     private static IntPtr SetMouseHook(LowLevelMouseProc proc)
@@ -219,6 +233,22 @@ public class InputHookService
             var mouse = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
             if ((mouse.flags & LLMHF_INJECTED) != 0)
             {
+                return CallNextHookEx(_mouseHookID, nCode, wParam, lParam);
+            }
+
+            if (IsForegroundSuppressedByYarnSelectBlacklist(out var suppressedProcess))
+            {
+                if (_trackedButton != TrackedMouseButton.None ||
+                    _releaseShouldExecute ||
+                    _rightButtonDownSwallowed ||
+                    message == WM_RBUTTONDOWN ||
+                    message == WM_MBUTTONDOWN ||
+                    message == WM_XBUTTONDOWN)
+                {
+                    ResetTransientMouseState();
+                    LogSuppressedForegroundProcess(suppressedProcess);
+                }
+
                 return CallNextHookEx(_mouseHookID, nCode, wParam, lParam);
             }
 
@@ -556,6 +586,19 @@ public class InputHookService
         return swallowRelease;
     }
 
+    private static void ResetTransientMouseState()
+    {
+        _longPressTimer?.Stop();
+        _dragTriggered = false;
+        _releaseShouldExecute = false;
+        _rightButtonDownSwallowed = false;
+        _activeTriggerTarget = ActiveTriggerTarget.None;
+        _pendingLongPressTarget = ActiveTriggerTarget.None;
+        _capsRadialActive = false;
+        _trackedButton = TrackedMouseButton.None;
+        _downPoint = default;
+    }
+
     private static void ReplayShortRightClickAfterHookReturns()
     {
         _ = Task.Run(async () =>
@@ -715,6 +758,86 @@ public class InputHookService
 
     private static int GetXButton(uint mouseData) => (int)((mouseData >> 16) & 0xffff);
 
+    private static bool IsForegroundSuppressedByYarnSelectBlacklist(out string processName)
+    {
+        processName = GetForegroundProcessName();
+        var currentProcessName = processName;
+        var blacklist = _yarnSelectSettings.BlacklistedProcesses ?? [];
+        return !string.IsNullOrWhiteSpace(currentProcessName) &&
+               blacklist.Any(item => ProcessNameMatches(currentProcessName, item));
+    }
+
+    private static bool ProcessNameMatches(string processName, string pattern)
+    {
+        var normalizedProcess = NormalizeProcessName(processName);
+        var normalizedPattern = NormalizeProcessName(pattern);
+        if (string.IsNullOrWhiteSpace(normalizedPattern))
+        {
+            return false;
+        }
+
+        if (normalizedPattern.Contains('*', StringComparison.Ordinal))
+        {
+            var parts = normalizedPattern.Split('*', StringSplitOptions.RemoveEmptyEntries);
+            var index = 0;
+            foreach (var part in parts)
+            {
+                var found = normalizedProcess.IndexOf(part, index, StringComparison.OrdinalIgnoreCase);
+                if (found < 0)
+                {
+                    return false;
+                }
+
+                index = found + part.Length;
+            }
+
+            return true;
+        }
+
+        return normalizedProcess.Equals(normalizedPattern, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeProcessName(string value)
+    {
+        value = (value ?? string.Empty).Trim();
+        return value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? value[..^4]
+            : value;
+    }
+
+    private static string GetForegroundProcessName()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero)
+            {
+                return string.Empty;
+            }
+
+            _ = GetWindowThreadProcessId(hwnd, out var processId);
+            return processId == 0 ? string.Empty : Process.GetProcessById((int)processId).ProcessName;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void LogSuppressedForegroundProcess(string processName)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (processName.Equals(_lastSuppressedForegroundProcess, StringComparison.OrdinalIgnoreCase) &&
+            now - _lastSuppressedForegroundProcessLogAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        _lastSuppressedForegroundProcess = processName;
+        _lastSuppressedForegroundProcessLogAt = now;
+        HostAssets.AppendLog($"Input hook: foreground process suppressed by YarnSelect blacklist, process={processName}.");
+    }
+
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern IntPtr SetWindowsHookEx(int idHook, Delegate lpfn, IntPtr hMod, uint dwThreadId);
 
@@ -730,6 +853,12 @@ public class InputHookService
 
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);

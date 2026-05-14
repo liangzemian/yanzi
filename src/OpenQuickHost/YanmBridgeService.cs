@@ -21,6 +21,7 @@ public sealed class YanmBridgeService
 
     private readonly Func<IReadOnlyList<CommandItem>> _getAllCommands;
     private readonly Func<string, YanmComponentSettings?> _findCurrentComponent;
+    private readonly Func<string, string, string> _getComponentState;
     private readonly Action<string, string> _sendComponentState;
     private readonly Action<string> _sendSystemInfo;
     private readonly Action<string, string> _queueComponentStateSave;
@@ -31,6 +32,7 @@ public sealed class YanmBridgeService
     public YanmBridgeService(
         Func<IReadOnlyList<CommandItem>> getAllCommands,
         Func<string, YanmComponentSettings?> findCurrentComponent,
+        Func<string, string, string> getComponentState,
         Action<string, string> sendComponentState,
         Action<string> sendSystemInfo,
         Action<string, string> queueComponentStateSave,
@@ -40,6 +42,7 @@ public sealed class YanmBridgeService
     {
         _getAllCommands = getAllCommands;
         _findCurrentComponent = findCurrentComponent;
+        _getComponentState = getComponentState;
         _sendComponentState = sendComponentState;
         _sendSystemInfo = sendSystemInfo;
         _queueComponentStateSave = queueComponentStateSave;
@@ -124,8 +127,9 @@ public sealed class YanmBridgeService
             throw new InvalidOperationException("state.get 缺少 key。");
         }
 
+        var value = _getComponentState(componentId, key);
         _sendComponentState(componentId, key);
-        return new { key, value = string.Empty };
+        return new { key, value };
     }
 
     private object BuildStateSetResult(JsonElement args)

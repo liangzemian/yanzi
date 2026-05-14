@@ -44,6 +44,8 @@ public static class YarnSelectService
     private static bool _swallowRightUp;
     private static bool _swallowXButtonUp;
     private static DateTimeOffset _leftButtonDownAt;
+    private static string _lastBlockedForegroundProcess = string.Empty;
+    private static DateTimeOffset _lastBlockedForegroundProcessLogAt = DateTimeOffset.MinValue;
 
     public static bool IsRunning => _isRunning;
 
@@ -97,6 +99,7 @@ public static class YarnSelectService
         _triggeredThisHold = false;
         _swallowRightUp = false;
         _swallowXButtonUp = false;
+        HostAssets.AppendLog("YarnSelect: stopped and transient mouse state reset.");
         _onAction = null;
     }
 
@@ -105,9 +108,17 @@ public static class YarnSelectService
         _settings = AppSettingsStore.Load().YarnSelect ?? new YarnSelectSettings();
         _settings.WhitelistedProcesses ??= [];
         _settings.BlacklistedProcesses ??= [];
+        _leftButtonDown = false;
+        _triggeredThisHold = false;
+        _swallowRightUp = false;
+        _swallowXButtonUp = false;
         if (_isRunning && !_settings.Enabled)
         {
             Stop();
+        }
+        else
+        {
+            HostAssets.AppendLog($"YarnSelect: settings reloaded, transient mouse state reset. {DescribeSettings()}");
         }
     }
 
@@ -238,7 +249,7 @@ public static class YarnSelectService
 
     private static bool CanTrigger()
     {
-        if (!_leftButtonDown || _triggeredThisHold || !IsForegroundProcessAllowed())
+        if (!_leftButtonDown || _triggeredThisHold || !IsForegroundProcessAllowed(logBlocked: true))
         {
             return false;
         }
@@ -405,7 +416,7 @@ public static class YarnSelectService
 
     private static bool IsKeyDown(int vkCode) => (GetAsyncKeyState(vkCode) & 0x8000) != 0;
 
-    private static bool IsForegroundProcessAllowed()
+    private static bool IsForegroundProcessAllowed(bool logBlocked = false)
     {
         var processName = GetForegroundProcessName();
         if (string.IsNullOrWhiteSpace(processName))
@@ -416,12 +427,22 @@ public static class YarnSelectService
         var whitelist = _settings.WhitelistedProcesses ?? [];
         if (whitelist.Count > 0)
         {
-            return whitelist.Any(item =>
-                processName.Equals(NormalizeProcessName(item), StringComparison.OrdinalIgnoreCase));
+            var allowedByWhitelist = whitelist.Any(item => ProcessNameMatches(processName, item));
+            if (!allowedByWhitelist && logBlocked)
+            {
+                LogBlockedForegroundProcess(processName, "not-in-whitelist");
+            }
+
+            return allowedByWhitelist;
         }
 
-        return !_settings.BlacklistedProcesses.Any(item =>
-            processName.Equals(NormalizeProcessName(item), StringComparison.OrdinalIgnoreCase));
+        var blockedByBlacklist = _settings.BlacklistedProcesses.Any(item => ProcessNameMatches(processName, item));
+        if (blockedByBlacklist && logBlocked)
+        {
+            LogBlockedForegroundProcess(processName, "blacklist");
+        }
+
+        return !blockedByBlacklist;
     }
 
     private static string GetForegroundProcessName()
@@ -449,6 +470,50 @@ public static class YarnSelectService
         return value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
             ? value[..^4]
             : value;
+    }
+
+    private static bool ProcessNameMatches(string processName, string pattern)
+    {
+        var normalizedProcess = NormalizeProcessName(processName);
+        var normalizedPattern = NormalizeProcessName(pattern);
+        if (string.IsNullOrWhiteSpace(normalizedPattern))
+        {
+            return false;
+        }
+
+        if (normalizedPattern.Contains('*', StringComparison.Ordinal))
+        {
+            var parts = normalizedPattern.Split('*', StringSplitOptions.RemoveEmptyEntries);
+            var index = 0;
+            foreach (var part in parts)
+            {
+                var found = normalizedProcess.IndexOf(part, index, StringComparison.OrdinalIgnoreCase);
+                if (found < 0)
+                {
+                    return false;
+                }
+
+                index = found + part.Length;
+            }
+
+            return true;
+        }
+
+        return normalizedProcess.Equals(normalizedPattern, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void LogBlockedForegroundProcess(string processName, string reason)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (processName.Equals(_lastBlockedForegroundProcess, StringComparison.OrdinalIgnoreCase) &&
+            now - _lastBlockedForegroundProcessLogAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        _lastBlockedForegroundProcess = processName;
+        _lastBlockedForegroundProcessLogAt = now;
+        HostAssets.AppendLog($"YarnSelect: foreground process blocked, process={processName}, reason={reason}.");
     }
 
     private static int GetXButton(uint mouseData) => (int)((mouseData >> 16) & 0xffff);

@@ -67,6 +67,7 @@ public partial class YanmOverlayWindow : Window
         _yanmBridgeService = new YanmBridgeService(
             getAllCommands: () => _mainWindow.GetAllCommands(),
             findCurrentComponent: FindCurrentComponent,
+            getComponentState: GetComponentStateValue,
             sendComponentState: SendComponentState,
             sendSystemInfo: SendSystemInfoToComponent,
             queueComponentStateSave: QueueComponentStateSave,
@@ -1073,11 +1074,23 @@ public partial class YanmOverlayWindow : Window
             return;
         }
 
+        var value = GetComponentStateValue(componentId, key);
+        var payload = JsonSerializer.Serialize(new { type = "host.state", key, value });
+        view.Browser.CoreWebView2.PostWebMessageAsString(payload);
+    }
+
+    private string GetComponentStateValue(string componentId, string key)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return string.Empty;
+        }
+
         var settings = AppSettingsStore.Load();
         settings.Yanm.ComponentState ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         settings.Yanm.ComponentState.TryGetValue(key, out var value);
-        var payload = JsonSerializer.Serialize(new { type = "host.state", key, value = value ?? string.Empty });
-        view.Browser.CoreWebView2.PostWebMessageAsString(payload);
+        HostAssets.AppendLog($"Yanm: component state read, component={FindCurrentComponent(componentId)?.Title ?? componentId}, key={key}, valueLength={value?.Length ?? 0}.");
+        return value ?? string.Empty;
     }
 
     private void QueueComponentStateSave(string key, string value)

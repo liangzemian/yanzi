@@ -616,7 +616,7 @@ public sealed class RadialMenuPageSettings
 
 public sealed class YanmSettings
 {
-    public const int CurrentDefaultComponentVersion = 12;
+    public const int CurrentDefaultComponentVersion = 13;
 
     public bool Enabled { get; set; } = false;
 
@@ -1208,10 +1208,10 @@ textarea{height:calc(100% - 46px)}
 function setHint(text){hint.innerText=text||'自动保存';}
 function applyValue(v){el.value=typeof v==='string'?v:'';saveLocal(el.value);hostLoaded=true;setHint('已接入宿主同步');}
 function invoke(method,args){if(window.yanm&&window.yanm.invoke){return window.yanm.invoke(method,args||{});}if(window.yanmHost&&method==='state.get'&&yanmHost.getState){return Promise.resolve(yanmHost.getState(args.key));}if(window.yanmHost&&method==='state.set'&&yanmHost.setState){return Promise.resolve(yanmHost.setState(args.key,args.value));}return Promise.reject(new Error('YANM_HOST_UNAVAILABLE'));}
-function requestHost(){invoke('state.get',{key:key}).then(function(res){var value=res&&typeof res.value==='string'?res.value:'';if(value||!local()){applyValue(value||'');}else{hostLoaded=true;setHint('已接入宿主同步');}}).catch(function(){setHint('本机缓存');});}
+function requestHost(){invoke('state.get',{key:key}).then(function(res){var value=res&&typeof res.value==='string'?res.value:'';if(value||!local()){applyValue(value||'');}else{hostLoaded=true;setHint('本机缓存优先');}}).catch(function(){setHint('本机缓存');});}
 function saveHost(v){setHint('保存中...');invoke('state.set',{key:key,value:v}).then(function(){hostLoaded=true;setHint('已保存');}).catch(function(){setHint('本机缓存');});}
 el.value=local();
-window.addEventListener('yanm:message',function(e){var d=e.detail||{};if(d.type==='host.state'&&d.key===key&&Object.prototype.hasOwnProperty.call(d,'value')){applyValue(String(d.value||''));}});
+window.addEventListener('yanm:message',function(e){var d=e.detail||{};if(d.type==='host.state'&&d.key===key&&Object.prototype.hasOwnProperty.call(d,'value')){var value=String(d.value||'');if(value||!local()){applyValue(value);}else{hostLoaded=true;setHint('本机缓存优先');}}});
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',requestHost,{once:true});}else{requestHost();}setTimeout(requestHost,300);
 el.addEventListener('input',function(){var v=el.value;saveLocal(v);clearTimeout(timer);timer=setTimeout(function(){saveHost(v);},350);if(!hostLoaded){setHint('准备同步');}});
 })();

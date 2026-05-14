@@ -524,14 +524,28 @@ public sealed class CloudSyncClient
 
     private async Task<HttpResponseMessage> SendAsyncWithFallback(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        try
+        Exception? lastError = null;
+        var attempts = new (HttpClient client, string label)[]
         {
-            return await _httpClient.SendAsync(CloneRequest(request), cancellationToken);
-        }
-        catch (HttpRequestException ex) when (ShouldRetryWithoutProxy(ex))
+            (_httpClient, "proxy"),
+            (_directHttpClient, "direct"),
+            (_httpClient, "proxy-retry")
+        };
+
+        for (var index = 0; index < attempts.Length; index++)
         {
-            return await _directHttpClient.SendAsync(CloneRequest(request), cancellationToken);
+            try
+            {
+                return await attempts[index].client.SendAsync(CloneRequest(request), cancellationToken);
+            }
+            catch (Exception ex) when (IsRetryableTransportException(ex) && index < attempts.Length - 1)
+            {
+                lastError = ex;
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * (index + 1)), cancellationToken);
+            }
         }
+
+        throw lastError ?? new HttpRequestException("Cloud request failed before receiving a response.");
     }
 
     private static HttpClient CreateHttpClient(string baseUrl, bool useProxy)
@@ -550,12 +564,17 @@ public sealed class CloudSyncClient
         };
     }
 
-    private static bool ShouldRetryWithoutProxy(HttpRequestException ex)
+    private static bool IsRetryableTransportException(Exception ex)
     {
         var message = ex.ToString();
         return message.Contains("SSL connection could not be established", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("unexpected EOF", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("0 bytes from the transport stream", StringComparison.OrdinalIgnoreCase);
+               message.Contains("0 bytes from the transport stream", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("response ended prematurely", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("ResponseEnded", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("request was canceled", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("operation was canceled", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("timed out", StringComparison.OrdinalIgnoreCase);
     }
 
     private static HttpRequestMessage CloneRequest(HttpRequestMessage request)

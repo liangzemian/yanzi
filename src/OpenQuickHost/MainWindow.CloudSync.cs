@@ -709,6 +709,8 @@ public partial class MainWindow
         return message.Contains("SSL connection could not be established", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("unexpected EOF", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("0 bytes from the transport stream", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("response ended prematurely", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("ResponseEnded", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("No such host is known", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("Name or service not known", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("connection attempt failed", StringComparison.OrdinalIgnoreCase) ||
@@ -948,14 +950,28 @@ public partial class MainWindow
 
     private async Task PushYanmStateToCloudSafeAsync(string reason)
     {
-        try
+        const int maxAttempts = 3;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            await PushYanmStateToCloudAsync(reason);
-            HostAssets.AppendLog($"Cloud Yanm state synced: {reason}");
-        }
-        catch (Exception ex)
-        {
-            HostAssets.AppendLog($"Cloud Yanm state sync skipped: {reason} -> {FormatExceptionMessage(ex)}");
+            try
+            {
+                await PushYanmStateToCloudAsync(reason);
+                HostAssets.AppendLog($"Cloud Yanm state synced: {reason}, attempt={attempt}");
+                return;
+            }
+            catch (Exception ex)
+            {
+                var message = FormatExceptionMessage(ex);
+                if (attempt >= maxAttempts || !IsTransientNetworkException(ex))
+                {
+                    HostAssets.AppendLog($"Cloud Yanm state sync skipped: {reason}, attempt={attempt}/{maxAttempts} -> {message}");
+                    return;
+                }
+
+                var delay = TimeSpan.FromSeconds(attempt * 2);
+                HostAssets.AppendLog($"Cloud Yanm state sync retry scheduled: {reason}, attempt={attempt}/{maxAttempts}, delay={delay.TotalSeconds:0}s -> {message}");
+                await Task.Delay(delay);
+            }
         }
     }
 
@@ -1112,6 +1128,21 @@ public partial class MainWindow
 
             var settings = AppSettingsStore.Load();
             settings.Yanm ??= new YanmSettings();
+            var localUpdatedAtUtc = TryParseCloudTimestamp(settings.LauncherConfigUpdatedAtUtc);
+            var remoteUpdatedAtUtc = TryParseCloudTimestamp(response.UpdatedAtUtc);
+            if (remoteUpdatedAtUtc != null &&
+                localUpdatedAtUtc != null &&
+                remoteUpdatedAtUtc.Value <= localUpdatedAtUtc.Value.AddSeconds(1))
+            {
+                if (!AreJsonPayloadsEqual(settings.Yanm, response.Yanm))
+                {
+                    await _cloudSyncClient.UpsertYanmStateAsync(settings.Yanm, settings.LauncherConfigUpdatedAtUtc);
+                    return (true, $"云端燕幕较旧，已保留本地并回写云端，数据 {FormatBytes(response.Bytes)}。", false, response.Bytes);
+                }
+
+                return (true, $"云端燕幕无变化，数据 {FormatBytes(response.Bytes)}。", false, response.Bytes);
+            }
+
             if (AreJsonPayloadsEqual(settings.Yanm, response.Yanm))
             {
                 return (true, $"云端燕幕无变化，数据 {FormatBytes(response.Bytes)}。", false, response.Bytes);
@@ -1134,6 +1165,17 @@ public partial class MainWindow
         {
             return (false, $"云端燕幕拉取失败：{FormatExceptionMessage(ex)}", false, 0);
         }
+    }
+
+    private static DateTime? TryParseCloudTimestamp(string? value)
+    {
+        return DateTime.TryParse(
+            value,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out var parsed)
+            ? parsed
+            : null;
     }
 
     private static bool ShouldSyncLocalWebDavConfigToCloud()

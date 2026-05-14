@@ -380,12 +380,34 @@
         headers.set("authorization", `Bearer ${token}`);
       }
 
-      const response = await fetch(`${API_BASE}${path}`, {
-        ...options,
-        headers
-      });
+      let response;
+      try {
+        response = await fetch(`${API_BASE}${path}`, {
+          ...options,
+          headers
+        });
+      } catch (error) {
+        const diagnostics = {
+          code: "network_fetch_failed",
+          message: error.message || "Failed to fetch",
+          apiBase: API_BASE,
+          path,
+          method: options.method || "GET",
+          online: navigator.onLine,
+          pageOrigin: location.origin
+        };
+        setDiagnostics(diagnostics);
+        throw new Error(`网络请求失败：${diagnostics.message}`);
+      }
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
+        setDiagnostics({
+          code: payload.error || "api_error",
+          status: response.status,
+          message: payload.message || `请求失败：${response.status}`,
+          path,
+          method: options.method || "GET"
+        });
         throw new Error(payload.message || `请求失败：${response.status}`);
       }
       return payload;
