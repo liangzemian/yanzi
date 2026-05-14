@@ -910,6 +910,16 @@ public partial class MainWindow
         _ = PushQuickPanelConfigToCloudSafeAsync(reason);
     }
 
+    private void QueueCloudYanmStateSync(string reason)
+    {
+        if (_cloudSyncClient == null)
+        {
+            return;
+        }
+
+        _ = PushYanmStateToCloudSafeAsync(reason);
+    }
+
     private async Task PushWebDavConfigToCloudSafeAsync(string reason)
     {
         try
@@ -933,6 +943,19 @@ public partial class MainWindow
         catch (Exception ex)
         {
             HostAssets.AppendLog($"Cloud quick panel config sync skipped: {reason} -> {FormatExceptionMessage(ex)}");
+        }
+    }
+
+    private async Task PushYanmStateToCloudSafeAsync(string reason)
+    {
+        try
+        {
+            await PushYanmStateToCloudAsync(reason);
+            HostAssets.AppendLog($"Cloud Yanm state synced: {reason}");
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Cloud Yanm state sync skipped: {reason} -> {FormatExceptionMessage(ex)}");
         }
     }
 
@@ -1054,6 +1077,63 @@ public partial class MainWindow
         await _cloudSyncClient.EnsureAuthenticatedAsync();
         var settings = AppSettingsStore.Load();
         await _cloudSyncClient.UpsertUserConfigAsync(CloudQuickPanelConfigId, CloudQuickPanelConfigSnapshot.FromSettings(settings));
+    }
+
+    private async Task PushYanmStateToCloudAsync(string reason)
+    {
+        if (_cloudSyncClient == null || !_cloudSyncClient.HasCredential)
+        {
+            HostAssets.AppendLog($"Yanm cloud push skipped: {reason}");
+            return;
+        }
+
+        await _cloudSyncClient.EnsureAuthenticatedAsync();
+        var settings = AppSettingsStore.Load();
+        settings.Yanm ??= new YanmSettings();
+        settings.Yanm.ComponentState ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        await _cloudSyncClient.UpsertYanmStateAsync(settings.Yanm, settings.LauncherConfigUpdatedAtUtc);
+    }
+
+    public async Task<(bool ok, string message, bool pulled, int payloadBytes)> PullYanmStateFromCloudNowAsync()
+    {
+        if (_cloudSyncClient == null || !_cloudSyncClient.HasCredential)
+        {
+            return (false, "未登录燕子账号，无法读取云端燕幕。", false, 0);
+        }
+
+        try
+        {
+            await _cloudSyncClient.EnsureAuthenticatedAsync();
+            var response = await _cloudSyncClient.GetYanmStateAsync();
+            if (response?.Yanm == null)
+            {
+                return (true, "云端没有燕幕快照。", false, 0);
+            }
+
+            var settings = AppSettingsStore.Load();
+            settings.Yanm ??= new YanmSettings();
+            if (AreJsonPayloadsEqual(settings.Yanm, response.Yanm))
+            {
+                return (true, $"云端燕幕无变化，数据 {FormatBytes(response.Bytes)}。", false, response.Bytes);
+            }
+
+            settings.Yanm = response.Yanm;
+            settings.LauncherConfigUpdatedAtUtc = DateTime.UtcNow.ToString("O");
+            AppSettingsStore.Save(settings);
+            _appSettings = AppSettingsStore.Load();
+            if (!_listenerServicesPaused)
+            {
+                InputHookService.ReloadSettings();
+                KeyboardDoubleTapService.ApplyYanmSettings(_appSettings.Yanm);
+                RefreshYanmHotkeyRegistration();
+            }
+
+            return (true, $"已拉取云端燕幕，数据 {FormatBytes(response.Bytes)}。", true, response.Bytes);
+        }
+        catch (Exception ex)
+        {
+            return (false, $"云端燕幕拉取失败：{FormatExceptionMessage(ex)}", false, 0);
+        }
     }
 
     private static bool ShouldSyncLocalWebDavConfigToCloud()
@@ -1384,6 +1464,10 @@ public partial class MainWindow
         }
 
         QueueCloudQuickPanelConfigSync(reason);
+        if (reason.StartsWith("yanm-", StringComparison.OrdinalIgnoreCase))
+        {
+            QueueCloudYanmStateSync(reason);
+        }
         QueueBackgroundWebDavSync($"config-{reason}");
     }
 

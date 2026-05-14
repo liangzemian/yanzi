@@ -616,7 +616,7 @@ public sealed class RadialMenuPageSettings
 
 public sealed class YanmSettings
 {
-    public const int CurrentDefaultComponentVersion = 11;
+    public const int CurrentDefaultComponentVersion = 12;
 
     public bool Enabled { get; set; } = false;
 
@@ -1203,14 +1203,17 @@ html,body{margin:0;width:100%;height:100%;background:transparent;color:#1b1608;f
 .head{display:flex;justify-content:space-between;align-items:center;color:#713f12}.tag{font-size:12px;letter-spacing:.16em;font-weight:800}.hint{font-size:11px;opacity:.65}
 textarea{box-sizing:border-box;width:100%;height:150px;margin-top:12px;border:0;outline:0;resize:none;background:rgba(255,255,255,.28);border-radius:18px;padding:14px;color:#241a05;font-size:15px;line-height:1.6}
 textarea{height:calc(100% - 46px)}
-</style></head><body><section class="card"><div class="head"><div class="tag">NOTE</div><div class="hint">自动保存</div></div><textarea id="note" placeholder="写下临时想法、链接、会议重点..."></textarea></section><script>
-(function(){var key='yanm.sticky.note.v1';var el=document.getElementById('note');function local(){try{return localStorage.getItem(key)||'';}catch(e){return '';}}function saveLocal(v){try{localStorage.setItem(key,v);}catch(e){}}
-function applyValue(v){el.value=typeof v==='string'?v:'';saveLocal(el.value);}
-function requestHost(){if(window.yanmHost&&yanmHost.getState){yanmHost.getState(key);return true;}return false;}
+</style></head><body><section class="card"><div class="head"><div class="tag">NOTE</div><div id="hint" class="hint">自动保存</div></div><textarea id="note" placeholder="写下临时想法、链接、会议重点..."></textarea></section><script>
+(function(){var key='yanm.sticky.note.v1';var el=document.getElementById('note');var hint=document.getElementById('hint');var timer=0;var hostLoaded=false;function local(){try{return localStorage.getItem(key)||'';}catch(e){return '';}}function saveLocal(v){try{localStorage.setItem(key,v);}catch(e){}}
+function setHint(text){hint.innerText=text||'自动保存';}
+function applyValue(v){el.value=typeof v==='string'?v:'';saveLocal(el.value);hostLoaded=true;setHint('已接入宿主同步');}
+function invoke(method,args){if(window.yanm&&window.yanm.invoke){return window.yanm.invoke(method,args||{});}if(window.yanmHost&&method==='state.get'&&yanmHost.getState){return Promise.resolve(yanmHost.getState(args.key));}if(window.yanmHost&&method==='state.set'&&yanmHost.setState){return Promise.resolve(yanmHost.setState(args.key,args.value));}return Promise.reject(new Error('YANM_HOST_UNAVAILABLE'));}
+function requestHost(){invoke('state.get',{key:key}).then(function(res){var value=res&&typeof res.value==='string'?res.value:'';if(value||!local()){applyValue(value||'');}else{hostLoaded=true;setHint('已接入宿主同步');}}).catch(function(){setHint('本机缓存');});}
+function saveHost(v){setHint('保存中...');invoke('state.set',{key:key,value:v}).then(function(){hostLoaded=true;setHint('已保存');}).catch(function(){setHint('本机缓存');});}
 el.value=local();
 window.addEventListener('yanm:message',function(e){var d=e.detail||{};if(d.type==='host.state'&&d.key===key&&Object.prototype.hasOwnProperty.call(d,'value')){applyValue(String(d.value||''));}});
-if(!requestHost()){document.addEventListener('DOMContentLoaded',function(){requestHost();},{once:true});setTimeout(requestHost,300);}
-el.addEventListener('input',function(){var v=el.value;saveLocal(v);if(window.yanmHost&&yanmHost.setState){yanmHost.setState(key,v);}});
+if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',requestHost,{once:true});}else{requestHost();}setTimeout(requestHost,300);
+el.addEventListener('input',function(){var v=el.value;saveLocal(v);clearTimeout(timer);timer=setTimeout(function(){saveHost(v);},350);if(!hostLoaded){setHint('准备同步');}});
 })();
 </script></body></html>
 """;

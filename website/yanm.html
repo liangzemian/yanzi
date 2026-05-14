@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>燕幕网页版 - 燕子启动器</title>
+  <meta name="description" content="登录燕子账号，在网页端查看并同步燕子云端的燕幕数据。">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body {
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 18% 12%, rgba(16, 185, 129, 0.18), transparent 32rem),
+        radial-gradient(circle at 78% 10%, rgba(96, 165, 250, 0.18), transparent 34rem),
+        #05070a;
+    }
+
+    .yanm-shell {
+      width: min(1440px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 7rem 0 4rem;
+    }
+
+    body.yanm-logged-in .yanm-shell {
+      padding-top: 5.5rem;
+    }
+
+    body.yanm-logged-in .yanm-hero {
+      display: none;
+    }
+
+    .yanm-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.55fr);
+      gap: 2rem;
+      align-items: end;
+      margin-bottom: 1.5rem;
+    }
+
+    .yanm-hero h1 {
+      margin: 0;
+      max-width: 820px;
+      font-size: clamp(2.5rem, 6vw, 5.8rem);
+      line-height: 0.94;
+      letter-spacing: -0.07em;
+    }
+
+    .yanm-hero p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      line-height: 1.8;
+      max-width: 720px;
+    }
+
+    .yanm-auth-card {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 28px;
+      padding: 1.25rem;
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.035));
+      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(20px);
+    }
+
+    .yanm-field {
+      display: grid;
+      gap: 0.45rem;
+      margin-bottom: 0.9rem;
+    }
+
+    .yanm-field label {
+      color: rgba(255, 255, 255, 0.72);
+      font-size: 0.82rem;
+    }
+
+    .yanm-input {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 16px;
+      padding: 0 1rem;
+      color: white;
+      background: rgba(0, 0, 0, 0.26);
+    }
+
+    .yanm-input:focus {
+      border-color: rgba(16, 185, 129, 0.72);
+      outline: none;
+      box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
+    }
+
+    .yanm-status {
+      min-height: 22px;
+      margin-top: 0.8rem;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .yanm-status.error {
+      color: #fb7185;
+    }
+
+    .yanm-debug {
+      margin: -0.5rem 0 1.5rem;
+      border: 1px solid rgba(251, 113, 133, 0.24);
+      border-radius: 20px;
+      background: rgba(76, 5, 25, 0.28);
+      color: rgba(255, 255, 255, 0.78);
+      overflow: hidden;
+    }
+
+    .yanm-debug summary {
+      cursor: pointer;
+      padding: 0.85rem 1rem;
+      color: #fecdd3;
+      font-weight: 700;
+    }
+
+    .yanm-debug pre {
+      margin: 0;
+      padding: 0 1rem 1rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: rgba(255, 255, 255, 0.72);
+      font-size: 0.82rem;
+      line-height: 1.55;
+    }
+
+    .yanm-toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: center;
+      margin: 1.5rem 0;
+      color: var(--text-muted);
+    }
+
+    .yanm-toolbar-actions {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .yanm-stage-wrap {
+      position: relative;
+      overflow: hidden;
+      min-height: 620px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 34px;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+        radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.12), transparent 42rem),
+        rgba(4, 8, 14, 0.78);
+      background-size: 28px 28px, 28px 28px, auto, auto;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 30px 110px rgba(0, 0, 0, 0.38);
+    }
+
+    .yanm-stage {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform-origin: left top;
+    }
+
+    .yanm-component {
+      position: absolute;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.13);
+      border-radius: 24px;
+      background: rgba(6, 10, 16, 0.72);
+      box-shadow: 0 22px 60px rgba(0, 0, 0, 0.34);
+    }
+
+    .yanm-component iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+      background: transparent;
+    }
+
+    .yanm-empty {
+      display: grid;
+      place-items: center;
+      min-height: 620px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 2rem;
+    }
+
+    .yanm-hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 900px) {
+      .yanm-hero {
+        grid-template-columns: 1fr;
+      }
+
+      .yanm-toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="noise"></div>
+  <header class="site-header">
+    <div class="brand">
+      <a href="/" style="display: flex; align-items: center;">
+        <img src="/assets/logo-white-transparent.png" width="36" height="36" alt="燕子启动器 Logo" class="brand-logo"
+          style="border-radius: 8px; filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.3));" />
+      </a>
+      <a href="/" style="text-decoration: none; color: inherit; font-weight: 600;">燕子启动器</a>
+    </div>
+    <nav>
+      <a href="/">首页</a>
+      <a href="/store.html">扩展商店</a>
+      <a href="/yanm.html">燕幕</a>
+      <a href="/docs/product-overview.html">产品概览</a>
+      <a href="https://wwbnh.lanzout.com/b0pnkaj6j">免费下载</a>
+    </nav>
+  </header>
+
+  <main class="yanm-shell">
+    <section class="yanm-hero">
+      <div>
+        <p class="eyebrow">Yanm Web</p>
+        <h1>把本机最后一次燕幕，搬到网页上。</h1>
+        <p>
+          登录燕子账号后，网页端会读取燕子云端保存的燕幕快照，并渲染布局、组件 HTML 和组件状态。
+          便签、待办这类组件通过 <code>state.set</code> 写入云端，不再依赖坚果云直读。
+        </p>
+      </div>
+
+      <article class="yanm-auth-card" id="auth-card">
+        <div class="yanm-field">
+          <label for="email">邮箱</label>
+          <input id="email" class="yanm-input" type="email" autocomplete="username" placeholder="you@example.com">
+        </div>
+        <div class="yanm-field">
+          <label for="password">密码</label>
+          <input id="password" class="yanm-input" type="password" autocomplete="current-password" placeholder="燕子账号密码">
+        </div>
+        <button class="button primary" id="login-button" type="button">登录并读取燕幕</button>
+        <div class="yanm-status" id="auth-status"></div>
+      </article>
+    </section>
+
+    <section class="yanm-toolbar">
+      <div>
+        <strong id="user-label">未登录</strong>
+        <span id="sync-label">登录后读取燕子云端燕幕数据</span>
+      </div>
+      <div class="yanm-toolbar-actions">
+        <button class="button secondary" id="refresh-button" type="button">刷新燕幕</button>
+        <button class="button secondary" id="logout-button" type="button">退出登录</button>
+      </div>
+    </section>
+
+    <details class="yanm-debug yanm-hidden" id="debug-panel">
+      <summary>云端诊断</summary>
+      <pre id="debug-output"></pre>
+    </details>
+
+    <section class="yanm-stage-wrap" id="stage-wrap">
+      <div class="yanm-empty" id="empty">
+        <div>
+          <h2>等待燕幕数据</h2>
+          <p>请先在 Windows 客户端登录同一个燕子账号，并保存或同步一次燕幕设置。</p>
+        </div>
+      </div>
+      <div class="yanm-stage" id="stage"></div>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE = "https://openquickhost-sync.a1137583371.workers.dev";
+    const TOKEN_KEY = "yanzi.yanm.token";
+    const USER_KEY = "yanzi.yanm.user";
+
+    const authCard = document.getElementById("auth-card");
+    const emailInput = document.getElementById("email");
+    const passwordInput = document.getElementById("password");
+    const loginButton = document.getElementById("login-button");
+    const refreshButton = document.getElementById("refresh-button");
+    const logoutButton = document.getElementById("logout-button");
+    const authStatus = document.getElementById("auth-status");
+    const userLabel = document.getElementById("user-label");
+    const syncLabel = document.getElementById("sync-label");
+    const debugPanel = document.getElementById("debug-panel");
+    const debugOutput = document.getElementById("debug-output");
+    const stageWrap = document.getElementById("stage-wrap");
+    const stage = document.getElementById("stage");
+    const empty = document.getElementById("empty");
+
+    let currentSnapshot = null;
+    let saveTimer = 0;
+
+    function getToken() {
+      return localStorage.getItem(TOKEN_KEY) || "";
+    }
+
+    function setToken(token) {
+      if (token) {
+        localStorage.setItem(TOKEN_KEY, token);
+      } else {
+        localStorage.removeItem(TOKEN_KEY);
+      }
+    }
+
+    function setUser(user) {
+      if (user) {
+        localStorage.setItem(USER_KEY, JSON.stringify(user));
+      } else {
+        localStorage.removeItem(USER_KEY);
+      }
+      renderUser();
+    }
+
+    function getUser() {
+      try {
+        return JSON.parse(localStorage.getItem(USER_KEY) || "null");
+      } catch {
+        return null;
+      }
+    }
+
+    function renderUser() {
+      const user = getUser();
+      userLabel.textContent = user ? `${user.username || user.email} 已登录` : "未登录";
+      authCard.classList.toggle("yanm-hidden", Boolean(user));
+      document.body.classList.toggle("yanm-logged-in", Boolean(user));
+    }
+
+    function setStatus(message, isError = false) {
+      authStatus.textContent = message || "";
+      authStatus.classList.toggle("error", Boolean(isError));
+    }
+
+    function setDiagnostics(diagnostics) {
+      if (!diagnostics) {
+        debugPanel.classList.add("yanm-hidden");
+        debugOutput.textContent = "";
+        return;
+      }
+
+      debugPanel.classList.remove("yanm-hidden");
+      debugOutput.textContent = JSON.stringify(diagnostics, null, 2);
+    }
+
+    function setBusy(button, busy, text) {
+      button.disabled = busy;
+      if (busy) {
+        button.dataset.label = button.textContent;
+        button.textContent = text;
+      } else if (button.dataset.label) {
+        button.textContent = button.dataset.label;
+      }
+    }
+
+    async function api(path, options = {}) {
+      const headers = new Headers(options.headers || {});
+      headers.set("accept", "application/json");
+      if (options.body && !headers.has("content-type")) {
+        headers.set("content-type", "application/json");
+      }
+
+      const token = getToken();
+      if (token) {
+        headers.set("authorization", `Bearer ${token}`);
+      }
+
+      const response = await fetch(`${API_BASE}${path}`, {
+        ...options,
+        headers
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.message || `请求失败：${response.status}`);
+      }
+      return payload;
+    }
+
+    async function login() {
+      setBusy(loginButton, true, "登录中...");
+      setStatus("");
+      try {
+        const auth = await api("/v1/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            email: emailInput.value.trim(),
+            password: passwordInput.value
+          })
+        });
+        setToken(auth.accessToken || "");
+        const me = await api("/v1/auth/me");
+        setUser(me);
+        passwordInput.value = "";
+        await loadYanm();
+      } catch (error) {
+        setStatus(error.message || "登录失败", true);
+      } finally {
+        setBusy(loginButton, false);
+      }
+    }
+
+    async function restoreSession() {
+      if (!getToken()) {
+        renderUser();
+        return;
+      }
+
+      try {
+        const me = await api("/v1/auth/me");
+        setUser(me);
+        await loadYanm();
+      } catch {
+        setToken("");
+        setUser(null);
+      }
+    }
+
+    async function loadYanm() {
+      setBusy(refreshButton, true, "读取中...");
+      syncLabel.textContent = "正在读取燕子云端燕幕数据...";
+      try {
+        const snapshot = await api("/v1/me/yanm-state");
+        currentSnapshot = {
+          updatedAtUtc: snapshot.updatedAtUtc || new Date().toISOString(),
+          yanm: normalizeYanm(snapshot.yanm)
+        };
+        setDiagnostics(snapshot.diagnostics || null);
+        renderYanm(currentSnapshot.yanm);
+        const sourceLabel = "燕子云端";
+        const warning = snapshot.warning ? `，${snapshot.warning}` : "";
+        syncLabel.textContent = currentSnapshot.updatedAtUtc
+          ? `已从${sourceLabel}读取：${new Date(currentSnapshot.updatedAtUtc).toLocaleString()}${warning}`
+          : `已从${sourceLabel}读取燕幕数据${warning}`;
+      } catch (error) {
+        currentSnapshot = null;
+        setDiagnostics(null);
+        stage.innerHTML = "";
+        empty.classList.remove("yanm-hidden");
+        syncLabel.textContent = error.message || "读取失败";
+      } finally {
+        setBusy(refreshButton, false);
+      }
+    }
+
+    function normalizeYanm(yanm) {
+      const value = yanm && typeof yanm === "object" ? yanm : {};
+      value.components = Array.isArray(value.components || value.Components)
+        ? (value.components || value.Components)
+        : [];
+      value.componentState = value.componentState || value.ComponentState || {};
+      return value;
+    }
+
+    function renderYanm(yanm) {
+      const components = yanm.components || [];
+      stage.innerHTML = "";
+      empty.classList.toggle("yanm-hidden", components.length > 0);
+      if (!components.length) {
+        return;
+      }
+
+      const bounds = components.reduce((acc, item) => ({
+        width: Math.max(acc.width, Number(item.x ?? item.X ?? 0) + Number(item.width ?? item.Width ?? 320)),
+        height: Math.max(acc.height, Number(item.y ?? item.Y ?? 0) + Number(item.height ?? item.Height ?? 180))
+      }), { width: 1280, height: 720 });
+
+      const padding = 64;
+      const wrapWidth = stageWrap.clientWidth - padding;
+      const wrapHeight = Math.max(560, window.innerHeight - 300);
+      const scale = Math.min(1, wrapWidth / Math.max(bounds.width + padding, 1), wrapHeight / Math.max(bounds.height + padding, 1));
+
+      stage.style.width = `${bounds.width + padding}px`;
+      stage.style.height = `${bounds.height + padding}px`;
+      stage.style.transform = `scale(${scale})`;
+      stageWrap.style.minHeight = `${Math.max(620, (bounds.height + padding) * scale)}px`;
+
+      for (const component of components) {
+        const frame = document.createElement("div");
+        frame.className = "yanm-component";
+        frame.style.left = `${Number(component.x ?? component.X ?? 0)}px`;
+        frame.style.top = `${Number(component.y ?? component.Y ?? 0)}px`;
+        frame.style.width = `${Number(component.width ?? component.Width ?? 320)}px`;
+        frame.style.height = `${Number(component.height ?? component.Height ?? 180)}px`;
+
+        const iframe = document.createElement("iframe");
+        iframe.sandbox = "allow-scripts allow-forms allow-popups allow-modals";
+        iframe.srcdoc = buildRuntimeHtml(component);
+        frame.appendChild(iframe);
+        stage.appendChild(frame);
+      }
+    }
+
+    function buildRuntimeHtml(component) {
+      const id = String(component.id ?? component.Id ?? crypto.randomUUID());
+      const title = String(component.title ?? component.Title ?? "燕幕组件");
+      const html = String(component.html ?? component.Html ?? "");
+      const bridge = `
+<script>
+(function(){
+  var componentId = ${JSON.stringify(id)};
+  var componentTitle = ${JSON.stringify(title)};
+  var pending = {};
+  var seq = 0;
+  function invoke(method,args){
+    return new Promise(function(resolve,reject){
+      var id = 'web_' + (++seq) + '_' + Date.now();
+      pending[id] = {resolve:resolve,reject:reject};
+      parent.postMessage({type:'yanm.invoke', id:id, componentId:componentId, method:String(method||''), args:args||{}}, '*');
+      setTimeout(function(){
+        if(pending[id]){ delete pending[id]; reject(new Error('YANM_WEB_TIMEOUT')); }
+      }, 10000);
+    });
+  }
+  window.yanm = window.yanm || {};
+  window.yanm.componentId = componentId;
+  window.yanm.componentTitle = componentTitle;
+  window.yanm.invoke = invoke;
+  window.yanm.on = function(type, handler){
+    window.addEventListener('yanm:message', function(e){
+      if(e.detail && e.detail.type === type){ handler(e.detail); }
+    });
+  };
+  window.yanmHost = window.yanmHost || {};
+  window.yanmHost.requestSystemInfo = function(){ return invoke('system.info'); };
+  window.yanmHost.getState = function(key){ return invoke('state.get', {key:String(key||'')}); };
+  window.yanmHost.setState = function(key,value){ return invoke('state.set', {key:String(key||''), value:String(value||'')}); };
+  window.addEventListener('message', function(event){
+    var data = event.data || {};
+    if(data.type === 'yanm.reply' && pending[data.id]){
+      var item = pending[data.id];
+      delete pending[data.id];
+      data.ok ? item.resolve(data.result) : item.reject(new Error(data.error || 'YANM_WEB_FAILED'));
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('yanm:message', {detail:data}));
+  });
+})();
+<\/script>`;
+      const bodyEnd = html.toLowerCase().lastIndexOf("</body>");
+      return bodyEnd >= 0 ? `${html.slice(0, bodyEnd)}${bridge}${html.slice(bodyEnd)}` : `${html}${bridge}`;
+    }
+
+    window.addEventListener("message", async function (event) {
+      const message = event.data || {};
+      if (message.type !== "yanm.invoke") {
+        return;
+      }
+
+      try {
+        const result = await dispatchInvoke(message.method, message.args || {});
+        event.source.postMessage({ type: "yanm.reply", id: message.id, ok: true, result }, "*");
+      } catch (error) {
+        event.source.postMessage({ type: "yanm.reply", id: message.id, ok: false, error: error.message || "调用失败" }, "*");
+      }
+    });
+
+    async function dispatchInvoke(method, args) {
+      if (!currentSnapshot) {
+        throw new Error("燕幕数据未加载");
+      }
+
+      switch (method) {
+        case "system.info":
+          return {
+            cpuCores: navigator.hardwareConcurrency || 0,
+            isNetworkAvailable: navigator.onLine,
+            machineName: "Web",
+            osVersion: navigator.platform || "Browser",
+            time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            date: new Date().toISOString().slice(0, 10),
+            totalMemoryMb: 0,
+            availableMemoryMb: 0,
+            usedMemoryPercent: 0
+          };
+        case "state.get": {
+          const key = String(args.key || "");
+          return { key, value: String(currentSnapshot.yanm.componentState[key] || "") };
+        }
+        case "state.set": {
+          const key = String(args.key || "");
+          if (!key) {
+            throw new Error("state.set 缺少 key");
+          }
+          const value = String(args.value || "");
+          currentSnapshot.yanm.componentState[key] = value;
+          queueSaveYanm();
+          return { key, value };
+        }
+        default:
+          throw new Error(`网页端暂不支持能力：${method}`);
+      }
+    }
+
+    function queueSaveYanm() {
+      clearTimeout(saveTimer);
+      syncLabel.textContent = "状态已修改，准备写回燕子云端...";
+      saveTimer = setTimeout(saveYanm, 900);
+    }
+
+    async function saveYanm() {
+      if (!currentSnapshot) {
+        return;
+      }
+
+      const updatedAtUtc = new Date().toISOString();
+      try {
+        await api("/v1/me/yanm-state", {
+          method: "PUT",
+          body: JSON.stringify({
+            updatedAtUtc,
+            yanm: currentSnapshot.yanm
+          })
+        });
+        currentSnapshot.updatedAtUtc = updatedAtUtc;
+        syncLabel.textContent = `已写回燕子云端：${new Date(updatedAtUtc).toLocaleString()}`;
+      } catch (error) {
+        syncLabel.textContent = error.message || "写回燕子云端失败";
+      }
+    }
+
+    loginButton.addEventListener("click", login);
+    passwordInput.addEventListener("keydown", function (event) {
+      if (event.key === "Enter") {
+        login();
+      }
+    });
+    refreshButton.addEventListener("click", loadYanm);
+    logoutButton.addEventListener("click", function () {
+      setToken("");
+      setUser(null);
+      currentSnapshot = null;
+      setDiagnostics(null);
+      stage.innerHTML = "";
+      empty.classList.remove("yanm-hidden");
+      syncLabel.textContent = "已退出登录";
+    });
+    window.addEventListener("resize", function () {
+      if (currentSnapshot) {
+        renderYanm(currentSnapshot.yanm);
+      }
+    });
+
+    restoreSession();
+  </script>
+</body>
+
+</html>

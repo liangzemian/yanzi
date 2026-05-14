@@ -243,3 +243,21 @@ public sealed class WebDavConfigDto
         }
     }
 }
+
+public sealed class YanmStateResponse
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; init; }
+
+    [JsonPropertyName("source")]
+    public string Source { get; init; } = string.Empty;
+
+    [JsonPropertyName("updatedAtUtc")]
+    public string? UpdatedAtUtc { get; init; }
+
+    [JsonPropertyName("yanm")]
+    public YanmSettings? Yanm { get; init; }
+
+    [JsonPropertyName("bytes")]
+    public int Bytes { get; init; }
+}

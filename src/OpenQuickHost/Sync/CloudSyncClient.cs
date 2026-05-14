@@ -366,6 +366,35 @@ public sealed class CloudSyncClient
         response.EnsureSuccessStatusCode();
     }
 
+    public async Task<YanmStateResponse?> GetYanmStateAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureAuthenticatedAsync(cancellationToken);
+        using var request = CreateRequest(HttpMethod.Get, "/v1/me/yanm-state", includeAuth: true);
+        using var response = await SendAsyncWithFallback(request, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await ReadAsync<YanmStateResponse>(response, cancellationToken);
+    }
+
+    public async Task<YanmStateResponse?> UpsertYanmStateAsync(YanmSettings yanm, string? updatedAtUtc = null, CancellationToken cancellationToken = default)
+    {
+        await EnsureAuthenticatedAsync(cancellationToken);
+        var body = JsonSerializer.Serialize(new
+        {
+            updatedAtUtc = string.IsNullOrWhiteSpace(updatedAtUtc) ? DateTime.UtcNow.ToString("O") : updatedAtUtc,
+            yanm
+        });
+
+        using var request = CreateJsonRequest(HttpMethod.Put, "/v1/me/yanm-state", body, includeAuth: true);
+        using var response = await SendAsyncWithFallback(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await ReadAsync<YanmStateResponse>(response, cancellationToken);
+    }
+
     private async Task EnsureConfigExtensionExistsAsync(string configId, CancellationToken cancellationToken)
     {
         var body = JsonSerializer.Serialize(new

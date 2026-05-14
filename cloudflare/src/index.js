@@ -411,6 +411,47 @@ async function handleRequest(request, env) {
     });
   }
 
+  if ((url.pathname === "/v1/me/yanm-state" || url.pathname === "/v1/me/yanm-webdav-state") && request.method === "GET") {
+    const auth = await requireAuth(request, env);
+    const snapshot = await readYanmStateFromCloudConfig(env, auth.userId);
+    if (!snapshot) {
+      throw new HttpError(404, "yanm_state_missing", "Yanm state was not found in account cloud snapshot");
+    }
+
+    return json({
+      ok: true,
+      userId: auth.userId,
+      source: "cloud-config",
+      warning: "",
+      diagnostics: null,
+      updatedAtUtc: snapshot.updatedAtUtc || null,
+      yanm: snapshot.yanm || null,
+      bytes: snapshot.bytes
+    });
+  }
+
+  if ((url.pathname === "/v1/me/yanm-state" || url.pathname === "/v1/me/yanm-webdav-state") && request.method === "PUT") {
+    const auth = await requireAuth(request, env);
+    const payload = await readJson(request);
+    if (!payload.yanm || typeof payload.yanm !== "object") {
+      throw new HttpError(400, "invalid_yanm", "Yanm payload is required");
+    }
+
+    const updatedAtUtc = normalizeOptionalIsoDate(payload.updatedAtUtc) || isoNow();
+    const result = await writeYanmStateToCloudConfig(env, auth.userId, {
+      updatedAtUtc,
+      yanm: payload.yanm
+    });
+
+    return json({
+      ok: true,
+      userId: auth.userId,
+      source: "cloud-config",
+      updatedAtUtc,
+      bytes: result.bytes
+    });
+  }
+
   if (url.pathname === "/v1/app/update/latest" && request.method === "GET") {
     const channel = normalizeReleaseChannel(url.searchParams.get("channel"));
     const row = await env.DB.prepare(
@@ -1697,6 +1738,418 @@ async function touchUser(env, userId) {
     .run();
 }
 
+async function getUserWebDavConfig(env, userId) {
+  const row = await env.DB.prepare(
+    `select settings_json
+     from user_extensions
+     where user_id = ? and extension_id = ?`
+  )
+    .bind(userId, "yanzi-webdav-settings")
+    .first();
+
+  if (!row?.settings_json) {
+    throw new HttpError(404, "webdav_config_missing", "WebDAV config is not configured for this account");
+  }
+
+  let settings;
+  try {
+    settings = JSON.parse(String(row.settings_json));
+  } catch {
+    throw new HttpError(500, "webdav_config_invalid", "Stored WebDAV config is invalid");
+  }
+
+  const config = {
+    enabled: Boolean(readFirst(settings, ["enabled", "enableWebDavSync"])),
+    serverUrl: String(readFirst(settings, ["serverUrl", "webDavServerUrl"]) || "").trim(),
+    rootPath: String(readFirst(settings, ["rootPath", "webDavRootPath"]) || "/yanzi").trim(),
+    username: String(readFirst(settings, ["username", "webDavUsername"]) || "").trim(),
+    password: String(readFirst(settings, ["password", "webDavPassword"]) || "").trim()
+  };
+
+  if (!config.enabled) {
+    throw new HttpError(409, "webdav_disabled", "WebDAV sync is disabled for this account");
+  }
+
+  if (!config.serverUrl || !config.username || !config.password) {
+    throw new HttpError(409, "webdav_config_incomplete", "WebDAV server, username, or app password is missing");
+  }
+
+  return config;
+}
+
+async function readYanmStateForUser(env, userId) {
+  try {
+    const config = await getUserWebDavConfig(env, userId);
+    return {
+      ...(await readYanmStateFromWebDav(config)),
+      source: "webdav"
+    };
+  } catch (error) {
+    const fallback = await readYanmStateFromCloudConfig(env, userId);
+    if (fallback) {
+      const diagnostics = buildSafeErrorDiagnostics(error);
+      console.warn("Yanm WebDAV read failed, falling back to cloud config", {
+        userId,
+        diagnostics
+      });
+      return {
+        ...fallback,
+        source: "cloud-config",
+        warning: error instanceof Error ? error.message : "WebDAV read failed",
+        diagnostics
+      };
+    }
+
+    throw error;
+  }
+}
+
+async function readYanmStateFromCloudConfig(env, userId) {
+  const row = await env.DB.prepare(
+    `select settings_json, updated_at
+     from user_extensions
+     where user_id = ? and extension_id = ?`
+  )
+    .bind(userId, "yanzi-quickpanel-settings")
+    .first();
+
+  if (!row?.settings_json) {
+    return null;
+  }
+
+  let settings;
+  try {
+    settings = JSON.parse(String(row.settings_json));
+  } catch {
+    return null;
+  }
+
+  const yanm = settings.yanm || settings.Yanm || null;
+  if (!yanm) {
+    return null;
+  }
+
+  const text = JSON.stringify(yanm);
+  return {
+    updatedAtUtc: String(row.updated_at || ""),
+    yanm,
+    bytes: textEncoder.encode(text).length
+  };
+}
+
+async function writeYanmStateToCloudConfig(env, userId, snapshot) {
+  await ensureUser(env, userId);
+
+  const existing = await env.DB.prepare(
+    `select settings_json
+     from user_extensions
+     where user_id = ? and extension_id = ?`
+  )
+    .bind(userId, "yanzi-quickpanel-settings")
+    .first();
+
+  let settings = {};
+  if (existing?.settings_json) {
+    try {
+      settings = JSON.parse(String(existing.settings_json));
+    } catch {
+      settings = {};
+    }
+  }
+
+  settings.yanm = snapshot.yanm;
+
+  await ensureSystemConfigExtension(env, "yanzi-quickpanel-settings", {
+    displayName: "Yanzi Quick Panel Settings",
+    description: "Stores quick panel and Yanm configuration for the current account."
+  });
+
+  const now = snapshot.updatedAtUtc || isoNow();
+  const settingsJson = JSON.stringify(settings);
+  await env.DB.prepare(
+    `insert into user_extensions (
+      user_id,
+      extension_id,
+      installed_version,
+      enabled,
+      settings_json,
+      updated_at
+    ) values (?, ?, ?, ?, ?, ?)
+    on conflict(user_id, extension_id) do update set
+      installed_version = excluded.installed_version,
+      enabled = excluded.enabled,
+      settings_json = excluded.settings_json,
+      updated_at = excluded.updated_at`
+  )
+    .bind(userId, "yanzi-quickpanel-settings", "1", 1, settingsJson, now)
+    .run();
+
+  return {
+    bytes: textEncoder.encode(JSON.stringify(snapshot.yanm)).length
+  };
+}
+
+async function ensureSystemConfigExtension(env, extensionId, metadata) {
+  const now = isoNow();
+  await env.DB.prepare(
+    `insert into extensions (
+      extension_id,
+      display_name,
+      latest_version,
+      manifest_json,
+      updated_at
+    ) values (?, ?, ?, ?, ?)
+    on conflict(extension_id) do update set
+      display_name = coalesce(extensions.display_name, excluded.display_name),
+      latest_version = coalesce(extensions.latest_version, excluded.latest_version),
+      updated_at = excluded.updated_at`
+  )
+    .bind(
+      extensionId,
+      metadata.displayName,
+      "1",
+      JSON.stringify({
+        name: extensionId,
+        displayName: metadata.displayName,
+        version: "1",
+        category: "系统配置",
+        description: metadata.description,
+        keywords: ["yanzi", "settings", "yanm"]
+      }),
+      now
+    )
+    .run();
+}
+
+async function readYanmStateFromWebDav(config) {
+  const target = buildWebDavTargetInfo(config, "state/yanm-state.json");
+  const response = await fetchWebDav(config, "state/yanm-state.json", {
+    method: "GET"
+  });
+
+  if (response.status === 404) {
+    throw new WebDavHttpError(
+      404,
+      "yanm_state_missing",
+      "Yanm state was not found in WebDAV",
+      {
+        method: "GET",
+        target,
+        upstreamStatus: response.status,
+        upstreamStatusText: response.statusText,
+        upstreamHeaders: readSafeResponseHeaders(response)
+      }
+    );
+  }
+
+  if (!response.ok) {
+    await throwWebDavError(response, "read_yanm_failed", "Failed to read Yanm state from WebDAV", {
+      method: "GET",
+      target
+    });
+  }
+
+  const text = await response.text();
+  let snapshot;
+  try {
+    snapshot = JSON.parse(text);
+  } catch {
+    throw new HttpError(502, "yanm_state_invalid", "Yanm state JSON in WebDAV is invalid");
+  }
+
+  return {
+    updatedAtUtc: snapshot.updatedAtUtc || snapshot.UpdatedAtUtc || "",
+    yanm: snapshot.yanm || snapshot.Yanm || null,
+    bytes: textEncoder.encode(text).length
+  };
+}
+
+async function writeYanmStateToWebDav(config, snapshot) {
+  const body = JSON.stringify({
+    updatedAtUtc: snapshot.updatedAtUtc,
+    yanm: snapshot.yanm
+  }, null, 2);
+
+  await ensureWebDavCollection(config, "");
+  await ensureWebDavCollection(config, "state");
+
+  const response = await fetchWebDav(config, "state/yanm-state.json", {
+    method: "PUT",
+    body,
+    headers: {
+      "content-type": "application/json; charset=utf-8"
+    }
+  });
+
+  if (!response.ok) {
+    await throwWebDavError(response, "write_yanm_failed", "Failed to write Yanm state to WebDAV");
+  }
+
+  return {
+    bytes: textEncoder.encode(body).length
+  };
+}
+
+async function ensureWebDavCollection(config, relativePath) {
+  const response = await fetchWebDav(config, relativePath, {
+    method: "MKCOL"
+  });
+
+  if (response.ok || response.status === 405) {
+    return;
+  }
+
+  if (response.status === 409 && relativePath) {
+    await ensureWebDavCollection(config, "");
+    return ensureWebDavCollection(config, relativePath);
+  }
+
+  await throwWebDavError(response, "webdav_mkcol_failed", "Failed to ensure WebDAV folder");
+}
+
+async function fetchWebDav(config, relativePath, init) {
+  const url = buildWebDavUrl(config, relativePath);
+  const headers = new Headers(init.headers || {});
+  headers.set("authorization", `Basic ${base64EncodeUtf8(`${config.username}:${config.password}`)}`);
+  return fetch(url, {
+    ...init,
+    headers
+  });
+}
+
+function buildWebDavUrl(config, relativePath) {
+  const base = new URL(ensureTrailingSlash(config.serverUrl));
+  const segments = [
+    ...normalizeRootPath(config.rootPath).split("/").filter(Boolean),
+    ...normalizeRelativePath(relativePath).split("/").filter(Boolean)
+  ];
+  base.pathname = `${base.pathname.replace(/\/+$/, "")}/${segments.map(encodeURIComponent).join("/")}`;
+  return base.toString();
+}
+
+async function throwWebDavError(response, code, fallbackMessage, context = {}) {
+  const detail = await response.text().catch(() => "");
+  const suffix = detail ? `: ${trimForMessage(detail)}` : "";
+  throw new WebDavHttpError(
+    response.status || 502,
+    code,
+    `${fallbackMessage} (${response.status})${suffix}`,
+    {
+      ...context,
+      upstreamStatus: response.status,
+      upstreamStatusText: response.statusText,
+      upstreamHeaders: readSafeResponseHeaders(response),
+      upstreamBodySnippet: trimForMessage(detail)
+    }
+  );
+}
+
+function readFirst(source, keys) {
+  for (const key of keys) {
+    if (source && Object.prototype.hasOwnProperty.call(source, key)) {
+      return source[key];
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeRootPath(rootPath) {
+  const value = String(rootPath || "/yanzi").trim().replace(/\\/g, "/");
+  return value.replace(/^\/+/, "").replace(/\/+$/, "") || "yanzi";
+}
+
+function normalizeRelativePath(path) {
+  return String(path || "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function ensureTrailingSlash(value) {
+  return String(value || "").endsWith("/") ? String(value) : `${value}/`;
+}
+
+function buildWebDavTargetInfo(config, relativePath) {
+  const url = new URL(buildWebDavUrl(config, relativePath));
+  return {
+    origin: url.origin,
+    path: url.pathname,
+    rootPath: normalizeRootPath(config.rootPath),
+    relativePath: normalizeRelativePath(relativePath)
+  };
+}
+
+function readSafeResponseHeaders(response) {
+  const names = [
+    "cf-ray",
+    "cf-cache-status",
+    "server",
+    "date",
+    "content-type",
+    "www-authenticate"
+  ];
+  const headers = {};
+  for (const name of names) {
+    const value = response.headers.get(name);
+    if (value) {
+      headers[name] = value;
+    }
+  }
+
+  return headers;
+}
+
+function buildSafeErrorDiagnostics(error) {
+  if (error instanceof WebDavHttpError) {
+    return {
+      code: error.code,
+      status: error.status,
+      message: error.message,
+      ...error.diagnostics
+    };
+  }
+
+  if (error instanceof HttpError) {
+    return {
+      code: error.code,
+      status: error.status,
+      message: error.message
+    };
+  }
+
+  return {
+    code: "webdav_unknown_error",
+    status: 500,
+    message: error instanceof Error ? error.message : "Unknown WebDAV error"
+  };
+}
+
+function base64EncodeUtf8(value) {
+  const bytes = textEncoder.encode(value);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary);
+}
+
+function normalizeOptionalIsoDate(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) {
+    throw new HttpError(400, "invalid_updated_at", "updatedAtUtc must be a valid datetime");
+  }
+
+  return date.toISOString();
+}
+
+function trimForMessage(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  return text.length > 240 ? `${text.slice(0, 240)}...` : text;
+}
+
 async function readJson(request) {
   const body = await request.json();
   if (!body || typeof body !== "object") {
@@ -1780,5 +2233,12 @@ class HttpError extends Error {
     super(message);
     this.status = status;
     this.code = code;
+  }
+}
+
+class WebDavHttpError extends HttpError {
+  constructor(status, code, message, diagnostics) {
+    super(status, code, message);
+    this.diagnostics = diagnostics;
   }
 }

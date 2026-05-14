@@ -233,13 +233,6 @@ public partial class YanmOverlayWindow : Window
 
     private void QueueWebDavStateRefresh(string reason, bool force = false)
     {
-        var currentSettings = AppSettingsStore.Load();
-        if (!currentSettings.EnableWebDavSync || !_mainWindow.HasWebDavCredential())
-        {
-            SetSyncStatus("未启用同步", WpfColor.FromRgb(148, 163, 184), visible: false);
-            return;
-        }
-
         var now = DateTime.UtcNow;
         if (_webDavStateRefreshRunning)
         {
@@ -266,8 +259,13 @@ public partial class YanmOverlayWindow : Window
     {
         try
         {
-            var result = await _mainWindow.SyncYanmStateNowAsync();
-            if (result.ok)
+            var cloudResult = await _mainWindow.PullYanmStateFromCloudNowAsync();
+            var currentSettings = AppSettingsStore.Load();
+            var hasWebDav = currentSettings.EnableWebDavSync && _mainWindow.HasWebDavCredential();
+            (bool ok, string message, bool uploaded, bool pulled, int payloadBytes) result = hasWebDav
+                ? await _mainWindow.SyncYanmStateNowAsync()
+                : (true, "未启用 WebDAV，已跳过坚果云同步。", false, false, 0);
+            if (cloudResult.ok || result.ok)
             {
                 if (Dispatcher.CheckAccess())
                 {
@@ -280,7 +278,7 @@ public partial class YanmOverlayWindow : Window
 
                 await Dispatcher.InvokeAsync(() =>
                     SetSyncStatus(
-                        result.pulled ? "已拉取" : result.uploaded ? "已上传" : "已同步",
+                        cloudResult.pulled || result.pulled ? "已拉取" : result.uploaded ? "已上传" : "已同步",
                         WpfColor.FromRgb(52, 211, 153),
                         visible: true));
             }
@@ -289,6 +287,7 @@ public partial class YanmOverlayWindow : Window
                 await Dispatcher.InvokeAsync(() => SetSyncStatus("同步失败", WpfColor.FromRgb(248, 113, 113), visible: true));
             }
 
+            HostAssets.AppendLog($"Yanm: cloud state refresh {(cloudResult.ok ? "completed" : "failed")}: {cloudResult.message}");
             HostAssets.AppendLog($"Yanm: WebDAV state refresh {(result.ok ? "completed" : "failed")}: {result.message}");
         }
         catch (Exception ex)
@@ -1949,6 +1948,9 @@ public partial class YanmOverlayWindow : Window
 
     private void SyncStatusPanel_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        _isPinned = true;
+        _isInteractiveHoldPinned = false;
+        UpdateCornerHint();
         FlushPendingComponentState();
         QueueWebDavStateRefresh("manual-click", force: true);
         e.Handled = true;
@@ -2131,6 +2133,13 @@ public partial class YanmOverlayWindow : Window
     {
         while (source != null)
         {
+            if (source is FrameworkElement element &&
+                (string.Equals(element.Name, "SyncStatusPanel", StringComparison.Ordinal) ||
+                 string.Equals(element.Name, "CornerHintPanel", StringComparison.Ordinal)))
+            {
+                return true;
+            }
+
             if (source is System.Windows.Controls.Primitives.ButtonBase or
                 System.Windows.Controls.TextBox or
                 System.Windows.Controls.ComboBox or
