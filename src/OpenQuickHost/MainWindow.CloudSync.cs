@@ -1157,6 +1157,7 @@ public partial class MainWindow
                 InputHookService.ReloadSettings();
                 KeyboardDoubleTapService.ApplyYanmSettings(_appSettings.Yanm);
                 RefreshYanmHotkeyRegistration();
+                RefreshRadialHotkeyRegistration();
             }
 
             return (true, $"已拉取云端燕幕，数据 {FormatBytes(response.Bytes)}。", true, response.Bytes);
@@ -1503,6 +1504,7 @@ public partial class MainWindow
             }
 
             RefreshYanmHotkeyRegistration();
+            RefreshRadialHotkeyRegistration();
         }
 
         QueueCloudQuickPanelConfigSync(reason);
@@ -1636,12 +1638,43 @@ public partial class MainWindow
             settings.Yanm.CustomShortcut = previous;
             AppSettingsStore.Save(settings);
             RefreshYanmHotkeyRegistration();
+            RefreshRadialHotkeyRegistration();
             message = "燕幕快捷键注册失败，可能与系统或其他程序冲突。";
             return false;
         }
 
         KeyboardDoubleTapService.ApplyYanmSettings(settings.Yanm);
         message = $"燕幕快捷键已更新为 {settings.Yanm.CustomShortcut}";
+        return true;
+    }
+
+    public bool TryUpdateRadialHotkey(string shortcut, out string message)
+    {
+        message = string.Empty;
+        if (string.IsNullOrWhiteSpace(shortcut) || !TryParseHotkey(shortcut, out _, out _))
+        {
+            message = "快捷键格式无效。示例：Ctrl+Alt+R";
+            return false;
+        }
+
+        var settings = AppSettingsStore.Load();
+        settings.RadialMenu ??= new RadialMenuSettings();
+        var previous = settings.RadialMenu.CustomShortcut;
+        settings.RadialMenu.CustomShortcut = shortcut.Trim();
+        settings.RadialMenu.ActivationKey = RadialActivationKeys.Custom;
+        AppSettingsStore.Save(settings);
+
+        if (!RefreshRadialHotkeyRegistration())
+        {
+            settings.RadialMenu.CustomShortcut = previous;
+            AppSettingsStore.Save(settings);
+            RefreshRadialHotkeyRegistration();
+            message = "燕环快捷键注册失败，可能与系统或其他程序冲突。";
+            return false;
+        }
+
+        InputHookService.ReloadSettings();
+        message = $"燕环快捷键已更新为 {settings.RadialMenu.CustomShortcut}";
         return true;
     }
 

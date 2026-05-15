@@ -894,6 +894,7 @@ public partial class MainWindow
         RefreshYanyuRules();
         RefreshLauncherHotkeyRegistration();
         RefreshYanmHotkeyRegistration();
+        RefreshRadialHotkeyRegistration();
         RefreshExtensionHotkeys();
         SyncStatus = "已恢复快捷键、扩展快捷键、燕选和鼠标面板监听。";
     }
@@ -943,6 +944,7 @@ public partial class MainWindow
             RefreshYanyuRules();
             RefreshLauncherHotkeyRegistration();
             RefreshYanmHotkeyRegistration();
+            RefreshRadialHotkeyRegistration();
             RefreshExtensionHotkeys();
         }
     }
@@ -961,6 +963,7 @@ public partial class MainWindow
                 UnregisterExtensionHotkeys();
                 UnregisterLauncherHotkey();
                 UnregisterYanmHotkey();
+                UnregisterRadialHotkey();
                 KeyboardDoubleTapService.Stop();
                 YanyuTriggerService.Stop();
                 YarnSelectService.Stop();
@@ -1089,6 +1092,15 @@ public partial class MainWindow
         else if (msg == WmHotKey && wParam.ToInt32() == YanmHotKeyId)
         {
             _yanmOverlay?.ToggleFromShortcut();
+            handled = true;
+        }
+        else if (msg == WmHotKey && wParam.ToInt32() == RadialHotKeyId)
+        {
+            if (IsRadialAllowedForForegroundProcess())
+            {
+                _radialMenu?.ShowAtMouse();
+            }
+
             handled = true;
         }
         else if (msg == WmHotKey && _registeredExtensionHotkeys.TryGetValue(wParam.ToInt32(), out var command))
@@ -1480,6 +1492,132 @@ public partial class MainWindow
         return success;
     }
 
+    private bool RefreshRadialHotkeyRegistration()
+    {
+        if (_source == null)
+        {
+            return false;
+        }
+
+        UnregisterRadialHotkey();
+        var radial = AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings();
+        if (!radial.Enabled || !string.Equals(RadialActivationKeys.Normalize(radial.ActivationKey), RadialActivationKeys.Custom, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!TryParseHotkey(radial.CustomShortcut, out var modifiers, out var key))
+        {
+            HostAssets.AppendLog($"Invalid radial hotkey skipped: {radial.CustomShortcut}");
+            return false;
+        }
+
+        var success = RegisterHotKey(
+            _source.Handle,
+            RadialHotKeyId,
+            modifiers | ModNoRepeat,
+            (uint)KeyInterop.VirtualKeyFromKey(key));
+        if (!success)
+        {
+            HostAssets.AppendLog($"Failed to register radial hotkey: {radial.CustomShortcut}");
+        }
+
+        return success;
+    }
+
+    private static bool IsRadialAllowedForForegroundProcess()
+    {
+        var radial = AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings();
+        var whitelist = radial.WhitelistedProcesses ?? [];
+        var blacklist = radial.BlacklistedProcesses ?? [];
+        if (whitelist.Count == 0 && blacklist.Count == 0)
+        {
+            return true;
+        }
+
+        var processName = GetForegroundProcessName();
+        if (string.IsNullOrWhiteSpace(processName))
+        {
+            return whitelist.Count == 0;
+        }
+
+        if (whitelist.Count > 0)
+        {
+            var allowed = whitelist.Any(item => ProcessNameMatches(processName, item));
+            if (!allowed)
+            {
+                HostAssets.AppendLog($"Radial hotkey blocked by whitelist, process={processName}.");
+            }
+
+            return allowed;
+        }
+
+        var blocked = blacklist.Any(item => ProcessNameMatches(processName, item));
+        if (blocked)
+        {
+            HostAssets.AppendLog($"Radial hotkey blocked by blacklist, process={processName}.");
+        }
+
+        return !blocked;
+    }
+
+    private static bool ProcessNameMatches(string processName, string pattern)
+    {
+        var normalizedProcess = NormalizeProcessName(processName);
+        var normalizedPattern = NormalizeProcessName(pattern);
+        if (string.IsNullOrWhiteSpace(normalizedPattern))
+        {
+            return false;
+        }
+
+        if (normalizedPattern.Contains('*', StringComparison.Ordinal))
+        {
+            var parts = normalizedPattern.Split('*', StringSplitOptions.RemoveEmptyEntries);
+            var index = 0;
+            foreach (var part in parts)
+            {
+                var found = normalizedProcess.IndexOf(part, index, StringComparison.OrdinalIgnoreCase);
+                if (found < 0)
+                {
+                    return false;
+                }
+
+                index = found + part.Length;
+            }
+
+            return true;
+        }
+
+        return normalizedProcess.Equals(normalizedPattern, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeProcessName(string value)
+    {
+        value = (value ?? string.Empty).Trim();
+        return value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? value[..^4]
+            : value;
+    }
+
+    private static string GetForegroundProcessName()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero)
+            {
+                return string.Empty;
+            }
+
+            _ = GetWindowThreadProcessId(hwnd, out var processId);
+            return processId == 0 ? string.Empty : Process.GetProcessById((int)processId).ProcessName;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
     private void UnregisterLauncherHotkey()
     {
         if (_source == null)
@@ -1500,11 +1638,27 @@ public partial class MainWindow
         UnregisterHotKey(_source.Handle, YanmHotKeyId);
     }
 
+    private void UnregisterRadialHotkey()
+    {
+        if (_source == null)
+        {
+            return;
+        }
+
+        UnregisterHotKey(_source.Handle, RadialHotKeyId);
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);

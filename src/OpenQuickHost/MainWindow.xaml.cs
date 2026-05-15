@@ -31,6 +31,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 {
     private const int HotKeyId = 0x5301;
     private const int YanmHotKeyId = 0x5302;
+    private const int RadialHotKeyId = 0x5303;
     private const uint ModControl = 0x0002;
     private const uint ModAlt = 0x0001;
     private const uint ModShift = 0x0004;

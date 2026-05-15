@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -172,6 +173,14 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         new(YanmActivationKeys.Win, "Win"),
         new(YanmActivationKeys.CapsLock, "CapsLock"),
         new(YanmActivationKeys.Custom, "自定义快捷键")
+    ];
+
+    public IReadOnlyList<YanmActivationKeyOption> RadialActivationKeyOptions { get; } =
+    [
+        new(RadialActivationKeys.None, "不启用"),
+        new(RadialActivationKeys.Win, "Win"),
+        new(RadialActivationKeys.CapsLock, "CapsLock"),
+        new(RadialActivationKeys.Custom, "自定义快捷键")
     ];
 
     public IReadOnlyList<MouseTriggerOption> MouseTriggerOptions { get; } =
@@ -775,6 +784,40 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         set => UpdateRadialMenu(value, settings => settings.TriggerCapsLockHold = value);
     }
 
+    public string RadialActivationKey
+    {
+        get => RadialActivationKeys.Normalize(_settings.RadialMenu.ActivationKey);
+        set => UpdateRadialMenu(RadialActivationKeys.Normalize(value), settings => settings.ActivationKey = RadialActivationKeys.Normalize(value));
+    }
+
+    public bool RadialUsesCustomShortcut => string.Equals(RadialActivationKey, RadialActivationKeys.Custom, StringComparison.OrdinalIgnoreCase);
+
+    public string RadialCustomShortcut
+    {
+        get => _settings.RadialMenu.CustomShortcut;
+        set => UpdateRadialMenu(value, settings => settings.CustomShortcut = value);
+    }
+
+    public string RadialBlacklistedProcessesText
+    {
+        get => string.Join(", ", _settings.RadialMenu.BlacklistedProcesses ?? []);
+        set
+        {
+            _settings.RadialMenu.BlacklistedProcesses = ParseProcessList(value);
+            OnPropertyChanged();
+        }
+    }
+
+    public string RadialWhitelistedProcessesText
+    {
+        get => string.Join(", ", _settings.RadialMenu.WhitelistedProcesses ?? []);
+        set
+        {
+            _settings.RadialMenu.WhitelistedProcesses = ParseProcessList(value);
+            OnPropertyChanged();
+        }
+    }
+
     public string SelectedRadialMenuPageId
     {
         get
@@ -933,6 +976,32 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         set => UpdateYanm(value, settings => settings.CustomShortcut = value);
     }
 
+    public string YanmBlacklistedProcessesText
+    {
+        get => string.Join(", ", _settings.Yanm.BlacklistedProcesses ?? []);
+        set
+        {
+            _settings.Yanm.BlacklistedProcesses = ParseProcessList(value);
+            OnPropertyChanged();
+        }
+    }
+
+    private static List<string> ParseProcessList(string? value) =>
+        (value ?? string.Empty)
+        .Split([',', ';', '，', '；', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    public string YanmWhitelistedProcessesText
+    {
+        get => string.Join(", ", _settings.Yanm.WhitelistedProcesses ?? []);
+        set
+        {
+            _settings.Yanm.WhitelistedProcesses = ParseProcessList(value);
+            OnPropertyChanged();
+        }
+    }
+
     public bool YanmTriggerHold
     {
         get => _settings.Yanm.TriggerWinHold;
@@ -1042,8 +1111,19 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     ]);
 
     public string RadialMenuSummary => _settings.RadialMenu.Enabled
-        ? $"燕环已启用：鼠标触发 {RadialAssignedMouseTriggerSummary}；支持滚轮切页、子环和搜索配置。"
+        ? $"燕环已启用：键盘触发 {GetRadialActivationKeyDisplay()}；鼠标触发 {RadialAssignedMouseTriggerSummary}；支持滚轮切页、子环和搜索配置。"
         : "燕环未启用：当前仍使用传统鼠标面板。";
+
+    private string GetRadialActivationKeyDisplay()
+    {
+        return RadialActivationKeys.Normalize(_settings.RadialMenu.ActivationKey) switch
+        {
+            RadialActivationKeys.Win when _settings.RadialMenu.TriggerCapsLockHold => "按住 Win",
+            RadialActivationKeys.CapsLock when _settings.RadialMenu.TriggerCapsLockHold => "按住 CapsLock",
+            RadialActivationKeys.Custom => string.IsNullOrWhiteSpace(_settings.RadialMenu.CustomShortcut) ? "自定义快捷键未录制" : $"按下 {_settings.RadialMenu.CustomShortcut}",
+            _ => "未启用"
+        };
+    }
 
     private static string BuildAssignedMouseTriggerSummary(IEnumerable<(bool Enabled, string Label)> triggers)
     {
@@ -1557,12 +1637,76 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         HostAssets.AppendLog($"Gesture {gestureName} assigned to {target}");
     }
 
+    private void RecordMouseTriggerButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new MouseTriggerCaptureWindow
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var gestureName = MouseTriggerModeToGestureName(dialog.TriggerMode);
+        if (string.IsNullOrWhiteSpace(gestureName))
+        {
+            SyncStatusText = "未识别可分配的鼠标触发方式。";
+            return;
+        }
+
+        ClearGestureFromAllTargets(gestureName);
+        AssignGestureToTarget(gestureName, dialog.Target);
+        UpdateAllGestureCardColors();
+        SaveQuickPanelTriggerSettings();
+        SyncStatusText = $"已录制并分配鼠标触发：{GetMouseTriggerLabel(dialog.TriggerMode)} -> {GetTriggerTargetLabel(dialog.Target)}";
+    }
+
+    private static string MouseTriggerModeToGestureName(string mode) => MouseTriggerModes.Normalize(mode) switch
+    {
+        MouseTriggerModes.RightLongPress => "RightButtonLongPress",
+        MouseTriggerModes.MiddleLongPress => "MiddleButtonLongPress",
+        MouseTriggerModes.RightDrag => "RightButtonDrag",
+        MouseTriggerModes.MiddleDown => "MiddleButtonDown",
+        MouseTriggerModes.X1Down => "X1ButtonDown",
+        MouseTriggerModes.X2Down => "X2ButtonDown",
+        MouseTriggerModes.HorizontalWheel => "HorizontalWheel",
+        MouseTriggerModes.CtrlLeftClick => "CtrlLeftClick",
+        MouseTriggerModes.CtrlRightClick => "CtrlRightClick",
+        MouseTriggerModes.CtrlMiddleClick => "CtrlMiddleClick",
+        _ => string.Empty
+    };
+
+    private static string GetMouseTriggerLabel(string mode) => MouseTriggerModes.Normalize(mode) switch
+    {
+        MouseTriggerModes.RightLongPress => "长按右键",
+        MouseTriggerModes.MiddleLongPress => "长按中键",
+        MouseTriggerModes.RightDrag => "按右键移动",
+        MouseTriggerModes.MiddleDown => "按下中键",
+        MouseTriggerModes.X1Down => "按下 X1 键",
+        MouseTriggerModes.X2Down => "按下 X2 键",
+        MouseTriggerModes.HorizontalWheel => "滚轮左右",
+        MouseTriggerModes.CtrlLeftClick => "Ctrl+左键单击",
+        MouseTriggerModes.CtrlRightClick => "Ctrl+右键单击",
+        MouseTriggerModes.CtrlMiddleClick => "Ctrl+中键单击",
+        _ => "未知触发"
+    };
+
+    private static string GetTriggerTargetLabel(string target) => target switch
+    {
+        "Panel" => "面板",
+        "Radial" => "燕环",
+        "Yanm" => "燕幕",
+        _ => "未分配"
+    };
+
     private void ClearGestureFromAllTargets(string gestureName)
     {
         // Clear the gesture from QuickPanel, RadialMenu, and Yanm settings
         var trigger = _settings.QuickPanelMouseTriggers;
         var radial = _settings.RadialMenu;
         var yanm = _settings.Yanm;
+        var legacyMode = GestureNameToMouseTriggerMode(gestureName);
 
         switch (gestureName)
         {
@@ -1617,7 +1761,35 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                 yanm.TriggerCtrlMiddleClick = false;
                 break;
         }
+
+        if (!string.IsNullOrWhiteSpace(legacyMode))
+        {
+            if (string.Equals(MouseTriggerModes.Normalize(radial.MouseTriggerMode), legacyMode, StringComparison.OrdinalIgnoreCase))
+            {
+                radial.MouseTriggerMode = MouseTriggerModes.None;
+            }
+
+            if (string.Equals(MouseTriggerModes.Normalize(yanm.MouseTriggerMode), legacyMode, StringComparison.OrdinalIgnoreCase))
+            {
+                yanm.MouseTriggerMode = MouseTriggerModes.None;
+            }
+        }
     }
+
+    private static string GestureNameToMouseTriggerMode(string gestureName) => gestureName switch
+    {
+        "RightButtonLongPress" => MouseTriggerModes.RightLongPress,
+        "MiddleButtonLongPress" => MouseTriggerModes.MiddleLongPress,
+        "RightButtonDrag" => MouseTriggerModes.RightDrag,
+        "MiddleButtonDown" => MouseTriggerModes.MiddleDown,
+        "X1ButtonDown" => MouseTriggerModes.X1Down,
+        "X2ButtonDown" => MouseTriggerModes.X2Down,
+        "HorizontalWheel" => MouseTriggerModes.HorizontalWheel,
+        "CtrlLeftClick" => MouseTriggerModes.CtrlLeftClick,
+        "CtrlRightClick" => MouseTriggerModes.CtrlRightClick,
+        "CtrlMiddleClick" => MouseTriggerModes.CtrlMiddleClick,
+        _ => MouseTriggerModes.None
+    };
 
     private void AssignGestureToTarget(string gestureName, string target)
     {
@@ -2646,6 +2818,34 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         System.Windows.MessageBox.Show(this, message, "快捷键设置失败", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
+    private void EditRadialHotkeyButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new HotkeyCaptureWindow(
+            "录制燕环快捷键",
+            "窗口激活后，直接按一次新的组合键即可完成录制。",
+            _settings.RadialMenu.CustomShortcut,
+            allowEmpty: true)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        if (_mainWindow.TryUpdateRadialHotkey(dialog.ShortcutText, out var message))
+        {
+            RadialCustomShortcut = dialog.ShortcutText;
+            RadialActivationKey = RadialActivationKeys.Custom;
+            SyncStatusText = message;
+            RefreshSyncActivityLog();
+            OnPropertyChanged(nameof(RadialMenuSummary));
+            return;
+        }
+
+        System.Windows.MessageBox.Show(this, message, "快捷键设置失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
     private async void EditShortcutButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: SettingsShortcutItem item })
@@ -3316,6 +3516,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         update(_settings.RadialMenu);
         OnPropertyChanged();
         OnPropertyChanged(nameof(RadialMouseTriggerMode));
+        OnPropertyChanged(nameof(RadialUsesCustomShortcut));
+        OnPropertyChanged(nameof(RadialCustomShortcut));
         OnPropertyChanged(nameof(RadialMenuSummary));
     }
 
@@ -3455,6 +3657,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         _settings.RadialMenu ??= new RadialMenuSettings();
         _settings.Yanm ??= new YanmSettings();
         _settings.QuickPanelMouseTriggers ??= new QuickPanelMouseTriggerSettings();
+        _settings.RadialMenu.ActivationKey = RadialActivationKeys.Normalize(_settings.RadialMenu.ActivationKey);
+        _settings.RadialMenu.CustomShortcut = (_settings.RadialMenu.CustomShortcut ?? string.Empty).Trim();
+        _settings.RadialMenu.WhitelistedProcesses = ParseProcessList(string.Join(", ", _settings.RadialMenu.WhitelistedProcesses ?? []));
+        _settings.RadialMenu.BlacklistedProcesses = ParseProcessList(string.Join(", ", _settings.RadialMenu.BlacklistedProcesses ?? []));
         ApplyMouseTriggerModeToRadialFlags(_settings.RadialMenu);
         ApplyMouseTriggerModeToYanmFlags(_settings.Yanm);
         SyncRadialMouseTriggerModeFromFlags(_settings.RadialMenu);
@@ -3474,6 +3680,115 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         SaveYarnSelectSettings();
     }
 
+    private async void PickYanmWhitelistProcessButton_Click(object sender, RoutedEventArgs e)
+    {
+        await PickProcessAndAddAsync("燕幕白名单", process =>
+        {
+            _settings.Yanm.WhitelistedProcesses = AddProcessToList(_settings.Yanm.WhitelistedProcesses, process);
+            OnPropertyChanged(nameof(YanmWhitelistedProcessesText));
+            SaveYanmSettings(requireCustomShortcut: false);
+        });
+    }
+
+    private async void PickYanmBlacklistProcessButton_Click(object sender, RoutedEventArgs e)
+    {
+        await PickProcessAndAddAsync("燕幕黑名单", process =>
+        {
+            _settings.Yanm.BlacklistedProcesses = AddProcessToList(_settings.Yanm.BlacklistedProcesses, process);
+            OnPropertyChanged(nameof(YanmBlacklistedProcessesText));
+            SaveYanmSettings(requireCustomShortcut: false);
+        });
+    }
+
+    private async void PickRadialWhitelistProcessButton_Click(object sender, RoutedEventArgs e)
+    {
+        await PickProcessAndAddAsync("燕环白名单", process =>
+        {
+            _settings.RadialMenu.WhitelistedProcesses = AddProcessToList(_settings.RadialMenu.WhitelistedProcesses, process);
+            OnPropertyChanged(nameof(RadialWhitelistedProcessesText));
+            SaveQuickPanelTriggerSettings();
+        });
+    }
+
+    private async void PickRadialBlacklistProcessButton_Click(object sender, RoutedEventArgs e)
+    {
+        await PickProcessAndAddAsync("燕环黑名单", process =>
+        {
+            _settings.RadialMenu.BlacklistedProcesses = AddProcessToList(_settings.RadialMenu.BlacklistedProcesses, process);
+            OnPropertyChanged(nameof(RadialBlacklistedProcessesText));
+            SaveQuickPanelTriggerSettings();
+        });
+    }
+
+    private async void PickYarnSelectWhitelistProcessButton_Click(object sender, RoutedEventArgs e)
+    {
+        await PickProcessAndAddAsync("燕选白名单", process =>
+        {
+            _settings.YarnSelect.WhitelistedProcesses = AddProcessToList(_settings.YarnSelect.WhitelistedProcesses, process);
+            OnPropertyChanged(nameof(YarnSelectWhitelistedProcessesText));
+            SaveYarnSelectSettings();
+        });
+    }
+
+    private async void PickYarnSelectBlacklistProcessButton_Click(object sender, RoutedEventArgs e)
+    {
+        await PickProcessAndAddAsync("燕选黑名单", process =>
+        {
+            _settings.YarnSelect.BlacklistedProcesses = AddProcessToList(_settings.YarnSelect.BlacklistedProcesses, process);
+            OnPropertyChanged(nameof(YarnSelectBlacklistedProcessesText));
+            SaveYarnSelectSettings();
+        });
+    }
+
+    private async Task PickProcessAndAddAsync(string targetName, Action<string> addProcess)
+    {
+        SyncStatusText = $"{targetName}：设置窗口将隐藏，请在 2.5 秒内切到目标窗口。";
+        HostAssets.AppendLog($"Settings: process picker started for {targetName}.");
+        Hide();
+        await Task.Delay(2500);
+        var processName = GetForegroundProcessName();
+        Show();
+        Activate();
+
+        if (string.IsNullOrWhiteSpace(processName))
+        {
+            SyncStatusText = $"{targetName}：没有获取到目标进程。";
+            return;
+        }
+
+        addProcess(processName);
+        SyncStatusText = $"{targetName} 已添加进程：{processName}";
+        HostAssets.AppendLog($"Settings: process picker added process={processName}, target={targetName}.");
+    }
+
+    private static List<string> AddProcessToList(IEnumerable<string>? source, string processName) =>
+        (source ?? [])
+        .Append(processName)
+        .Where(static item => !string.IsNullOrWhiteSpace(item))
+        .Select(static item => item.Trim())
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private static string GetForegroundProcessName()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero)
+            {
+                return string.Empty;
+            }
+
+            _ = GetWindowThreadProcessId(hwnd, out var processId);
+            return processId == 0 ? string.Empty : Process.GetProcessById((int)processId).ProcessName;
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Settings: failed to get foreground process, error={ex.Message}");
+            return string.Empty;
+        }
+    }
+
     private void UpdateYarnSelect(bool value, Action<YarnSelectSettings> update)
     {
         _settings.YarnSelect ??= new YarnSelectSettings();
@@ -3489,6 +3804,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         OnPropertyChanged();
         OnPropertyChanged(nameof(YanmUsesCustomShortcut));
         OnPropertyChanged(nameof(YanmCustomShortcut));
+        OnPropertyChanged(nameof(YanmWhitelistedProcessesText));
+        OnPropertyChanged(nameof(YanmBlacklistedProcessesText));
         OnPropertyChanged(nameof(YanmMouseTriggerMode));
         OnPropertyChanged(nameof(YanmMouseTriggerRightDrag));
         OnPropertyChanged(nameof(YanmSummary));
@@ -3517,6 +3834,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         _settings.Yanm ??= new YanmSettings();
         _settings.Yanm.ActivationKey = YanmActivationKeys.Normalize(_settings.Yanm.ActivationKey);
         _settings.Yanm.MouseTriggerMode = MouseTriggerModes.Normalize(_settings.Yanm.MouseTriggerMode);
+        _settings.Yanm.WhitelistedProcesses = ParseProcessList(string.Join(", ", _settings.Yanm.WhitelistedProcesses ?? []));
+        _settings.Yanm.BlacklistedProcesses = ParseProcessList(string.Join(", ", _settings.Yanm.BlacklistedProcesses ?? []));
         ApplyMouseTriggerModeToYanmFlags(_settings.Yanm);
         SyncYanmMouseTriggerModeFromFlags(_settings.Yanm);
         if (requireCustomShortcut &&
@@ -3536,6 +3855,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(YanmTriggerDoubleTap));
         OnPropertyChanged(nameof(YanmUsesCustomShortcut));
         OnPropertyChanged(nameof(YanmCustomShortcut));
+        OnPropertyChanged(nameof(YanmWhitelistedProcessesText));
+        OnPropertyChanged(nameof(YanmBlacklistedProcessesText));
         OnPropertyChanged(nameof(YanmMouseTriggerMode));
         OnPropertyChanged(nameof(YanmMouseTriggerRightDrag));
         OnPropertyChanged(nameof(YanmSummary));
@@ -3785,6 +4106,12 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     {
         _settings.RadialMenu ??= new RadialMenuSettings();
         _settings.RadialMenu.Pages ??= [];
+        if (RadialMenuSlots.Count == 0)
+        {
+            HostAssets.AppendLog("Settings: skipped saving radial slots because the radial editor has not loaded any slot items.");
+            return;
+        }
+
         var selectedPage = _settings.RadialMenu.Pages.FirstOrDefault(page => page.Id.Equals(_settings.RadialMenu.SelectedPageId, StringComparison.OrdinalIgnoreCase));
         if (selectedPage == null)
         {
@@ -4673,6 +5000,11 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(QuickPanelTriggerSummary));
         OnPropertyChanged(nameof(EnableRadialMenu));
         OnPropertyChanged(nameof(EnableRadialCapsLockHold));
+        OnPropertyChanged(nameof(RadialActivationKey));
+        OnPropertyChanged(nameof(RadialUsesCustomShortcut));
+        OnPropertyChanged(nameof(RadialCustomShortcut));
+        OnPropertyChanged(nameof(RadialWhitelistedProcessesText));
+        OnPropertyChanged(nameof(RadialBlacklistedProcessesText));
         OnPropertyChanged(nameof(RadialAssignedMouseTriggerSummary));
         OnPropertyChanged(nameof(YanmAssignedMouseTriggerSummary));
         OnPropertyChanged(nameof(RadialMenuSummary));
@@ -4683,6 +5015,13 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
     private void ExternalLink_Click(object sender, MouseButtonEventArgs e)
     {
         if (sender is FrameworkElement { Tag: string url } && !string.IsNullOrWhiteSpace(url))
@@ -5037,6 +5376,7 @@ public sealed class RadialMenuSlotEditorItem : INotifyPropertyChanged
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
+
 }
 
 public sealed record RadialMenuPageEditorItem(string Id, string Name);

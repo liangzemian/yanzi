@@ -15,6 +15,7 @@ public partial class App : WpfApplication
     private Forms.NotifyIcon? _notifyIcon;
     private SettingsWindow? _settingsWindow;
     private RunningExtensionsWindow? _runningExtensionsWindow;
+    private InputStateWindow? _inputStateWindow;
     private LocalAgentApiServer? _agentApiServer;
     private SingleInstanceService? _singleInstanceService;
     private bool _listenerServicesPaused;
@@ -341,12 +342,29 @@ public partial class App : WpfApplication
         CurrentApp?.OpenRunningExtensionsWindow();
     }
 
-    private void TrayResetKeyboardState_Click(object sender, RoutedEventArgs e)
+    private void TrayInputState_Click(object sender, RoutedEventArgs e)
+    {
+        if (_inputStateWindow is { IsVisible: true })
+        {
+            _inputStateWindow.Activate();
+            _inputStateWindow.RefreshState();
+            return;
+        }
+
+        _inputStateWindow = new InputStateWindow();
+        _inputStateWindow.Closed += (_, _) => _inputStateWindow = null;
+        _inputStateWindow.Show();
+    }
+
+    private void TrayResetInputState_Click(object sender, RoutedEventArgs e)
     {
         KeyboardDoubleTapService.ResetStuckKeyboardState();
+        InputHookService.ResetMouseState();
+        YarnSelectService.ResetMouseState();
+        _inputStateWindow?.RefreshState();
         ShowDesktopNotification(
-            "键盘状态已修复",
-            "已清理可能卡住的 Win、Ctrl、Alt、Shift 等按键状态。如果刚才输入或快捷键异常，可以继续使用。",
+            "输入状态已重置",
+            "已清理可能卡住的键盘修饰键，以及鼠标面板、燕环、燕幕和燕选的临时鼠标状态。",
             Forms.ToolTipIcon.Info);
     }
 
