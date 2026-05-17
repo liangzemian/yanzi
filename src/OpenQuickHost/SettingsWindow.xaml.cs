@@ -2532,6 +2532,44 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         }
     }
 
+    private void CopyExtensionStoreLinkButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SettingsExtensionItem item })
+        {
+            return;
+        }
+
+        try
+        {
+            var result = _mainWindow.CopyExtensionStoreLink(item.ExtensionId);
+            SyncStatusText = result.message;
+        }
+        catch (Exception ex)
+        {
+            SyncStatusText = $"复制商店链接失败：{ex.Message}";
+            System.Windows.MessageBox.Show(this, SyncStatusText, "复制商店链接失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void OpenExtensionStoreLinkButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SettingsExtensionItem item })
+        {
+            return;
+        }
+
+        try
+        {
+            var result = _mainWindow.OpenExtensionStoreLink(item.ExtensionId);
+            SyncStatusText = result.message;
+        }
+        catch (Exception ex)
+        {
+            SyncStatusText = $"打开商店链接失败：{ex.Message}";
+            System.Windows.MessageBox.Show(this, SyncStatusText, "打开商店链接失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async void UnpublishExtensionButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: SettingsExtensionItem item } || item.IsOperationBusy)
@@ -5682,6 +5720,8 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
 
     public Visibility PublishUpdateButtonVisibility => IsPublishedInStore ? Visibility.Visible : Visibility.Collapsed;
 
+    public Visibility StoreLinkButtonVisibility => IsPublishedInStore ? Visibility.Visible : Visibility.Collapsed;
+
     public Visibility UnpublishButtonVisibility => CanUnpublish ? Visibility.Visible : Visibility.Collapsed;
 
     public string PublisherLabel => string.IsNullOrWhiteSpace(PublisherName) ? "未发布" : $"发布者：{PublisherName}";
@@ -5715,6 +5755,7 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanUnpublish));
         OnPropertyChanged(nameof(PublishNewButtonVisibility));
         OnPropertyChanged(nameof(PublishUpdateButtonVisibility));
+        OnPropertyChanged(nameof(StoreLinkButtonVisibility));
         OnPropertyChanged(nameof(UnpublishButtonVisibility));
         OnPropertyChanged(nameof(UnpublishButtonEnabled));
         OnPropertyChanged(nameof(PublishedBadgeVisibility));

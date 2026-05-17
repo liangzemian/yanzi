@@ -42,6 +42,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
     private string _centerPrimaryText = "燕环";
     private RadialSlotPayload? _cutSlotPayload;
     private RadialMenuItemViewModel? _dragSourceItem;
+    private int _lastRadiusPixels = 96;
 
     public RadialMenuWindow(MainWindow mainWindow)
     {
@@ -64,6 +65,14 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         MouseWheel += RadialMenuWindow_MouseWheel;
         MouseLeftButtonDown += RadialMenuWindow_MouseLeftButtonDown;
         MouseRightButtonDown += RadialMenuWindow_MouseRightButtonDown;
+        Loaded += (_, _) => RebuildItemsForCurrentLayout("loaded");
+        SizeChanged += (_, _) =>
+        {
+            if (IsVisible)
+            {
+                RebuildItemsForCurrentLayout("size-changed");
+            }
+        };
     }
 
     public ObservableCollection<RadialMenuItemViewModel> Items { get; } = [];
@@ -216,22 +225,22 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         _isExecuting = false;
         _editModeLocked = false;
         _editInteractionActive = false;
+        _selectionTimer.Stop();
         var settings = AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings();
+        _lastRadiusPixels = settings.RadiusPixels;
         _pages = _mainWindow.GetRadialMenuPages().ToList();
         _previousForegroundWindow = RadialMenuNativeMethods.GetForegroundWindow();
         _currentPageId = string.IsNullOrWhiteSpace(settings.SelectedPageId)
             ? _pages.FirstOrDefault()?.Id ?? string.Empty
             : settings.SelectedPageId;
         _pageStack.Clear();
-        BuildItems(settings.RadiusPixels);
-
         _centerPixels = Forms.Cursor.Position;
-        var source = PresentationSource.FromVisual(_mainWindow);
-        var centerDips = source?.CompositionTarget?.TransformFromDevice.Transform(
-            new System.Windows.Point(_centerPixels.X, _centerPixels.Y)) ?? new System.Windows.Point(_centerPixels.X, _centerPixels.Y);
 
-        Left = centerDips.X - Width / 2;
-        Top = centerDips.Y - Height / 2;
+        // First process launch can show before WPF finishes measuring this transparent
+        // window. Keep it hidden until the HWND/DPI transform and ActualWidth are stable.
+        Opacity = 0;
+        BuildItems(_lastRadiusPixels);
+        PositionAroundCursor();
         UpdateCenterText();
         ActiveTitle = "取消";
         if (!IsVisible)
@@ -239,9 +248,53 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
             Show();
         }
 
-        Activate();
-        _selectionTimer.Start();
+        UpdateLayout();
+        PositionAroundCursor();
+        BuildItems(_lastRadiusPixels);
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            PositionAroundCursor();
+            BuildItems(_lastRadiusPixels);
+            Opacity = 1;
+            Activate();
+            _selectionTimer.Start();
+            UpdateSelectionFromCursor();
+        }, DispatcherPriority.Render);
         HostAssets.AppendLog($"Radial menu shown: page={_currentPageId}, items={Items.Count}, center=({_centerPixels.X},{_centerPixels.Y}).");
+    }
+
+    private void RebuildItemsForCurrentLayout(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(_currentPageId))
+        {
+            return;
+        }
+
+        BuildItems(_lastRadiusPixels);
+        HostAssets.AppendLog($"Radial menu layout rebuilt: reason={reason}, size=({ActualWidth:0.##},{ActualHeight:0.##}), page={_currentPageId}.");
+    }
+
+    private void PositionAroundCursor()
+    {
+        var source = PresentationSource.FromVisual(this) ?? PresentationSource.FromVisual(_mainWindow);
+        var centerDips = source?.CompositionTarget?.TransformFromDevice.Transform(
+            new System.Windows.Point(_centerPixels.X, _centerPixels.Y)) ?? new System.Windows.Point(_centerPixels.X, _centerPixels.Y);
+        var size = GetMenuSize();
+        Left = centerDips.X - size.Width / 2;
+        Top = centerDips.Y - size.Height / 2;
+    }
+
+    private System.Windows.Size GetMenuSize()
+    {
+        var width = ActualWidth > 1 ? ActualWidth : Width;
+        var height = ActualHeight > 1 ? ActualHeight : Height;
+        return new System.Windows.Size(width, height);
+    }
+
+    private System.Windows.Point GetMenuCenter()
+    {
+        var size = GetMenuSize();
+        return new System.Windows.Point(size.Width / 2, size.Height / 2);
     }
 
     public void ExecuteSelectedFromHoldRelease()
@@ -322,11 +375,20 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
             HostAssets.AppendLog($"Radial menu restore foreground: restored={restored}, {DescribeWindow(_previousForegroundWindow)}.");
         }
 
-        await Task.Delay(120);
         var currentForeground = RadialMenuNativeMethods.GetForegroundWindow();
         HostAssets.AppendLog($"Radial menu execute ready: foreground={DescribeWindow(currentForeground)}, source={launchSource}, command={command.Title}.");
-        var input = await SelectionCaptureService.CaptureSelectedInputAsync();
-        HostAssets.AppendLog($"Radial menu execute captured input length={input.Length}.");
+        var input = string.Empty;
+        if (command.ShouldCaptureSelectedInput)
+        {
+            await Task.Delay(120);
+            input = await SelectionCaptureService.CaptureSelectedInputAsync();
+            HostAssets.AppendLog($"Radial menu execute captured input length={input.Length}.");
+        }
+        else
+        {
+            HostAssets.AppendLog("Radial menu execute: selection capture skipped for command without context input.");
+        }
+
         _mainWindow.ExecuteCommandExternally(command, input, launchSource);
     }
 
@@ -371,7 +433,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
         var page = _pages.FirstOrDefault(item => item.Id.Equals(_currentPageId, StringComparison.OrdinalIgnoreCase));
         PageTitle = page?.Name ?? "燕环";
         UpdateCenterText();
-        var center = new System.Windows.Point(Width / 2, Height / 2);
+        var center = GetMenuCenter();
         BuildSeparators(MainSeparators, center.X, center.Y, 34, 135, RadialMenuSettings.InnerSlotCount);
         BuildSeparators(OuterSeparators, center.X, center.Y, 135, 215, RadialMenuSettings.OuterSlotCount);
         for (var index = 0; index < RadialMenuSettings.InnerSlotCount; index++)
@@ -412,7 +474,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        var center = new System.Windows.Point(Width / 2, Height / 2);
+        var center = GetMenuCenter();
         var dx = cursorPoint.X - center.X;
         var dy = cursorPoint.Y - center.Y;
         var settings = AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings();
@@ -628,7 +690,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
 
         var items = _mainWindow.GetRadialMenuItems(parent.ChildPageId);
         var angle = parent.AngleDegrees * Math.PI / 180.0;
-        var center = new System.Windows.Point(Width / 2, Height / 2);
+        var center = GetMenuCenter();
         _childRingCenterX = center.X + Math.Cos(angle) * 250;
         _childRingCenterY = center.Y + Math.Sin(angle) * 250;
         ClampRingCenter(ref _childRingCenterX, ref _childRingCenterY, 134);
@@ -779,8 +841,9 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
 
     private void ClampRingCenter(ref double x, ref double y, double radius)
     {
-        x = Math.Clamp(x, radius + 8, Width - radius - 8);
-        y = Math.Clamp(y, radius + 8, Height - radius - 8);
+        var size = GetMenuSize();
+        x = Math.Clamp(x, radius + 8, size.Width - radius - 8);
+        y = Math.Clamp(y, radius + 8, size.Height - radius - 8);
     }
 
     private void RadialMenuWindow_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -969,7 +1032,7 @@ public partial class RadialMenuWindow : Window, INotifyPropertyChanged
 
     private bool IsPointInCenter(System.Windows.Point point)
     {
-        var center = new System.Windows.Point(Width / 2, Height / 2);
+        var center = GetMenuCenter();
         var dx = point.X - center.X;
         var dy = point.Y - center.Y;
         return Math.Sqrt(dx * dx + dy * dy) <= 40;

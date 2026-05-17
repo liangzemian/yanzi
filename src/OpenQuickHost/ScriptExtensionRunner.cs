@@ -10,6 +10,7 @@ using System.Threading;
 using Basic.Reference.Assemblies;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.Text;
 
 namespace OpenQuickHost;
@@ -318,7 +319,14 @@ public static class ScriptExtensionRunner
         var dllPath = Path.Combine(buildRoot, "bin", "Release", "net9.0", "YanziExtension.dll");
         if (File.Exists(dllPath))
         {
-            return new ScriptExecutionResult(true, dllPath, string.Empty, 0);
+            if (IsLoadableManagedAssembly(dllPath))
+            {
+                return new ScriptExecutionResult(true, dllPath, string.Empty, 0);
+            }
+
+            HostAssets.AppendLog($"ScriptRunner csharp cache invalidated: id={command.ExtensionId}, path={dllPath}");
+            TryDeleteTempFile(dllPath);
+            TryDeleteTempFile(Path.ChangeExtension(dllPath, ".pdb"));
         }
 
         Directory.CreateDirectory(buildRoot);
@@ -343,17 +351,50 @@ public static class ScriptExtensionRunner
                 optimizationLevel: OptimizationLevel.Release,
                 nullableContextOptions: NullableContextOptions.Enable));
 
-        await using var peStream = new FileStream(dllPath, FileMode.Create, FileAccess.Write, FileShare.Read);
-        await using var pdbStream = new FileStream(
-            Path.Combine(outputDirectory, "YanziExtension.pdb"),
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.Read);
-        var emitResult = compilation.Emit(peStream, pdbStream: pdbStream, cancellationToken: cancellationToken);
-        if (emitResult.Success && File.Exists(dllPath))
+        var tempSuffix = $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+        var tempDllPath = Path.Combine(outputDirectory, $"YanziExtension{tempSuffix}.dll");
+        var tempPdbPath = Path.Combine(outputDirectory, $"YanziExtension{tempSuffix}.pdb");
+        var pdbPath = Path.Combine(outputDirectory, "YanziExtension.pdb");
+
+        EmitResult emitResult;
+        await using (var peStream = new FileStream(tempDllPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        await using (var pdbStream = new FileStream(
+                         tempPdbPath,
+                         FileMode.Create,
+                         FileAccess.Write,
+                         FileShare.None))
         {
+            emitResult = compilation.Emit(peStream, pdbStream: pdbStream, cancellationToken: cancellationToken);
+            await peStream.FlushAsync(cancellationToken);
+            await pdbStream.FlushAsync(cancellationToken);
+        }
+
+        if (emitResult.Success && File.Exists(tempDllPath))
+        {
+            if (!IsLoadableManagedAssembly(tempDllPath))
+            {
+                TryDeleteTempFile(tempDllPath);
+                TryDeleteTempFile(tempPdbPath);
+                return new ScriptExecutionResult(false, string.Empty, "C# 扩展编译输出无效，请重试。", -1);
+            }
+
+            try
+            {
+                File.Move(tempDllPath, dllPath, overwrite: true);
+                File.Move(tempPdbPath, pdbPath, overwrite: true);
+            }
+            catch (IOException ex) when (File.Exists(dllPath) && IsLoadableManagedAssembly(dllPath))
+            {
+                HostAssets.AppendLog($"ScriptRunner csharp cache publish skipped because another build completed: id={command.ExtensionId}, error={ex.Message}");
+                TryDeleteTempFile(tempDllPath);
+                TryDeleteTempFile(tempPdbPath);
+            }
+
             return new ScriptExecutionResult(true, dllPath, string.Empty, 0);
         }
+
+        TryDeleteTempFile(tempDllPath);
+        TryDeleteTempFile(tempPdbPath);
 
         var diagnostics = emitResult.Diagnostics
             .Where(static diagnostic => diagnostic.Severity >= DiagnosticSeverity.Warning)
@@ -367,6 +408,19 @@ public static class ScriptExtensionRunner
             error = BuildNativeWindowReferenceDebugInfo() + Environment.NewLine + error;
         }
         return new ScriptExecutionResult(false, string.Empty, error, -1);
+    }
+
+    private static bool IsLoadableManagedAssembly(string path)
+    {
+        try
+        {
+            _ = AssemblyName.GetAssemblyName(path);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static IReadOnlyList<MetadataReference> BuildCSharpMetadataReferences()

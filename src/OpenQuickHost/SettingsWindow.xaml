@@ -2290,6 +2290,24 @@
                                                                             </Viewbox>
                                                                         </Grid>
                                                                     </Button>
+                                                                    <Button Style="{StaticResource IconButtonStyle}"
+                                                                            Margin="0,0,4,0"
+                                                                            Visibility="{Binding StoreLinkButtonVisibility}"
+                                                                            Click="CopyExtensionStoreLinkButton_Click"
+                                                                            ToolTip="复制商店链接">
+                                                                        <Viewbox Width="14" Height="14">
+                                                                            <Path Data="{local:IconGeometry link}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                        </Viewbox>
+                                                                    </Button>
+                                                                    <Button Style="{StaticResource IconButtonStyle}"
+                                                                            Margin="0,0,4,0"
+                                                                            Visibility="{Binding StoreLinkButtonVisibility}"
+                                                                            Click="OpenExtensionStoreLinkButton_Click"
+                                                                            ToolTip="打开商店链接">
+                                                                        <Viewbox Width="14" Height="14">
+                                                                            <Path Data="{local:IconGeometry link}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                        </Viewbox>
+                                                                    </Button>
                                                                     <Button Style="{StaticResource IconButtonStyle}" 
                                                                             Margin="0,0,4,0" 
                                                                             IsEnabled="{Binding UnpublishButtonEnabled}" 

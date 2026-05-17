@@ -72,16 +72,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private QuickPanelWindow? _quickPanel;
     private RadialMenuWindow? _radialMenu;
     private YanmOverlayWindow? _yanmOverlay;
+    private MobileMessageToastWindow? _mobileMessageToastWindow;
     private readonly DispatcherTimer _backgroundWebDavSyncTimer;
     private readonly DispatcherTimer _cloudReconnectTimer;
+    private readonly DispatcherTimer _mobileMessagePollTimer;
     private readonly DispatcherTimer _fileSearchDebounceTimer;
     private int _fileSearchRequestVersion;
     private DateTimeOffset _lastFileSearchManualInitPromptAt = DateTimeOffset.MinValue;
     private bool _backgroundWebDavSyncRunning;
     private bool _backgroundWebDavSyncRequested;
     private bool _cloudReconnectInProgress;
+    private bool _mobileMessagePollRunning;
+    private CancellationTokenSource? _mobileMessageBridgeCts;
+    private Task? _mobileMessageBridgeTask;
+    private DateTimeOffset _lastMobileMessageEmptyLogAt = DateTimeOffset.MinValue;
     private int _cloudReconnectAttemptCount;
     private string? _cloudReconnectPendingReason;
+    private string? _desktopDeviceId;
     private string _pendingFileSearchTerm = string.Empty;
     private string _activeFilterScopeKey = SearchScopeAll;
     private string _pendingProviderSearchTerm = string.Empty;
@@ -138,6 +145,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _cloudReconnectTimer = new DispatcherTimer();
         _cloudReconnectTimer.Tick += CloudReconnectTimer_Tick;
 
+        _mobileMessagePollTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(5)
+        };
+        _mobileMessagePollTimer.Tick += MobileMessagePollTimer_Tick;
+
         _fileSearchDebounceTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(120)
@@ -178,6 +191,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             KeyboardDoubleTapService.Stop();
             YanyuTriggerService.Stop();
             YarnSelectService.Stop();
+            _mobileMessageBridgeCts?.Cancel();
+            _mobileMessagePollTimer.Stop();
         };
 
         _quickPanel = new QuickPanelWindow(this);
@@ -535,6 +550,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         StartMousePanelService();
         if (!AppSettingsStore.Load().RefreshCloudOnStartup)
         {
+            StartMobileMessageBridge("startup-no-cloud-refresh");
             QueueBackgroundWebDavSync("startup");
             return;
         }
@@ -543,6 +559,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (_cloudSyncClient != null && _cloudSyncClient.HasCredential)
         {
             ScheduleSilentCloudReconnect("startup-post-refresh");
+            StartMobileMessageBridge("startup-post-refresh");
         }
         StartStartupExtensions();
     }
@@ -1094,6 +1111,44 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             MessageBoxImage.Information);
     }
 
+    private void CopyExtensionStoreLinkMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = GetCommandFromMenuItem(sender) ?? SelectedCommand;
+        if (command == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = CopyExtensionStoreLink(command.ExtensionId);
+            SyncStatus = result.message;
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"复制商店链接失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
+    private void OpenExtensionStoreLinkMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        var command = GetCommandFromMenuItem(sender) ?? SelectedCommand;
+        if (command == null)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = OpenExtensionStoreLink(command.ExtensionId);
+            SyncStatus = result.message;
+        }
+        catch (Exception ex)
+        {
+            SyncStatus = $"打开商店链接失败：{FormatExceptionMessage(ex)}";
+        }
+    }
+
     private async void RefreshCloudButton_Click(object sender, RoutedEventArgs e)
     {
         await RefreshCloudStateAsync();
@@ -1412,6 +1467,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         EditExtensionMenuItem.Header = isYanyuRule ? "编辑燕语" : "编辑扩展";
         PublishExtensionMenuItem.IsEnabled = canManageLocalExtension && _cloudSyncClient != null;
         PublishExtensionMenuItem.Visibility = isYanyuRule ? Visibility.Collapsed : Visibility.Visible;
+        CopyExtensionStoreLinkMenuItem.IsEnabled = canManageLocalExtension;
+        CopyExtensionStoreLinkMenuItem.Visibility = isYanyuRule ? Visibility.Collapsed : Visibility.Visible;
+        OpenExtensionStoreLinkMenuItem.IsEnabled = canManageLocalExtension;
+        OpenExtensionStoreLinkMenuItem.Visibility = isYanyuRule ? Visibility.Collapsed : Visibility.Visible;
         DeleteExtensionMenuItem.IsEnabled = canManageLocalExtension || isYanyuRule;
         DeleteExtensionMenuItem.Header = isYanyuRule ? "删除燕语" : "删除";
         ToggleYanyuEnabledMenuItem.Visibility = isYanyuRule ? Visibility.Visible : Visibility.Collapsed;
@@ -1431,6 +1490,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         RenameCommandMenuItem.CommandParameter = command;
         EditExtensionMenuItem.CommandParameter = command;
         PublishExtensionMenuItem.CommandParameter = command;
+        CopyExtensionStoreLinkMenuItem.CommandParameter = command;
+        OpenExtensionStoreLinkMenuItem.CommandParameter = command;
         DeleteExtensionMenuItem.CommandParameter = command;
         ToggleYanyuEnabledMenuItem.CommandParameter = command;
         CopyExtensionMenuItem.CommandParameter = command;
@@ -2285,6 +2346,15 @@ public sealed class CloudQuickPanelConfigSnapshot
     [JsonPropertyName("yanm")]
     public YanmSettings? Yanm { get; set; }
 
+    [JsonPropertyName("aiBaseUrl")]
+    public string? AiBaseUrl { get; set; }
+
+    [JsonPropertyName("aiApiKey")]
+    public string? AiApiKey { get; set; }
+
+    [JsonPropertyName("aiModel")]
+    public string? AiModel { get; set; }
+
     public static CloudQuickPanelConfigSnapshot FromSettings(AppSettings settings)
     {
         return new CloudQuickPanelConfigSnapshot
@@ -2300,7 +2370,10 @@ public sealed class CloudQuickPanelConfigSnapshot
             YarnSelect = CloneByJson(settings.YarnSelect),
             RadialMenu = CloneByJson(settings.RadialMenu),
             YanyuRules = CloneByJson(settings.YanyuRules),
-            Yanm = CloneByJson(settings.Yanm)
+            Yanm = CloneByJson(settings.Yanm),
+            AiBaseUrl = settings.AiBaseUrl,
+            AiApiKey = settings.AiApiKey,
+            AiModel = settings.AiModel
         };
     }
 
@@ -2319,7 +2392,10 @@ public sealed class CloudQuickPanelConfigSnapshot
             YarnSelect = YarnSelect == null ? new YarnSelectSettings() : CloneByJson(YarnSelect),
             RadialMenu = RadialMenu == null ? new RadialMenuSettings() : CloneByJson(RadialMenu),
             YanyuRules = YanyuRules == null ? [] : CloneByJson(YanyuRules),
-            Yanm = Yanm == null ? new YanmSettings() : CloneByJson(Yanm)
+            Yanm = Yanm == null ? new YanmSettings() : CloneByJson(Yanm),
+            AiBaseUrl = AiBaseUrl ?? string.Empty,
+            AiApiKey = AiApiKey ?? string.Empty,
+            AiModel = AiModel ?? string.Empty
         };
     }
 
@@ -2520,6 +2596,10 @@ public sealed class CommandItem : INotifyPropertyChanged
 
     public bool SupportsQueryArgument => QueryPrefixes.Count > 0 && (!string.IsNullOrWhiteSpace(QueryTargetTemplate) || HasScriptEntry || HasHostedView);
 
+    public bool ShouldCaptureSelectedInput =>
+        SupportsQueryArgument ||
+        HasPermission("context.read");
+
     public bool HasSearchProvider => SearchProvider != null;
 
     public bool HasHostedView => HostedView != null;
@@ -2529,6 +2609,11 @@ public sealed class CommandItem : INotifyPropertyChanged
         (string.Equals(EntryMode, "inline", StringComparison.OrdinalIgnoreCase)
             ? !string.IsNullOrWhiteSpace(InlineScriptSource)
             : !string.IsNullOrWhiteSpace(EntryPoint));
+
+    private bool HasPermission(string permission)
+    {
+        return Permissions.Any(item => string.Equals(item, permission, StringComparison.OrdinalIgnoreCase));
+    }
 
     public bool UsesNativeWindowUi =>
         string.Equals(UiMode, "native-window", StringComparison.OrdinalIgnoreCase) ||

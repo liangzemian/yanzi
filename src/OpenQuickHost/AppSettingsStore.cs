@@ -259,7 +259,9 @@ public static class AppSettingsStore
         settings.Yanm.BlacklistedProcesses = NormalizeProcessList(settings.Yanm.BlacklistedProcesses);
         settings.Yanm.HoldDelayMilliseconds = Math.Clamp(settings.Yanm.HoldDelayMilliseconds, 0, 1000);
         settings.Yanm.GridSizePixels = Math.Clamp(settings.Yanm.GridSizePixels, 5, 80);
-        settings.Yanm.OverlayOpacity = Math.Clamp(settings.Yanm.OverlayOpacity, 0.05, 0.85);
+        settings.Yanm.OverlayOpacity = settings.Yanm.OverlayOpacity <= 0.581
+            ? 0.85
+            : Math.Clamp(settings.Yanm.OverlayOpacity, 0.05, 0.85);
         if (!settings.Yanm.HasInitializedDefaultComponents &&
             settings.Yanm.Components.Count == 0)
         {
@@ -657,7 +659,7 @@ public sealed class RadialMenuPageSettings
 
 public sealed class YanmSettings
 {
-    public const int CurrentDefaultComponentVersion = 16;
+    public const int CurrentDefaultComponentVersion = 17;
 
     public bool Enabled { get; set; } = false;
 
@@ -701,7 +703,7 @@ public sealed class YanmSettings
 
     public int GridSizePixels { get; set; } = 10;
 
-    public double OverlayOpacity { get; set; } = 0.58;
+    public double OverlayOpacity { get; set; } = 0.85;
 
     public bool HasInitializedDefaultComponents { get; set; }
 
@@ -963,7 +965,7 @@ public sealed class YanmComponentSettings
     *{box-sizing:border-box;margin:0;padding:0}
     html,body{width:100%;height:100%;overflow:hidden;background:transparent;color:#fff;font-family:"Microsoft YaHei",system-ui,sans-serif}
     body{padding:0}
-    .card{width:100%;height:100%;padding:16px;border-radius:18px;background:#0f1117;border:.5px solid rgba(255,255,255,.07);box-shadow:0 18px 54px rgba(0,0,0,.32);overflow:hidden}
+    .card{width:100%;height:100%;padding:16px;border-radius:18px;background:linear-gradient(145deg,rgba(22,30,45,.98),rgba(8,11,18,.94));border:1px solid rgba(190,215,255,.22);box-shadow:0 24px 76px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.08);overflow:hidden}
     .panel{height:100%;padding:0;border:0;background:transparent;overflow:hidden}
     .lbl{font-size:10px;letter-spacing:.08em;color:rgba(255,255,255,.32);text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between}
     .link{font-size:10px;color:rgba(255,255,255,.28);letter-spacing:0;text-transform:none;cursor:pointer}
@@ -1202,7 +1204,7 @@ window.addEventListener('yanm:message',function(e){if(e.detail&&e.detail.type===
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; color: #fff; font-family: "Microsoft YaHei", system-ui, sans-serif; }
-    .card { width: 100%; height: 100%; padding: 16px; border-radius: 18px; background: #0f1117; border: .5px solid rgba(255,255,255,.07); box-shadow: 0 18px 54px rgba(0,0,0,.32); overflow: hidden; }
+    .card { width: 100%; height: 100%; padding: 16px; border-radius: 18px; background: linear-gradient(145deg,rgba(22,30,45,.98),rgba(8,11,18,.94)); border: 1px solid rgba(190,215,255,.22); box-shadow: 0 24px 76px rgba(0,0,0,.46), inset 0 1px 0 rgba(255,255,255,.08); overflow: hidden; }
     .lbl { font-size: 10px; letter-spacing: .08em; color: rgba(255,255,255,.32); text-transform: uppercase; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
     .tag { font-size: 10px; padding: 3px 8px; border-radius: 20px; background: rgba(55,138,221,.15); color: #85b7eb; }
     h1 { margin: 0 0 8px; font-size: 22px; font-weight: 500; letter-spacing: -.02em; }
@@ -1232,7 +1234,7 @@ window.addEventListener('yanm:message',function(e){if(e.detail&&e.detail.type===
 4. 不要依赖外部网络资源、CDN、图片、字体或 npm 包。
 5. 组件运行在 Microsoft WebView2 中，组件尺寸由宿主控制，CSS 必须适配任意宽高。
 6. html, body 必须：margin:0; width:100%; height:100%; overflow:hidden; background:transparent。
-7. 主体只用一个 .card 填满 100% 宽高，box-sizing:border-box，圆角 18px，背景 #0f1117，0.5px 低对比边框；不要在组件内部再套第二层卡片或外框。
+7. 主体只用一个 .card 填满 100% 宽高，box-sizing:border-box，圆角 18px，背景使用深色渐变而不是纯黑；边框用 1px 冷色半透明线并加轻微内高光，确保组件和燕幕背景能分开；不要在组件内部再套第二层卡片或外框。
 8. 字体使用 "Microsoft YaHei", sans-serif，文字优先中文，视觉风格要像高级效率工具，不要白底表单风。
 9. 可交互组件优先使用燕幕宿主状态保存数据，再用 localStorage 做本机兜底。
 10. 输入框、按钮要有清晰 hover/active 状态，颜色要适配深色玻璃拟态背景。
@@ -1311,7 +1313,7 @@ window.addEventListener('yanm:message',function(e){if(e.detail&&e.detail.type===
   <meta charset="utf-8">
   <style>
     html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:"Microsoft YaHei",sans-serif;color:#fff}
-    .card{box-sizing:border-box;width:100%;height:100%;padding:16px;border-radius:18px;background:#0f1117;border:.5px solid rgba(255,255,255,.07);box-shadow:0 18px 54px rgba(0,0,0,.32);overflow:hidden}
+    .card{box-sizing:border-box;width:100%;height:100%;padding:16px;border-radius:18px;background:linear-gradient(145deg,rgba(22,30,45,.98),rgba(8,11,18,.94));border:1px solid rgba(190,215,255,.22);box-shadow:0 24px 76px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.08);overflow:hidden}
     .lbl{font-size:10px;letter-spacing:.08em;color:rgba(255,255,255,.32);text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
     .title{font-size:22px;font-weight:500;letter-spacing:-.02em;margin:0 0 8px}
     .path{font-size:12px;color:rgba(255,255,255,.5);word-break:break-all;margin-bottom:12px}
@@ -1366,7 +1368,7 @@ window.addEventListener('yanm:message',function(e){if(e.detail&&e.detail.type===
 
 设计参考：
 - 组件外层只保留一个 .card，填满宿主给定尺寸，不要再做内层面板、内层边框或嵌套卡片。
-- 默认视觉沿用燕幕效率组件：#0f1117 深色底、0.5px 低对比边框、18px 圆角、柔和阴影。
+- 默认视觉沿用燕幕效率组件：深色渐变底、1px 冷色半透明边框、18px 圆角、柔和外阴影和轻微内高光，避免组件和燕幕背景糊在一起。
 - 标签使用 10px、letter-spacing:.08em、低透明度；标题 20-26px，字重 300-600，轻微负字距。
 - 数据块可使用小型 pill/chip/grid，但背景保持低对比，不要破坏统一风格。
 - 交互控件使用圆角 12-16px，背景 rgba(255,255,255,.06-.12)，hover/active 只做轻微亮度变化。
@@ -1379,7 +1381,7 @@ window.addEventListener('yanm:message',function(e){if(e.detail&&e.detail.type===
   <meta charset="utf-8">
     <style>
     html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:"Microsoft YaHei",sans-serif;color:#fff}
-    .card{box-sizing:border-box;width:100%;height:100%;padding:16px;border-radius:18px;background:#0f1117;border:.5px solid rgba(255,255,255,.07);box-shadow:0 18px 54px rgba(0,0,0,.32);overflow:hidden}
+    .card{box-sizing:border-box;width:100%;height:100%;padding:16px;border-radius:18px;background:linear-gradient(145deg,rgba(22,30,45,.98),rgba(8,11,18,.94));border:1px solid rgba(190,215,255,.22);box-shadow:0 24px 76px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.08);overflow:hidden}
     .lbl{font-size:10px;letter-spacing:.08em;color:rgba(255,255,255,.32);text-transform:uppercase;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
     .tag{font-size:10px;padding:3px 8px;border-radius:20px;background:rgba(55,138,221,.15);color:#85b7eb}
     .title{font-size:24px;font-weight:500;letter-spacing:-.03em;margin:0 0 10px}
@@ -1446,7 +1448,7 @@ window.addEventListener('yanm:message',function(e){if(e.detail&&e.detail.type===
     private static string CreateOverviewHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:20px;border-radius:28px;background:radial-gradient(circle at 20% 0%,rgba(56,189,248,.38),transparent 32%),linear-gradient(135deg,rgba(23,32,51,.96),rgba(7,10,18,.9));border:1px solid rgba(255,255,255,.16);box-shadow:0 22px 70px rgba(0,0,0,.35)}
+.card{box-sizing:border-box;height:100%;padding:20px;border-radius:28px;background:radial-gradient(circle at 20% 0%,rgba(56,189,248,.42),transparent 32%),linear-gradient(135deg,rgba(28,39,63,.98),rgba(8,12,22,.94));border:1px solid rgba(190,215,255,.24);box-shadow:0 26px 82px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.1)}
 .top{display:flex;justify-content:space-between;align-items:center}.tag{font-size:12px;color:#7dd3fc;letter-spacing:.18em}.clock{font-size:13px;color:rgba(255,255,255,.72)}
 .date{font-size:30px;font-weight:800;margin:14px 0 4px}.line{color:rgba(255,255,255,.7);font-size:13px;line-height:1.7}
 .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:16px}.pill{padding:12px;border-radius:18px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.08)}.n{font-size:20px;font-weight:800}.l{font-size:11px;color:rgba(255,255,255,.58);margin-top:4px}
@@ -1458,7 +1460,7 @@ function tick(){var d=new Date();document.getElementById('clock').innerText=d.to
     private static string CreateTodoHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:18px;border-radius:28px;background:radial-gradient(circle at 100% 0%,rgba(34,197,94,.35),transparent 34%),linear-gradient(160deg,rgba(18,48,38,.96),rgba(8,13,16,.92));border:1px solid rgba(255,255,255,.14);box-shadow:0 22px 70px rgba(0,0,0,.35);display:flex;flex-direction:column}
+.card{box-sizing:border-box;height:100%;padding:18px;border-radius:28px;background:radial-gradient(circle at 100% 0%,rgba(34,197,94,.4),transparent 34%),linear-gradient(160deg,rgba(20,56,44,.98),rgba(8,16,19,.94));border:1px solid rgba(187,247,208,.22);box-shadow:0 26px 82px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.1);display:flex;flex-direction:column}
 .head{display:flex;justify-content:space-between;align-items:center}h1{font-size:22px;margin:0}.count{font-size:12px;color:#86efac;background:rgba(34,197,94,.12);padding:5px 9px;border-radius:999px}
 .add{display:flex;gap:8px;margin:14px 0}input{flex:1;border:0;outline:0;border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.1);color:white}button{border:0;border-radius:14px;padding:0 13px;background:#22c55e;color:#06200f;font-weight:800;cursor:pointer}.ghost{background:rgba(255,255,255,.1);color:#d1fae5}.list{flex:1;min-height:80px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.list::-webkit-scrollbar{width:6px;height:6px}.list::-webkit-scrollbar-track{background:transparent}.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}.item{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid rgba(255,255,255,.08)}.check{width:18px;height:18px;border-radius:9px;background:#22c55e;cursor:pointer;box-shadow:0 0 0 1px rgba(255,255,255,.18) inset}.done .text{text-decoration:line-through;color:rgba(255,255,255,.42)}.text{flex:1;font-size:13px}.del{background:rgba(255,255,255,.1);color:#fecaca;height:26px}.foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:rgba(255,255,255,.58)}
 </style></head><body><section class="card"><div class="head"><h1>待办清单</h1><span id="count" class="count">0 项</span></div><div class="add"><input id="todoInput" placeholder="添加一条待办..." /><button id="addButton" type="button">添加</button></div><div id="todoList" class="list"></div><div class="foot"><span id="syncHint">本机缓存</span><button id="clearDoneButton" type="button" class="ghost">清理已完成</button></div></section><script>
@@ -1482,7 +1484,7 @@ window.addTodo=add;if(document.readyState==="loading"){document.addEventListener
     private static string CreateWebMonitorHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
- .card{box-sizing:border-box;height:100%;padding:18px;border-radius:24px;background:radial-gradient(circle at 100% 0%,rgba(251,191,36,.22),transparent 34%),linear-gradient(135deg,rgba(57,38,20,.95),rgba(16,14,12,.92));border:1px solid rgba(255,255,255,.13);box-shadow:0 22px 70px rgba(0,0,0,.34);display:flex;flex-direction:column}
+ .card{box-sizing:border-box;height:100%;padding:18px;border-radius:24px;background:radial-gradient(circle at 100% 0%,rgba(251,191,36,.28),transparent 34%),linear-gradient(135deg,rgba(69,47,24,.98),rgba(18,15,13,.94));border:1px solid rgba(253,230,138,.22);box-shadow:0 26px 82px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.1);display:flex;flex-direction:column}
 .top{display:flex;justify-content:space-between;align-items:center}.tag{color:#fbbf24;font-size:12px;letter-spacing:.18em}button{border:0;border-radius:13px;padding:8px 12px;background:rgba(255,255,255,.1);color:#fff;cursor:pointer}h1{margin:10px 0 12px;font-size:24px}.row{display:flex;gap:8px;margin-bottom:10px}input{flex:1;min-width:0;border:0;outline:0;border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.1);color:#fff}button.primary{background:#fbbf24;color:#2b1800;font-weight:800}.list{flex:1;min-height:80px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.list::-webkit-scrollbar{width:6px;height:6px}.list::-webkit-scrollbar-track{background:transparent}.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}.item{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid rgba(255,255,255,.08);cursor:pointer}.left{min-width:0;flex:1}.url{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fde68a;font-size:12px}.title{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:4px}.meta{font-size:12px;color:rgba(255,255,255,.58)}.remove{background:rgba(255,255,255,.08);color:#fecaca;height:28px;min-width:44px}.empty{font-size:12px;color:rgba(255,255,255,.55);padding-top:16px}
 </style></head><body><section class="card"><div class="top"><div class="tag">BOOKMARKS</div><button id="addBtn" type="button">添加书签</button></div><h1>网页书签</h1><div class="row"><input id="urlInput" placeholder="输入网址后回车，或点击右上角添加书签" /></div><div id="list" class="list"></div></section><script>
 (function(){var hostKey='yanm.bookmarks.items.'+(((window.yanm&&window.yanm.componentId)||window.__yanmComponentId||'default'));var urls=[];
@@ -1500,7 +1502,7 @@ init();})();
     private static string CreateSystemHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:18px;border-radius:28px;background:radial-gradient(circle at 20% 0%,rgba(129,140,248,.38),transparent 35%),linear-gradient(135deg,rgba(36,43,64,.96),rgba(9,12,20,.92));border:1px solid rgba(255,255,255,.14);box-shadow:0 22px 70px rgba(0,0,0,.35)}
+.card{box-sizing:border-box;height:100%;padding:18px;border-radius:28px;background:radial-gradient(circle at 20% 0%,rgba(129,140,248,.42),transparent 35%),linear-gradient(135deg,rgba(43,52,78,.98),rgba(10,14,24,.94));border:1px solid rgba(199,210,254,.22);box-shadow:0 26px 82px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.1)}
 h1{font-size:22px;margin:0 0 12px}.row{display:flex;justify-content:space-between;align-items:center;margin:9px 0;color:rgba(255,255,255,.72);font-size:13px}.bar{height:9px;border-radius:9px;background:rgba(255,255,255,.12);overflow:hidden}.fill{height:100%;width:0;background:linear-gradient(90deg,#38bdf8,#22c55e);transition:.3s}.chips{display:flex;gap:8px;margin-top:14px}.chip{flex:1;padding:9px;border-radius:15px;background:rgba(255,255,255,.08);font-size:11px;color:rgba(255,255,255,.65)}.v{display:block;color:white;font-size:16px;font-weight:800;margin-top:3px}
 </style></head><body><section class="card"><h1>系统状态</h1><div class="row"><span>内存估算</span><strong id="memText">读取中</strong></div><div class="bar"><div id="memFill" class="fill"></div></div><div class="chips"><div class="chip">CPU 核心<span id="cores" class="v">--</span></div><div class="chip">在线状态<span id="net" class="v">--</span></div><div class="chip">时间<span id="time" class="v">--</span></div></div></section><script>
 function paint(data){var percent=data&&data.usedMemoryPercent?data.usedMemoryPercent:0;var total=data&&data.totalMemoryMb?Math.round(data.totalMemoryMb/1024):0;var free=data&&data.availableMemoryMb?Math.round(data.availableMemoryMb/1024):0;document.getElementById('memText').innerText=total?('已用 '+Math.round(percent)+'% · 可用 '+free+' GB / '+total+' GB'):'等待宿主数据';document.getElementById('memFill').style.width=(percent||38)+'%';document.getElementById('cores').innerText=data&&data.cpuCores?data.cpuCores:'--';document.getElementById('net').innerText=data&&data.isNetworkAvailable?'在线':'离线';document.getElementById('time').innerText=data&&data.time?data.time:new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});}
@@ -1512,7 +1514,7 @@ function request(){if(window.yanmHost&&yanmHost.requestSystemInfo){yanmHost.requ
     private static string CreateTipsHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:20px;border-radius:24px;background:linear-gradient(135deg,rgba(38,31,75,.94),rgba(13,13,20,.9));border:1px solid rgba(255,255,255,.13)}
+.card{box-sizing:border-box;height:100%;padding:20px;border-radius:24px;background:linear-gradient(135deg,rgba(48,40,92,.98),rgba(15,15,26,.94));border:1px solid rgba(216,180,254,.22);box-shadow:0 26px 82px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.1)}
 h1{font-size:23px;margin:0 0 10px}.p{font-size:13px;color:rgba(255,255,255,.68);line-height:1.8}.kbd{display:inline-block;padding:2px 8px;border-radius:8px;background:rgba(255,255,255,.12);color:#fff}
 </style></head><body><section class="card"><h1>燕幕提示</h1><div class="p"><span class="kbd">按住 Win</span> 临时查看；<span class="kbd">双击 Win</span> 固定编辑；拖动空白区域新建组件；右键组件可编辑、锁定、删除。</div></section></body></html>
 """;
@@ -1542,7 +1544,7 @@ el.addEventListener('input',function(){var v=el.value;saveLocal(v);clearTimeout(
     private static string CreatePomodoroHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:white;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:20px;border-radius:28px;background:radial-gradient(circle at 80% 10%,rgba(248,113,113,.42),transparent 35%),linear-gradient(135deg,rgba(70,18,31,.96),rgba(16,8,12,.92));border:1px solid rgba(255,255,255,.14);box-shadow:0 22px 70px rgba(0,0,0,.35);text-align:center}
+.card{box-sizing:border-box;height:100%;padding:20px;border-radius:28px;background:radial-gradient(circle at 80% 10%,rgba(248,113,113,.46),transparent 35%),linear-gradient(135deg,rgba(82,22,38,.98),rgba(18,9,14,.94));border:1px solid rgba(254,202,202,.22);box-shadow:0 26px 82px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.1);text-align:center}
 .tag{font-size:12px;color:#fca5a5;letter-spacing:.18em}.time{font-size:52px;font-weight:900;margin:18px 0 12px;font-variant-numeric:tabular-nums}.mode{font-size:13px;color:rgba(255,255,255,.68)}button{border:0;border-radius:14px;padding:9px 13px;margin:14px 4px 0;background:rgba(255,255,255,.13);color:white;font-weight:800;cursor:pointer}.primary{background:#fb7185;color:#2b0710}
 </style></head><body><section class="card"><div class="tag">POMODORO</div><div id="time" class="time">25:00</div><div id="mode" class="mode">专注 25 分钟</div><button id="start" class="primary">开始</button><button id="reset">重置</button></section><script>
 (function(){var total=25*60,left=total,timer=null,running=false;function fmt(s){return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}function render(){document.getElementById('time').innerText=fmt(left);document.getElementById('start').innerText=running?'暂停':'开始';}
@@ -1555,7 +1557,7 @@ document.getElementById('reset').onclick=function(){clearInterval(timer);timer=n
     private static string CreateCountdownHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:white;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:18px;border-radius:26px;background:radial-gradient(circle at 0% 0%,rgba(96,165,250,.42),transparent 36%),linear-gradient(135deg,rgba(20,41,74,.96),rgba(8,12,22,.92));border:1px solid rgba(255,255,255,.14);box-shadow:0 22px 70px rgba(0,0,0,.34)}
+.card{box-sizing:border-box;height:100%;padding:18px;border-radius:26px;background:radial-gradient(circle at 0% 0%,rgba(96,165,250,.46),transparent 36%),linear-gradient(135deg,rgba(24,50,88,.98),rgba(8,13,24,.94));border:1px solid rgba(191,219,254,.22);box-shadow:0 26px 82px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.1)}
 .top{display:flex;justify-content:space-between;align-items:center}.tag{font-size:12px;color:#93c5fd;letter-spacing:.18em}.time{font-size:42px;font-weight:900;margin:15px 0 10px;font-variant-numeric:tabular-nums}.row{display:flex;gap:8px}input{flex:1;min-width:0;border:0;outline:0;border-radius:14px;padding:10px;background:rgba(255,255,255,.1);color:white}button{border:0;border-radius:14px;padding:0 12px;background:#60a5fa;color:#061525;font-weight:900;cursor:pointer}.hint{font-size:12px;color:rgba(255,255,255,.62);line-height:1.6}
 </style></head><body><section class="card"><div class="top"><div class="tag">COUNTDOWN</div><div class="hint">分钟</div></div><div id="time" class="time">10:00</div><div class="row"><input id="minutes" value="10" /><button id="start">开始</button><button id="reset">重置</button></div><div id="hint" class="hint">输入分钟后开始倒计时。</div></section><script>
 (function(){var left=600,total=600,timer=null;function fmt(s){return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}function render(){document.getElementById('time').innerText=fmt(Math.max(0,left));}
@@ -1568,7 +1570,7 @@ document.getElementById('reset').onclick=function(){clearInterval(timer);timer=n
     private static string CreateAppLauncherHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:18px;border-radius:26px;background:radial-gradient(circle at 100% 0%,rgba(96,165,250,.24),transparent 36%),linear-gradient(135deg,rgba(15,23,42,.96),rgba(10,12,20,.92));border:1px solid rgba(255,255,255,.13);box-shadow:0 22px 70px rgba(0,0,0,.34);display:flex;flex-direction:column}
+.card{box-sizing:border-box;height:100%;padding:18px;border-radius:26px;background:radial-gradient(circle at 100% 0%,rgba(96,165,250,.3),transparent 36%),linear-gradient(135deg,rgba(20,31,54,.98),rgba(10,14,24,.94));border:1px solid rgba(191,219,254,.22);box-shadow:0 26px 82px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.1);display:flex;flex-direction:column}
 .top{display:flex;justify-content:space-between;align-items:center}.tag{font-size:12px;letter-spacing:.18em;color:#93c5fd}.search{margin-top:12px}.search input{width:100%;box-sizing:border-box;border:0;outline:0;border-radius:14px;padding:10px 12px;background:rgba(255,255,255,.09);color:#fff}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px;flex:1;min-height:120px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.grid::-webkit-scrollbar{width:6px;height:6px}.grid::-webkit-scrollbar-track{background:transparent}.grid::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}.item{padding:10px 8px;border-radius:18px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.05);cursor:pointer;text-align:center}.item:hover{background:rgba(255,255,255,.1)}.icon{width:44px;height:44px;border-radius:14px;margin:0 auto 8px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08);overflow:hidden;font-size:16px;font-weight:800}.icon img{width:100%;height:100%;object-fit:cover}.title{font-size:12px;line-height:1.3;height:32px;overflow:hidden}.meta{font-size:11px;color:rgba(255,255,255,.52)}.empty{margin-top:18px;font-size:12px;color:rgba(255,255,255,.55)}
 </style></head><body><section class="card"><div class="top"><div class="tag">APPLICATIONS</div><div class="meta" id="count">加载中</div></div><div class="search"><input id="queryInput" placeholder="筛选应用..." /></div><div id="grid" class="grid"></div><div id="empty" class="empty" style="display:none">没有匹配的应用。</div></section><script>
 (function(){var all=[];var filtered=[];function glyph(title){return (title||'?').replace(/^\s+/,'').slice(0,1).toUpperCase();}
@@ -1582,7 +1584,7 @@ document.getElementById('queryInput').addEventListener('input',applyQuery);load(
     private static string CreateDesktopFolderHtml() => """
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
 html,body{margin:0;width:100%;height:100%;background:transparent;color:#fff;font-family:"Microsoft YaHei",sans-serif}
-.card{box-sizing:border-box;height:100%;padding:18px;border-radius:24px;background:radial-gradient(circle at 100% 0%,rgba(14,165,233,.35),transparent 36%),linear-gradient(135deg,rgba(11,18,31,.96),rgba(9,12,20,.92));border:1px solid rgba(255,255,255,.13);box-shadow:0 22px 70px rgba(0,0,0,.34);display:flex;flex-direction:column}
+.card{box-sizing:border-box;height:100%;padding:18px;border-radius:24px;background:radial-gradient(circle at 100% 0%,rgba(14,165,233,.4),transparent 36%),linear-gradient(135deg,rgba(14,25,43,.98),rgba(9,14,24,.94));border:1px solid rgba(186,230,253,.22);box-shadow:0 26px 82px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.1);display:flex;flex-direction:column}
 .top{display:flex;justify-content:space-between;align-items:center}.tag{font-size:12px;letter-spacing:.18em;color:#7dd3fc}.btn{border:0;border-radius:14px;padding:8px 12px;background:rgba(255,255,255,.1);color:#fff;cursor:pointer}
 .path{margin-top:12px;padding:12px;border-radius:16px;background:rgba(255,255,255,.08);font-size:12px;color:rgba(255,255,255,.72);word-break:break-all;min-height:44px}
 .list{margin-top:12px;flex:1;min-height:80px;overflow:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.24) transparent}.list::-webkit-scrollbar{width:6px;height:6px}.list::-webkit-scrollbar-track{background:transparent}.list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:999px;border:1px solid rgba(255,255,255,.06)}

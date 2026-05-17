@@ -960,9 +960,18 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
                 HostAssets.AppendLog($"Quick panel execute: restored previous foreground={restored}, {DescribeWindow(_previousForegroundWindow)}.");
             }
 
-            await Task.Delay(120);
-            var input = await SelectionCaptureService.CaptureSelectedInputAsync();
-            HostAssets.AppendLog($"Quick panel execute: captured input length={input.Length}.");
+            var input = string.Empty;
+            if (command.ShouldCaptureSelectedInput)
+            {
+                await Task.Delay(120);
+                input = await SelectionCaptureService.CaptureSelectedInputAsync();
+                HostAssets.AppendLog($"Quick panel execute: captured input length={input.Length}.");
+            }
+            else
+            {
+                HostAssets.AppendLog("Quick panel execute: selection capture skipped for direct open target.");
+            }
+
             _mainWindow.ExecuteCommandExternally(command, input, launchSource);
         }
         finally
@@ -1095,6 +1104,48 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             result.ok ? "发布到商店" : "发布到商店失败",
             MessageBoxButton.OK,
             result.ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
+
+    private void CopyStoreLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { CommandParameter: SlotViewModel { Command: not null } vm })
+        {
+            return;
+        }
+
+        try
+        {
+            var result = _mainWindow.CopyExtensionStoreLink(vm.Command!.ExtensionId);
+            if (!result.ok)
+            {
+                System.Windows.MessageBox.Show(this, result.message, "复制商店链接失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(this, ex.Message, "复制商店链接失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void OpenStoreLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { CommandParameter: SlotViewModel { Command: not null } vm })
+        {
+            return;
+        }
+
+        try
+        {
+            var result = _mainWindow.OpenExtensionStoreLink(vm.Command!.ExtensionId);
+            if (!result.ok)
+            {
+                System.Windows.MessageBox.Show(this, result.message, "打开商店链接失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(this, ex.Message, "打开商店链接失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private void ToggleFavorite_Click(object sender, RoutedEventArgs e)

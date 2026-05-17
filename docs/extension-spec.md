@@ -227,6 +227,14 @@ Extensions/
   - 扩展目录下的相对图片路径，例如 `icons/logo.png`
   - 绝对路径或 HTTPS 图片地址
 
+### `accentHex`
+
+- 类型：`string`
+- 选填
+- 用于启动器、鼠标面板和燕环中的扩展按钮 / 卡片底色
+- 支持 `#RRGGBB` 或 `#AARRGGBB`，例如 `#10B981`、`#FFF97316`
+- 未填写或格式无效时回退为默认蓝色
+
 ### `openTarget`
 
 - 类型：`string`

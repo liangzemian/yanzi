@@ -184,7 +184,11 @@ public partial class YanmOverlayWindow : Window
         ApplyScreenBounds();
         UpdateDynamicTexts();
         _isWebView2Available = CheckWebView2RuntimeAvailable();
-        Root.Background = new SolidColorBrush(WpfColor.FromArgb((byte)Math.Clamp(_settings.OverlayOpacity * 255, 12, 220), 0, 0, 0));
+        Root.Background = new SolidColorBrush(WpfColor.FromArgb(
+            (byte)Math.Clamp(_settings.OverlayOpacity * 255, 32, 217),
+            1,
+            3,
+            8));
         HintText.Text = pinned
             ? BuildPinnedHint()
             : BuildTemporaryHint();

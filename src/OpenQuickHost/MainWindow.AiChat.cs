@@ -1036,6 +1036,7 @@ public partial class MainWindow
         settings.AiModel = model;
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        NotifyQuickPanelSettingsChanged("ai-settings-saved", refreshYanmOverlay: false);
         OnPropertyChanged(nameof(AiChatModelDisplayText));
     }
 }

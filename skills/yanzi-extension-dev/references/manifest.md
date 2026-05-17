@@ -10,10 +10,15 @@ Common fields:
   "category": "扩展",
   "description": "What this extension does",
   "keywords": ["keyword-1", "keyword-2"],
+  "icon": "mdi:puzzle-outline",
+  "accentHex": "#FF10B981",
   "globalShortcut": "Ctrl+Alt+T",
   "hotkeyBehavior": "show-view"
 }
 ```
+
+- `icon`: supports full `mdi:name`, `app:name`, relative image paths, absolute paths, or HTTPS image URLs.
+- `accentHex`: optional button/card color in launcher, quick panel, and radial menu. Use `#RRGGBB` or `#AARRGGBB`.
 
 JSON extension example:
 

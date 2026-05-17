@@ -478,6 +478,10 @@ PowerShell 仍适合调用系统命令、剪贴板、进程和文件自动化。
 - 应用别名：`app:wechat`、`app:qq`、`app:google`、`app:selection`
 - 图片路径：扩展目录下相对路径，例如 `icons/logo.png`，或绝对路径、HTTPS 图片地址
 
+## 按钮颜色
+
+`accentHex` 控制扩展在启动器、鼠标面板和燕环中的按钮 / 卡片底色。支持 `#RRGGBB` 或 `#AARRGGBB`，例如 `#10B981`、`#FFF97316`。未填写时使用默认蓝色。
+
 ## 给 AI 的提示词
 
 ```text
@@ -492,8 +496,9 @@ PowerShell 仍适合调用系统命令、剪贴板、进程和文件自动化。
 6. 如果需要宿主界面，使用 hostedView，actionType 优先使用 script。
 7. 必须包含 id、name、version、category、description、keywords。
 8. icon 优先使用内置值，例如 mdi:search、mdi:folder、mdi:clipboard、mdi:code、mdi:translate。
-9. 不要写 null 字段，不要补充燕子未支持的字段。
-10. 输出的 JSON 要能直接保存为 manifest.json。
+9. accentHex 用来设置按钮 / 卡片底色，支持 #RRGGBB 或 #AARRGGBB；请按扩展语义选择颜色，不要全部使用默认蓝色。
+10. 不要写 null 字段，不要补充燕子未支持的字段。
+11. 输出的 JSON 要能直接保存为 manifest.json。
 
 我要的扩展功能是：
 在这里描述你的需求。

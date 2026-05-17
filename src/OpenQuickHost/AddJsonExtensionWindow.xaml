@@ -263,6 +263,9 @@
                             <TextBlock Text="icon 属性" Foreground="{StaticResource Text2Brush}" FontSize="12" Margin="0,16,0,8" />
                             <TextBox x:Name="IconBox" Padding="12,9" Background="{StaticResource BgBrush}" BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="1" Foreground="{StaticResource TextBrush}" />
 
+                            <TextBlock Text="按钮颜色 accentHex" Foreground="{StaticResource Text2Brush}" FontSize="12" Margin="0,14,0,8" />
+                            <TextBox x:Name="AccentHexBox" Padding="12,9" Background="{StaticResource BgBrush}" BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="1" Foreground="{StaticResource TextBrush}" ToolTip="例如 #FF10B981 或 #10B981；控制启动器、鼠标面板和燕环中的扩展按钮底色。" />
+
                             <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                                 <Button Content="图片图标" Style="{StaticResource GhostButtonStyle}" Click="PickIconImageButton_Click" Padding="14,6" Height="32" />
                                 <Button Content="清空" Style="{StaticResource GhostButtonStyle}" Margin="10,0,0,0" Click="ClearIconButton_Click" Padding="14,6" Height="32" />

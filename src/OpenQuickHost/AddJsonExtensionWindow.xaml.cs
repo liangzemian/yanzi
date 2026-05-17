@@ -1093,6 +1093,7 @@ public partial class AddJsonExtensionWindow : Window
             QueryPrefixes = SplitCsv(QueryPrefixesBox.Text),
             QueryTargetTemplate = NullIfEmpty(QueryTargetTemplateBox.Text),
             Icon = NullIfEmpty(IconBox.Text),
+            AccentHex = NormalizeAccentHexOrNull(AccentHexBox.Text),
             HostedView = _manualHostedView,
             GlobalShortcut = NullIfEmpty(GlobalShortcutBox.Text),
             HotkeyBehavior = NullIfEmpty(HotkeyBehaviorBox.Text),
@@ -1126,6 +1127,7 @@ public partial class AddJsonExtensionWindow : Window
         QueryPrefixesBox.Text = manifest.QueryPrefixes == null ? string.Empty : string.Join(", ", manifest.QueryPrefixes);
         QueryTargetTemplateBox.Text = manifest.QueryTargetTemplate ?? string.Empty;
         IconBox.Text = manifest.Icon ?? string.Empty;
+        AccentHexBox.Text = manifest.AccentHex ?? string.Empty;
         GlobalShortcutBox.Text = manifest.GlobalShortcut ?? string.Empty;
         HotkeyBehaviorBox.Text = manifest.HotkeyBehavior ?? string.Empty;
         RuntimeBox.Text = manifest.Runtime ?? string.Empty;
@@ -1489,7 +1491,7 @@ public partial class AddJsonExtensionWindow : Window
             title: manifest.Name,
             subtitle: manifest.Description ?? "临时测试扩展",
             category: manifest.Category ?? "扩展",
-            accentHex: "#FF3B82F6",
+            accentHex: NormalizeAccentHexOrDefault(manifest.AccentHex),
             openTarget: manifest.OpenTarget,
             keywords: manifest.Keywords ?? [],
             source: CommandSource.LocalExtension,
@@ -1575,6 +1577,7 @@ public partial class AddJsonExtensionWindow : Window
         builder.AppendLine("- description：一句话描述扩展用途");
         builder.AppendLine("- keywords：搜索关键词数组");
         builder.AppendLine("- icon：图标，可用 mdi:图标名 或图片地址");
+        builder.AppendLine("- accentHex：可选，扩展按钮 / 卡片底色，支持 #RRGGBB 或 #AARRGGBB，例如 #10B981、#FFF97316；不要所有扩展都用默认蓝色");
         builder.AppendLine("- openTarget：点击后直接打开的目标");
         builder.AppendLine("- queryPrefixes：前缀数组，例如 [\"百度\", \"baidu\"]；搜索扩展会把后面的内容替换进 {query}，脚本 / 工作区扩展会把后面的内容传给 context.InputText");
         builder.AppendLine("- queryTargetTemplate：搜索模板，必须包含 {query}");
@@ -2064,7 +2067,8 @@ public partial class AddJsonExtensionWindow : Window
             Description = "点击后打开记事本。",
             Keywords = ["打开", "记事本", "notepad"],
             OpenTarget = "notepad.exe",
-            Icon = "mdi:notebook-outline"
+            Icon = "mdi:notebook-outline",
+            AccentHex = "#FF3B82F6"
         };
 
         return JsonSerializer.Serialize(manifest, CreateJsonOptions());
@@ -2081,7 +2085,8 @@ public partial class AddJsonExtensionWindow : Window
             Description = "点击后打开当前用户桌面目录。",
             Keywords = ["桌面", "desktop", "打开"],
             OpenTarget = "shell:Desktop",
-            Icon = "mdi:monitor-dashboard"
+            Icon = "mdi:monitor-dashboard",
+            AccentHex = "#FF06B6D4"
         };
 
         return JsonSerializer.Serialize(manifest, CreateJsonOptions());
@@ -2099,7 +2104,8 @@ public partial class AddJsonExtensionWindow : Window
             Keywords = ["搜索", "网页"],
             QueryPrefixes = ["搜索", "web"],
             QueryTargetTemplate = "https://www.baidu.com/s?wd={query}",
-            Icon = "https://www.baidu.com/favicon.ico"
+            Icon = "https://www.baidu.com/favicon.ico",
+            AccentHex = "#FF10B981"
         };
 
         return JsonSerializer.Serialize(manifest, CreateJsonOptions());
@@ -2119,6 +2125,7 @@ public partial class AddJsonExtensionWindow : Window
             EntryMode = "inline",
             Permissions = ["clipboard"],
             Icon = "mdi:code-tags",
+            AccentHex = "#FF8B5CF6",
             Script = new LocalExtensionInlineScriptManifest
             {
                 Source = "using OpenQuickHost.CSharpRuntime;\npublic static class YanziAction\n{\n    public static Task<string> RunAsync(YanziActionContext context)\n    {\n        return Task.FromResult(\"收到输入：\" + context.InputText);\n    }\n}"
@@ -2701,6 +2708,40 @@ Write-Output "说明：这是模板输出，后续可以替换为真实翻译 AP
             .Where(static item => !string.IsNullOrWhiteSpace(item))
             .ToArray();
         return items.Length == 0 ? null : items;
+    }
+
+    private static string? NormalizeAccentHexOrNull(string? accentHex)
+    {
+        return string.IsNullOrWhiteSpace(accentHex)
+            ? null
+            : NormalizeAccentHexOrDefault(accentHex);
+    }
+
+    private static string NormalizeAccentHexOrDefault(string? accentHex)
+    {
+        var value = accentHex?.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "#FF3B82F6";
+        }
+
+        if (!value.StartsWith('#'))
+        {
+            value = "#" + value;
+        }
+
+        if (value.Length == 7)
+        {
+            value = "#FF" + value[1..];
+        }
+
+        if (value.Length != 9 ||
+            !value[1..].All(static ch => Uri.IsHexDigit(ch)))
+        {
+            return "#FF3B82F6";
+        }
+
+        return value.ToUpperInvariant();
     }
 
     private static string CompactError(string message)

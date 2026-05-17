@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Text.Json;
@@ -10,6 +11,37 @@ namespace OpenQuickHost;
 
 public partial class MainWindow
 {
+    private const string PublicStoreOrigin = "https://yanzi.luoluoluo.cc.cd";
+
+    public static string BuildExtensionStoreUrl(string extensionId)
+    {
+        return $"{PublicStoreOrigin}/store.html?id={Uri.EscapeDataString(extensionId ?? string.Empty)}";
+    }
+
+    public (bool ok, string message) CopyExtensionStoreLink(string extensionId)
+    {
+        if (string.IsNullOrWhiteSpace(extensionId))
+        {
+            return (false, "没有可复制的扩展链接。");
+        }
+
+        var url = BuildExtensionStoreUrl(extensionId);
+        ClipboardService.SetText(url);
+        return (true, $"已复制扩展商店链接：{url}");
+    }
+
+    public (bool ok, string message) OpenExtensionStoreLink(string extensionId)
+    {
+        if (string.IsNullOrWhiteSpace(extensionId))
+        {
+            return (false, "没有可打开的扩展链接。");
+        }
+
+        var url = BuildExtensionStoreUrl(extensionId);
+        Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        return (true, $"已打开扩展商店链接：{url}");
+    }
+
     private async Task RefreshCloudStateAsync(bool allowLoginPrompt = true)
     {
         if (_cloudSyncClient == null)
@@ -37,6 +69,7 @@ public partial class MainWindow
             ApplyFilter(SearchBox.Text);
             SyncStatus = $"已登录 {me?.Username ?? _cloudSyncClient.CurrentUserLabel}";
             ResetSilentCloudReconnect();
+            StartMobileMessageBridge("cloud-refresh");
             LastRunMessage = pulledConfig || pulledQuickPanelConfig
                 ? "已同步账号状态，并更新了云端配置。"
                 : "已同步账号状态。";
@@ -152,8 +185,9 @@ public partial class MainWindow
             await _cloudSyncClient.UploadExtensionArchiveAsync(command, packageBytes, version);
             await _cloudSyncClient.UpsertUserExtensionAsync(command);
             command.MarkAsSynced(version);
+            var storeUrl = BuildExtensionStoreUrl(command.ExtensionId);
             LastRunMessage = $"已发布到扩展商店：{command.Title} (v{version})";
-            SyncStatus = $"发布成功：{command.Title}";
+            SyncStatus = $"发布成功：{command.Title}，商店链接：{storeUrl}";
             return true;
         }
         catch (Exception ex)
@@ -719,6 +753,293 @@ public partial class MainWindow
                message.Contains("timed out", StringComparison.OrdinalIgnoreCase);
     }
 
+    private void StartMobileMessageBridge(string reason)
+    {
+        if (_cloudSyncClient == null || !_cloudSyncClient.HasCredential)
+        {
+            HostAssets.AppendLog($"Mobile bridge skipped: reason={reason}, hasClient={_cloudSyncClient != null}, hasCredential={_cloudSyncClient?.HasCredential == true}.");
+            return;
+        }
+
+        _desktopDeviceId ??= DeviceIdentityStore.GetOrCreateDesktopDeviceId();
+        if (_mobileMessageBridgeTask is not { IsCompleted: false })
+        {
+            _mobileMessageBridgeCts?.Cancel();
+            _mobileMessageBridgeCts = new CancellationTokenSource();
+            _mobileMessageBridgeTask = Task.Run(() => MobileMessageBridgeLoopAsync(_mobileMessageBridgeCts.Token));
+        }
+
+        HostAssets.AppendLog($"Mobile bridge started: reason={reason}, deviceId={_desktopDeviceId}.");
+        _ = PollMobileMessagesSafeAsync($"start-{reason}");
+    }
+
+    private async Task MobileMessageBridgeLoopAsync(CancellationToken cancellationToken)
+    {
+        HostAssets.AppendLog("Mobile bridge background loop started.");
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await PollMobileMessagesSafeAsync("background-loop");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            HostAssets.AppendLog("Mobile bridge background loop stopped.");
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Mobile bridge background loop crashed: {FormatExceptionMessage(ex)}");
+        }
+    }
+
+    private async void MobileMessagePollTimer_Tick(object? sender, EventArgs e)
+    {
+        await PollMobileMessagesSafeAsync("timer");
+    }
+
+    private async Task PollMobileMessagesSafeAsync(string reason)
+    {
+        if (_mobileMessagePollRunning || _cloudSyncClient == null || !_cloudSyncClient.HasCredential)
+        {
+            if (_mobileMessagePollRunning)
+            {
+                HostAssets.AppendLog($"Mobile bridge poll skipped: reason={reason}, previous poll still running.");
+            }
+            return;
+        }
+
+        _mobileMessagePollRunning = true;
+        try
+        {
+            using var pollTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            _desktopDeviceId ??= DeviceIdentityStore.GetOrCreateDesktopDeviceId();
+            await _cloudSyncClient.RegisterDeviceAsync(
+                _desktopDeviceId,
+                "desktop",
+                DeviceIdentityStore.GetDesktopDisplayName(),
+                new
+                {
+                    app = "yanzi-desktop",
+                    os = Environment.OSVersion.VersionString
+                },
+                cancellationToken: pollTimeout.Token);
+
+            var messages = await _cloudSyncClient.GetPendingDeviceMessagesAsync(_desktopDeviceId, limit: 20, cancellationToken: pollTimeout.Token);
+            if (messages.Count > 0)
+            {
+                HostAssets.AppendLog($"Mobile bridge received messages: reason={reason}, count={messages.Count}.");
+            }
+            else if (DateTimeOffset.UtcNow - _lastMobileMessageEmptyLogAt > TimeSpan.FromMinutes(1))
+            {
+                _lastMobileMessageEmptyLogAt = DateTimeOffset.UtcNow;
+                HostAssets.AppendLog($"Mobile bridge poll ok: reason={reason}, count=0, deviceId={_desktopDeviceId}.");
+            }
+
+            foreach (var message in messages)
+            {
+                await HandleMobileDeviceMessageAsync(message);
+                await _cloudSyncClient.AckDeviceMessageAsync(message.MessageId, _desktopDeviceId, pollTimeout.Token);
+                HostAssets.AppendLog($"Mobile bridge acked message: id={message.MessageId}, deviceId={_desktopDeviceId}.");
+            }
+        }
+        catch (OperationCanceledException ex)
+        {
+            HostAssets.AppendLog($"Mobile bridge poll timed out: reason={reason}, {FormatExceptionMessage(ex)}");
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Mobile bridge poll failed: reason={reason}, {FormatExceptionMessage(ex)}");
+        }
+        finally
+        {
+            _mobileMessagePollRunning = false;
+        }
+    }
+
+    private async Task HandleMobileDeviceMessageAsync(DeviceMessageRecord message)
+    {
+        var title = string.IsNullOrWhiteSpace(message.Title) ? "手机发来消息" : message.Title.Trim();
+        var text = string.IsNullOrWhiteSpace(message.Text) ? $"消息类型：{message.Kind}" : message.Text.Trim();
+        var sourceLabel = GetMobileSourceLabel(message);
+        var screenshotDataUrl = GetPayloadString(message, "screenshotDataUrl");
+        var screenshotFilePath = await TryDownloadMobileScreenshotFromWebDavAsync(message);
+        if (string.Equals(message.Kind, "screenshot", StringComparison.OrdinalIgnoreCase))
+        {
+            var payloadKeys = message.Payload.Count == 0
+                ? "(empty)"
+                : string.Join(",", message.Payload.Keys.OrderBy(static key => key, StringComparer.OrdinalIgnoreCase));
+            HostAssets.AppendLog(
+                $"Mobile screenshot payload: id={message.MessageId}, keys={payloadKeys}, hasDataUrl={!string.IsNullOrWhiteSpace(screenshotDataUrl)}, webDavPath={GetPayloadString(message, "webDavPath") ?? "(none)"}, localFile={screenshotFilePath ?? "(none)"}.");
+        }
+        HostAssets.AppendLog(
+            $"Mobile bridge message: id={message.MessageId}, source={sourceLabel}, kind={message.Kind}, text={trimForLog(text)}");
+
+        await Dispatcher.InvokeAsync(() =>
+        {
+            if (TryHandleMobileRunExtensionMessage(message, text))
+            {
+                return;
+            }
+
+            LastRunMessage = $"{title}：{text}";
+            SyncStatus = "已收到手机端消息。";
+            SaveMobileInboxMessage(message, title, text, sourceLabel);
+            ShowMobileMessageToast(title, text, sourceLabel, screenshotDataUrl, screenshotFilePath);
+        });
+    }
+
+    private async Task<string?> TryDownloadMobileScreenshotFromWebDavAsync(DeviceMessageRecord message)
+    {
+        var remotePath = GetPayloadString(message, "webDavPath");
+        if (string.IsNullOrWhiteSpace(remotePath))
+        {
+            if (string.Equals(message.Kind, "screenshot", StringComparison.OrdinalIgnoreCase))
+            {
+                HostAssets.AppendLog(
+                    $"Mobile screenshot WebDAV skipped: payload has no webDavPath, hasDataUrl={!string.IsNullOrWhiteSpace(GetPayloadString(message, "screenshotDataUrl"))}.");
+            }
+            return null;
+        }
+
+        try
+        {
+            var settings = AppSettingsStore.Load();
+            var service = new WebDavSyncService(settings);
+            if (!service.IsConfigured)
+            {
+                HostAssets.AppendLog($"Mobile screenshot WebDAV skipped: not configured, path={remotePath}.");
+                return null;
+            }
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            var bytes = await service.TryReadTemporaryFileAsync(remotePath, timeout.Token);
+            if (bytes is not { Length: > 0 })
+            {
+                HostAssets.AppendLog($"Mobile screenshot WebDAV missing: path={remotePath}.");
+                return null;
+            }
+
+            var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+            Directory.CreateDirectory(downloads);
+            var filePath = Path.Combine(downloads, $"yanzi-mobile-screenshot-{DateTimeOffset.Now:yyyyMMdd-HHmmss-fff}.jpg");
+            await File.WriteAllBytesAsync(filePath, bytes, timeout.Token);
+            HostAssets.AppendLog($"Mobile screenshot WebDAV downloaded: path={remotePath}, local={filePath}, bytes={bytes.Length}.");
+            return filePath;
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Mobile screenshot WebDAV download failed: path={remotePath}, {FormatExceptionMessage(ex)}");
+            return null;
+        }
+    }
+
+    private static string? GetPayloadString(DeviceMessageRecord message, string key)
+    {
+        if (!message.Payload.TryGetValue(key, out var element))
+        {
+            return null;
+        }
+
+        return element.ValueKind == JsonValueKind.String ? element.GetString() : element.ToString();
+    }
+
+    private static string GetMobileSourceLabel(DeviceMessageRecord message)
+    {
+        if (message.Payload.TryGetValue("sourceDeviceName", out var nameElement))
+        {
+            var name = nameElement.ValueKind == JsonValueKind.String
+                ? nameElement.GetString()
+                : nameElement.ToString();
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                return name.Trim();
+            }
+        }
+
+        return message.SourceDeviceId ?? "unknown";
+    }
+
+    private static void SaveMobileInboxMessage(DeviceMessageRecord message, string title, string text, string sourceLabel)
+    {
+        try
+        {
+            var record = new
+            {
+                messageId = message.MessageId,
+                sourceDeviceId = message.SourceDeviceId,
+                sourceDeviceName = sourceLabel,
+                kind = message.Kind,
+                title,
+                text,
+                payload = message.Payload,
+                receivedAtUtc = DateTimeOffset.UtcNow.ToString("O"),
+                createdAt = message.CreatedAt
+            };
+            File.AppendAllText(
+                HostAssets.MobileInboxPath,
+                JsonSerializer.Serialize(record) + Environment.NewLine);
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Mobile inbox save failed: id={message.MessageId}, {FormatExceptionMessage(ex)}");
+        }
+    }
+
+    private void ShowMobileMessageToast(string title, string text, string sourceDeviceId, string? screenshotDataUrl = null, string? screenshotFilePath = null)
+    {
+        try
+        {
+            if (_mobileMessageToastWindow is { IsVisible: true })
+            {
+                _mobileMessageToastWindow.AppendMessage(title, text, sourceDeviceId, DateTimeOffset.Now, screenshotDataUrl, screenshotFilePath);
+                return;
+            }
+
+            _mobileMessageToastWindow = new MobileMessageToastWindow(title, text, sourceDeviceId, DateTimeOffset.Now, screenshotDataUrl, screenshotFilePath);
+            _mobileMessageToastWindow.Closed += (_, _) => _mobileMessageToastWindow = null;
+            _mobileMessageToastWindow.Show();
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Mobile message toast failed: {FormatExceptionMessage(ex)}");
+        }
+    }
+
+    private bool TryHandleMobileRunExtensionMessage(DeviceMessageRecord message, string inputText)
+    {
+        if (!string.Equals(message.Kind, "run-extension", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!message.Payload.TryGetValue("extensionId", out var extensionElement))
+        {
+            return false;
+        }
+
+        var extensionId = extensionElement.ValueKind == JsonValueKind.String
+            ? extensionElement.GetString()
+            : extensionElement.ToString();
+        if (string.IsNullOrWhiteSpace(extensionId) ||
+            !_localExtensionIndex.TryGetValue(extensionId, out var command))
+        {
+            LastRunMessage = $"手机请求的扩展不存在：{extensionId}";
+            return true;
+        }
+
+        ExecuteCommandExternally(command, inputText, "mobile");
+        LastRunMessage = $"已执行手机端请求：{command.Title}";
+        return true;
+    }
+
+    private static string trimForLog(string value)
+    {
+        var text = value.ReplaceLineEndings(" ").Trim();
+        return text.Length <= 160 ? text : $"{text[..160]}...";
+    }
+
     private async Task SyncPersonalWebDavAsync(bool showDisabledMessage)
     {
         var settings = AppSettingsStore.Load();
@@ -811,6 +1132,8 @@ public partial class MainWindow
 
         RefreshAppSettings();
         _quickPanel?.RefreshSettingsFromStore();
+        NotifySettingsWindowAiConfigChanged();
+        OnPropertyChanged(nameof(AiChatModelDisplayText));
         ApplyFilter(SearchBox.Text);
     }
 
@@ -1018,6 +1341,7 @@ public partial class MainWindow
         }
 
         var settings = AppSettingsStore.Load();
+        var shouldBackfillAiConfig = !HasAiConfigPayload(snapshot) && HasAiSettings(settings);
         var incoming = snapshot.ToAppSettings();
         var changed =
             !AreStringListsEqual(settings.GlobalFavoriteExtensionIds, incoming.GlobalFavoriteExtensionIds) ||
@@ -1031,9 +1355,17 @@ public partial class MainWindow
             snapshot.YarnSelect != null && !AreJsonPayloadsEqual(settings.YarnSelect, incoming.YarnSelect) ||
             snapshot.RadialMenu != null && !AreJsonPayloadsEqual(settings.RadialMenu, incoming.RadialMenu) ||
             snapshot.YanyuRules != null && !AreJsonPayloadsEqual(settings.YanyuRules, incoming.YanyuRules) ||
-            snapshot.Yanm != null && !AreJsonPayloadsEqual(settings.Yanm, incoming.Yanm);
+            snapshot.Yanm != null && !AreJsonPayloadsEqual(settings.Yanm, incoming.Yanm) ||
+            HasAiConfigPayload(snapshot) && !AreAiSettingsEqual(settings, incoming);
         if (!changed)
         {
+            if (shouldBackfillAiConfig)
+            {
+                await PushQuickPanelConfigToCloudAsync("cloud-refresh-ai-backfill");
+                HostAssets.AppendLog("Quick panel cloud pull: backfilled missing AI config fields.");
+                return true;
+            }
+
             HostAssets.AppendLog("Quick panel cloud pull: no local changes detected.");
             return false;
         }
@@ -1066,6 +1398,13 @@ public partial class MainWindow
             settings.Yanm = incoming.Yanm;
         }
 
+        if (HasAiConfigPayload(snapshot))
+        {
+            settings.AiBaseUrl = incoming.AiBaseUrl;
+            settings.AiApiKey = incoming.AiApiKey;
+            settings.AiModel = incoming.AiModel;
+        }
+
         settings.LauncherConfigUpdatedAtUtc = DateTime.UtcNow.ToString("O");
 
         AppSettingsStore.Save(settings);
@@ -1077,8 +1416,16 @@ public partial class MainWindow
         }
 
         _quickPanel?.RefreshSettingsFromStore();
+        NotifySettingsWindowAiConfigChanged();
+        OnPropertyChanged(nameof(AiChatModelDisplayText));
         HostAssets.AppendLog(
-            $"Quick panel cloud pull applied: globalGroups={settings.QuickPanelGlobalGroups.Count}, contextGroups={settings.QuickPanelContextGroups.Count}, globalFavs={settings.GlobalFavoriteExtensionIds.Count}, contextFavs={settings.ContextFavoriteExtensionIds.Count}, yanyu={settings.YanyuRules.Count}, radialPages={settings.RadialMenu?.Pages?.Count ?? 0}");
+            $"Quick panel cloud pull applied: globalGroups={settings.QuickPanelGlobalGroups.Count}, contextGroups={settings.QuickPanelContextGroups.Count}, globalFavs={settings.GlobalFavoriteExtensionIds.Count}, contextFavs={settings.ContextFavoriteExtensionIds.Count}, yanyu={settings.YanyuRules.Count}, radialPages={settings.RadialMenu?.Pages?.Count ?? 0}, aiConfig={HasAiConfigPayload(snapshot)}");
+        if (shouldBackfillAiConfig)
+        {
+            await PushQuickPanelConfigToCloudAsync("cloud-pull-ai-backfill");
+            HostAssets.AppendLog("Quick panel cloud pull applied: backfilled missing AI config fields.");
+        }
+
         return true;
     }
 
@@ -1198,9 +1545,31 @@ public partial class MainWindow
                settings.YarnSelect.Rules.Count > 0 ||
             settings.RadialMenu.Enabled ||
                settings.Yanm.Components.Count > 0 ||
+               HasAiSettings(settings) ||
                settings.RadialMenu.Pages.Any(static page =>
                    page.Slots.Any(static slot => !string.IsNullOrWhiteSpace(slot)) ||
                    page.ChildPageIds.Any(static childPageId => !string.IsNullOrWhiteSpace(childPageId)));
+    }
+
+    private static bool HasAiConfigPayload(CloudQuickPanelConfigSnapshot snapshot)
+    {
+        return snapshot.AiBaseUrl != null ||
+               snapshot.AiApiKey != null ||
+               snapshot.AiModel != null;
+    }
+
+    private static bool HasAiSettings(AppSettings settings)
+    {
+        return !string.IsNullOrWhiteSpace(settings.AiBaseUrl) ||
+               !string.IsNullOrWhiteSpace(settings.AiApiKey) ||
+               !string.IsNullOrWhiteSpace(settings.AiModel);
+    }
+
+    private static bool AreAiSettingsEqual(AppSettings left, AppSettings right)
+    {
+        return string.Equals(left.AiBaseUrl, right.AiBaseUrl, StringComparison.Ordinal) &&
+               string.Equals(left.AiApiKey, right.AiApiKey, StringComparison.Ordinal) &&
+               string.Equals(left.AiModel, right.AiModel, StringComparison.Ordinal);
     }
 
     private static bool AreJsonPayloadsEqual<T>(T left, T right)
@@ -1385,6 +1754,12 @@ public partial class MainWindow
         settingsWindow?.RefreshWebDavConfigFromExternal();
     }
 
+    private void NotifySettingsWindowAiConfigChanged()
+    {
+        var settingsWindow = System.Windows.Application.Current.Windows.OfType<SettingsWindow>().FirstOrDefault();
+        settingsWindow?.RefreshAiConfigFromExternal();
+    }
+
     public async Task RefreshCloudFromSettingsAsync()
     {
         await RefreshCloudStateAsync();
@@ -1417,6 +1792,7 @@ public partial class MainWindow
     {
         var settings = AppSettingsStore.Load();
         _appSettings = settings;
+        OnPropertyChanged(nameof(AiChatModelDisplayText));
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();

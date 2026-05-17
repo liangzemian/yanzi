@@ -359,6 +359,18 @@
                                                         <Path Data="{local:IconGeometry publish}" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
+                                                <MenuItem Header="复制商店链接" Click="CopyStoreLink_Click" CommandParameter="{Binding}"
+                                                          Visibility="{Binding CanPublish, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="{local:IconGeometry link}" Fill="#93C5FD" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="打开商店链接" Click="OpenStoreLink_Click" CommandParameter="{Binding}"
+                                                          Visibility="{Binding CanPublish, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="{local:IconGeometry link}" Fill="#93C5FD" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <MenuItem Header="打开扩展目录" Click="OpenExtensionDirectory_Click" CommandParameter="{Binding}"
                                                           Visibility="{Binding CanOpenDirectory, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
@@ -526,6 +538,18 @@
                                                           Visibility="{Binding CanPublish, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                     <MenuItem.Icon>
                                                         <Path Data="{local:IconGeometry publish}" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="复制商店链接" Click="CopyStoreLink_Click" CommandParameter="{Binding}"
+                                                          Visibility="{Binding CanPublish, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="{local:IconGeometry link}" Fill="#93C5FD" Stretch="Uniform" Width="16" Height="16" />
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="打开商店链接" Click="OpenStoreLink_Click" CommandParameter="{Binding}"
+                                                          Visibility="{Binding CanPublish, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="{local:IconGeometry link}" Fill="#93C5FD" Stretch="Uniform" Width="16" Height="16" />
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <MenuItem Header="打开扩展目录" Click="OpenExtensionDirectory_Click" CommandParameter="{Binding}"

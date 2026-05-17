@@ -111,7 +111,7 @@ public static class LocalExtensionCatalog
             title: manifest.Name,
             subtitle: manifest.Description ?? $"来自本地扩展目录：{Path.GetDirectoryName(manifestPath)}",
             category: manifest.Category ?? "扩展",
-            accentHex: "#FF38BDF8",
+            accentHex: NormalizeAccentHex(manifest.AccentHex),
             openTarget: manifest.OpenTarget,
             keywords: manifest.Keywords ?? [],
             source: CommandSource.LocalExtension,
@@ -605,7 +605,7 @@ public static class YanziAction
             title: manifest.Name,
             subtitle: manifest.Description ?? $"来自本地扩展目录：{extensionDirectory}",
             category: manifest.Category ?? "扩展",
-            accentHex: "#FF38BDF8",
+            accentHex: NormalizeAccentHex(manifest.AccentHex),
             openTarget: manifest.OpenTarget,
             keywords: manifest.Keywords ?? [],
             source: CommandSource.LocalExtension,
@@ -679,14 +679,22 @@ public static class YanziAction
             Keywords = manifest.Keywords,
             OpenTarget = manifest.OpenTarget,
             Icon = manifest.Icon,
+            AccentHex = manifest.AccentHex,
             HostedView = manifest.HostedView,
+            HostedViewV2 = manifest.HostedViewV2,
+            HostedViewXaml = manifest.HostedViewXaml,
+            QueryPrefixes = manifest.QueryPrefixes,
+            QueryTargetTemplate = manifest.QueryTargetTemplate,
             GlobalShortcut = manifest.GlobalShortcut,
             HotkeyBehavior = manifest.HotkeyBehavior,
             Runtime = manifest.Runtime,
+            UiMode = manifest.UiMode,
             EntryMode = manifest.EntryMode,
             Entry = manifest.Entry,
             Permissions = manifest.Permissions,
-            Script = manifest.Script
+            Script = manifest.Script,
+            Startup = manifest.Startup,
+            SearchProvider = manifest.SearchProvider
         };
 
         File.WriteAllText(manifestPath, JsonSerializer.Serialize(renamed, JsonOptions));
@@ -848,6 +856,33 @@ public static class YanziAction
             : "S";
     }
 
+    private static string NormalizeAccentHex(string? accentHex)
+    {
+        var value = accentHex?.Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "#FF38BDF8";
+        }
+
+        if (!value.StartsWith('#'))
+        {
+            value = "#" + value;
+        }
+
+        if (value.Length == 7)
+        {
+            value = "#FF" + value[1..];
+        }
+
+        if (value.Length != 9 ||
+            !value[1..].All(static ch => Uri.IsHexDigit(ch)))
+        {
+            return "#FF38BDF8";
+        }
+
+        return value.ToUpperInvariant();
+    }
+
     private static string GetManifestPath(string extensionId)
     {
         if (string.IsNullOrWhiteSpace(extensionId))
@@ -940,6 +975,8 @@ public sealed record LocalExtensionManifest
     public string? QueryTargetTemplate { get; init; }
 
     public string? Icon { get; init; }
+
+    public string? AccentHex { get; init; }
 
     public LocalExtensionHostedViewManifest? HostedView { get; init; }
 

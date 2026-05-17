@@ -567,6 +567,20 @@
                                     <Path Data="{local:IconGeometry publish}" Fill="#F59E0B" Stretch="Uniform" Width="16" Height="16" />
                                 </MenuItem.Icon>
                             </MenuItem>
+                            <MenuItem x:Name="CopyExtensionStoreLinkMenuItem"
+                                      Header="复制商店链接"
+                                      Click="CopyExtensionStoreLinkMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <Path Data="{local:IconGeometry link}" Fill="#93C5FD" Stretch="Uniform" Width="16" Height="16" />
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem x:Name="OpenExtensionStoreLinkMenuItem"
+                                      Header="打开商店链接"
+                                      Click="OpenExtensionStoreLinkMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <Path Data="{local:IconGeometry link}" Fill="#93C5FD" Stretch="Uniform" Width="16" Height="16" />
+                                </MenuItem.Icon>
+                            </MenuItem>
                             <MenuItem x:Name="DeleteExtensionMenuItem"
                                       Header="删除"
                                       Click="DeleteExtensionMenuItem_Click">
