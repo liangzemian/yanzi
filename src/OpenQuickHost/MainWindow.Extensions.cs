@@ -224,12 +224,18 @@ public partial class MainWindow
     private CommandItem? ShowJsonExtensionEditorForOwner(string initialJson, bool isEditMode, Window? owner)
     {
         var currentJson = initialJson;
+        if (owner != null)
+        {
+            owner.Topmost = false;
+        }
 
         while (true)
         {
             var dialog = new AddJsonExtensionWindow(currentJson, isEditMode)
             {
-                Owner = owner
+                Owner = owner,
+                Topmost = false,
+                ShowInTaskbar = true
             };
             dialog.ShowDialog();
             HostAssets.AppendLog($"ShowJsonExtensionEditorForOwner: dialog closed, accepted={dialog.WasAccepted}, persistedDirectly={dialog.PersistedCommand != null}.");
@@ -259,7 +265,9 @@ public partial class MainWindow
                 currentJson = dialog.JsonContent;
                 var retryDialog = new AddJsonExtensionWindow(currentJson, isEditMode)
                 {
-                    Owner = owner
+                    Owner = owner,
+                    Topmost = false,
+                    ShowInTaskbar = true
                 };
                 retryDialog.ShowError(ex.Message);
                 retryDialog.ShowDialog();
@@ -2099,40 +2107,13 @@ public partial class MainWindow
             for (var index = 0; index < group.SlotItems.Count; index++)
             {
                 var item = group.SlotItems[index];
-                if (item == null)
+                if (!RemoveExtensionFromQuickPanelSlotItem(ref item, extensionId))
                 {
                     continue;
                 }
 
-                if (!item.IsFolder)
-                {
-                    if (string.Equals(item.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase))
-                    {
-                        group.SlotItems[index] = null;
-                        changed = true;
-                    }
-
-                    continue;
-                }
-
-                var removed = item.FolderExtensionIds.RemoveAll(id => id.Equals(extensionId, StringComparison.OrdinalIgnoreCase));
-                if (removed <= 0)
-                {
-                    continue;
-                }
-
+                group.SlotItems[index] = item;
                 changed = true;
-                if (item.FolderExtensionIds.Count == 0)
-                {
-                    group.SlotItems[index] = null;
-                }
-                else if (item.FolderExtensionIds.Count == 1)
-                {
-                    group.SlotItems[index] = new QuickPanelSlotItem
-                    {
-                        ExtensionId = item.FolderExtensionIds[0]
-                    };
-                }
             }
 
             group.Slots = group.SlotItems
@@ -2151,6 +2132,48 @@ public partial class MainWindow
         _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         _quickPanel?.ReloadSlots();
         NotifyQuickPanelSettingsChanged("extension-delete-cleanup");
+    }
+
+    private static bool RemoveExtensionFromQuickPanelSlotItem(ref QuickPanelSlotItem? item, string extensionId)
+    {
+        if (item == null)
+        {
+            return false;
+        }
+
+        if (!item.IsFolder)
+        {
+            if (!string.Equals(item.ExtensionId, extensionId, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            item = null;
+            return true;
+        }
+
+        var changed = item.FolderExtensionIds.RemoveAll(id => id.Equals(extensionId, StringComparison.OrdinalIgnoreCase)) > 0;
+        item.FolderSlotItems ??= [];
+        for (var index = 0; index < item.FolderSlotItems.Count; index++)
+        {
+            var child = item.FolderSlotItems[index];
+            if (RemoveExtensionFromQuickPanelSlotItem(ref child, extensionId))
+            {
+                item.FolderSlotItems[index] = child;
+                changed = true;
+            }
+        }
+
+        item.FolderExtensionIds = item.FolderSlotItems
+            .Where(static slot => slot != null && !slot.IsFolder && !string.IsNullOrWhiteSpace(slot.ExtensionId))
+            .Select(static slot => slot!.ExtensionId!)
+            .ToList();
+        if (!item.FolderSlotItems.Any(static slot => slot != null))
+        {
+            item = null;
+        }
+
+        return changed;
     }
 
     public IReadOnlyList<RecycledExtensionEntry> GetRecycleBinEntriesForSettings()

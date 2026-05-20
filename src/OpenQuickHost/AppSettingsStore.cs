@@ -51,7 +51,7 @@ public static class AppSettingsStore
                 Name = "默认",
                 Slots = settings.QuickPanelSlots.Take(12).ToList(),
                 SlotItems = settings.QuickPanelSlots
-                    .Take(12)
+                    .Take(24)
                     .Select(static slot => string.IsNullOrWhiteSpace(slot)
                         ? null
                         : new QuickPanelSlotItem { ExtensionId = slot })
@@ -287,6 +287,16 @@ public static class AppSettingsStore
             component.Locked = component.Locked;
         }
 
+        settings.WindowSnapAssistHotkey = settings.WindowSnapAssistHotkey?.Trim() ?? string.Empty;
+        settings.WindowSnapAssistCustomLayouts ??= [];
+        settings.WindowSnapAssistCustomLayouts = settings.WindowSnapAssistCustomLayouts
+            .Where(static slot => slot.SlotIndex is >= 0 and < WindowSnapAssistCustomLayoutSettings.TotalSlotCount)
+            .GroupBy(static slot => slot.SlotIndex)
+            .Select(static group => NormalizeWindowSnapAssistCustomLayout(group.Last()))
+            .OrderBy(static slot => slot.SlotIndex)
+            .ToList();
+        settings.WindowBindings = NormalizeWindowBindings(settings.WindowBindings);
+
         return settings;
     }
 
@@ -306,7 +316,37 @@ public static class AppSettingsStore
                 .Where(static id => !string.IsNullOrWhiteSpace(id))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            return item.FolderExtensionIds.Count == 0 ? null : item;
+            item.FolderSlotItems ??= [];
+            if (item.FolderSlotItems.Count == 0)
+            {
+                item.FolderSlotItems = item.FolderExtensionIds
+                    .Take(24)
+                    .Select(static id => string.IsNullOrWhiteSpace(id)
+                        ? null
+                        : new QuickPanelSlotItem { ExtensionId = id })
+                    .ToList();
+            }
+
+            while (item.FolderSlotItems.Count < 24)
+            {
+                item.FolderSlotItems.Add(null);
+            }
+
+            if (item.FolderSlotItems.Count > 24)
+            {
+                item.FolderSlotItems = item.FolderSlotItems.Take(24).ToList();
+            }
+
+            for (var index = 0; index < item.FolderSlotItems.Count; index++)
+            {
+                item.FolderSlotItems[index] = NormalizeSlotItem(item.FolderSlotItems[index]);
+            }
+
+            item.FolderExtensionIds = item.FolderSlotItems
+                .Where(static slot => slot != null && !slot.IsFolder && !string.IsNullOrWhiteSpace(slot.ExtensionId))
+                .Select(static slot => slot!.ExtensionId!)
+                .ToList();
+            return item.FolderSlotItems.Any(static slot => slot != null) ? item : null;
         }
 
         item.ExtensionId = string.IsNullOrWhiteSpace(item.ExtensionId) ? null : item.ExtensionId.Trim();
@@ -341,6 +381,15 @@ public static class AppSettingsStore
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
 
+    private static WindowSnapAssistCustomLayoutSettings NormalizeWindowSnapAssistCustomLayout(WindowSnapAssistCustomLayoutSettings slot)
+    {
+        slot.LeftRatio = Math.Clamp(slot.LeftRatio, -2, 3);
+        slot.TopRatio = Math.Clamp(slot.TopRatio, -2, 3);
+        slot.WidthRatio = Math.Clamp(slot.WidthRatio, 0.05, 3);
+        slot.HeightRatio = Math.Clamp(slot.HeightRatio, 0.05, 3);
+        return slot;
+    }
+
     private static YanyuRuleSettings NormalizeYanyuRule(YanyuRuleSettings? rule)
     {
         rule ??= new YanyuRuleSettings();
@@ -353,6 +402,43 @@ public static class AppSettingsStore
         rule.ExtensionId = string.IsNullOrWhiteSpace(rule.ExtensionId) ? string.Empty : rule.ExtensionId.Trim();
         rule.TriggerSuffix = YanyuTriggerSuffix.Normalize(rule.TriggerSuffix);
         return rule;
+    }
+
+    private static WindowBindingSettings NormalizeWindowBindings(WindowBindingSettings? bindings)
+    {
+        bindings ??= new WindowBindingSettings();
+        bindings.Rules ??= [];
+        bindings.MarginPixels = Math.Clamp(bindings.MarginPixels, 0, 64);
+        bindings.Rules = bindings.Rules
+            .Select(NormalizeWindowBindingRule)
+            .Where(static rule => rule.Enabled && !string.IsNullOrWhiteSpace(rule.ExtensionId) && !string.IsNullOrWhiteSpace(rule.ProcessName))
+            .DistinctBy(static rule => rule.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return bindings;
+    }
+
+    private static WindowBindingRuleSettings NormalizeWindowBindingRule(WindowBindingRuleSettings? rule)
+    {
+        rule ??= new WindowBindingRuleSettings();
+        rule.Id = string.IsNullOrWhiteSpace(rule.Id) ? Guid.NewGuid().ToString("N") : rule.Id.Trim();
+        rule.ExtensionId = (rule.ExtensionId ?? string.Empty).Trim();
+        rule.ProcessName = (rule.ProcessName ?? string.Empty).Trim();
+        rule.WindowClass = (rule.WindowClass ?? string.Empty).Trim();
+        rule.TitleContains = (rule.TitleContains ?? string.Empty).Trim();
+        rule.Corner = WindowBindingCorners.Normalize(rule.Corner);
+        rule.OffsetX = RoundToGrid(rule.OffsetX, 10);
+        rule.OffsetY = RoundToGrid(rule.OffsetY, 10);
+        return rule;
+    }
+
+    private static int RoundToGrid(int value, int gridSize)
+    {
+        if (gridSize <= 0)
+        {
+            return value;
+        }
+
+        return (int)Math.Round(value / (double)gridSize, MidpointRounding.AwayFromZero) * gridSize;
     }
 }
 
@@ -426,6 +512,14 @@ public sealed record AppSettings
 
     public YanmSettings Yanm { get; set; } = new();
 
+    public bool EnableWindowSnapAssist { get; set; } = true;
+
+    public string WindowSnapAssistHotkey { get; set; } = string.Empty;
+
+    public List<WindowSnapAssistCustomLayoutSettings> WindowSnapAssistCustomLayouts { get; set; } = [];
+
+    public WindowBindingSettings WindowBindings { get; set; } = new();
+
     public string LauncherConfigUpdatedAtUtc { get; set; } = string.Empty;
 
     public double? SettingsWindowLeft { get; set; }
@@ -435,6 +529,21 @@ public sealed record AppSettings
     public double? SettingsWindowWidth { get; set; }
 
     public double? SettingsWindowHeight { get; set; }
+}
+
+public sealed class WindowSnapAssistCustomLayoutSettings
+{
+    public const int TotalSlotCount = 16;
+
+    public int SlotIndex { get; set; }
+
+    public double LeftRatio { get; set; }
+
+    public double TopRatio { get; set; }
+
+    public double WidthRatio { get; set; }
+
+    public double HeightRatio { get; set; }
 }
 
 public sealed class QuickPanelGroupSettings
@@ -461,6 +570,8 @@ public sealed class QuickPanelSlotItem
     public string? FolderName { get; set; }
 
     public List<string> FolderExtensionIds { get; set; } = [];
+
+    public List<QuickPanelSlotItem?> FolderSlotItems { get; set; } = [];
 
     public bool IsFolder => string.Equals(ItemType, "folder", StringComparison.OrdinalIgnoreCase);
 }
@@ -1707,4 +1818,74 @@ public sealed class YanyuRuleSettings
     public string TextContent { get; set; } = string.Empty;
 
     public string ExtensionId { get; set; } = string.Empty;
+}
+
+public sealed class WindowBindingSettings
+{
+    public bool Enabled { get; set; } = true;
+
+    public int MarginPixels { get; set; } = 14;
+
+    public List<WindowBindingRuleSettings> Rules { get; set; } = [];
+}
+
+public sealed class WindowBindingRuleSettings
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+
+    public bool Enabled { get; set; } = true;
+
+    public string ExtensionId { get; set; } = string.Empty;
+
+    public string ProcessName { get; set; } = string.Empty;
+
+    public string WindowClass { get; set; } = string.Empty;
+
+    public string TitleContains { get; set; } = string.Empty;
+
+    public string Corner { get; set; } = WindowBindingCorners.TopLeft;
+
+    public int OffsetX { get; set; }
+
+    public int OffsetY { get; set; }
+
+    /// <summary>
+    /// When true, the overlay is hidden by default and only appears when the cursor enters the detection zone.
+    /// </summary>
+    public bool HoverMode { get; set; } = false;
+}
+
+public static class WindowBindingCorners
+{
+    public const string TopLeft = "top_left";
+    public const string TopRight = "top_right";
+    public const string BottomLeft = "bottom_left";
+    public const string BottomRight = "bottom_right";
+
+    // Interior positions (inside the target window)
+    public const string InsideTopLeft = "inside_top_left";
+    public const string InsideTopRight = "inside_top_right";
+    public const string InsideBottomLeft = "inside_bottom_left";
+    public const string InsideBottomRight = "inside_bottom_right";
+
+    public static bool IsInterior(string? corner)
+    {
+        var normalized = Normalize(corner);
+        return normalized.StartsWith("inside_", StringComparison.Ordinal);
+    }
+
+    public static string Normalize(string? value)
+    {
+        return (value ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            TopRight => TopRight,
+            BottomLeft => BottomLeft,
+            BottomRight => BottomRight,
+            InsideTopLeft => InsideTopLeft,
+            InsideTopRight => InsideTopRight,
+            InsideBottomLeft => InsideBottomLeft,
+            InsideBottomRight => InsideBottomRight,
+            _ => TopLeft
+        };
+    }
 }

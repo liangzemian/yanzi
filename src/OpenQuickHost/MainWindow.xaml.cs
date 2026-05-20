@@ -937,10 +937,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         WindowBindingDropOverlayWindow? bindingOverlay = null;
         if (runnable.Source is CommandSource.LocalExtension or CommandSource.Cloud)
         {
-            bindingOverlay = new WindowBindingDropOverlayWindow(runnable);
-            bindingOverlay.BindingDropped += (hwnd, corner) =>
+            bindingOverlay = new WindowBindingDropOverlayWindow(runnable, _appSettings.WindowBindings?.MarginPixels ?? 14);
+            bindingOverlay.BindingDropped += (hwnd, corner, offsetX, offsetY) =>
             {
-                _ = BindExtensionToWindowHandleAsync(runnable, hwnd, corner, restorePanel: false);
+                _ = BindExtensionToWindowHandleAsync(runnable, hwnd, corner, restorePanel: false, offsetX, offsetY);
             };
             bindingOverlay.ShowFullDesktop();
         }
@@ -1603,7 +1603,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private Task BindExtensionToWindowHandleAsync(CommandItem command, IntPtr target, string corner, bool restorePanel)
+    private Task BindExtensionToWindowHandleAsync(
+        CommandItem command,
+        IntPtr target,
+        string corner,
+        bool restorePanel,
+        int offsetX = 0,
+        int offsetY = 0)
     {
         try
         {
@@ -1636,7 +1642,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ProcessName = processName,
                 WindowClass = windowClass,
                 TitleContains = string.Empty,
-                Corner = WindowBindingCorners.Normalize(corner)
+                Corner = WindowBindingCorners.Normalize(corner),
+                OffsetX = offsetX,
+                OffsetY = offsetY
             });
 
             AppSettingsStore.Save(settings);
@@ -1664,10 +1672,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return Task.CompletedTask;
     }
 
-    public Task BindExtensionToWindowFromDropAsync(CommandItem command, IntPtr target, string corner)
+    public Task BindExtensionToWindowFromDropAsync(
+        CommandItem command,
+        IntPtr target,
+        string corner,
+        int offsetX = 0,
+        int offsetY = 0)
     {
-        return BindExtensionToWindowHandleAsync(command, target, corner, restorePanel: false);
+        return BindExtensionToWindowHandleAsync(command, target, corner, restorePanel: false, offsetX, offsetY);
     }
+
+    public int GetWindowBindingMarginPixels() => _appSettings.WindowBindings?.MarginPixels ?? 14;
 
     public void ShowWindowBindingContextMenu(CommandItem command, string bindingRuleId, WindowBoundExtensionOverlayWindow placementTarget)
     {
@@ -1820,6 +1835,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             WindowBindingCorners.TopRight => "右上",
             WindowBindingCorners.BottomLeft => "左下",
             WindowBindingCorners.BottomRight => "右下",
+            WindowBindingCorners.InsideTopLeft => "内左上",
+            WindowBindingCorners.InsideTopRight => "内右上",
+            WindowBindingCorners.InsideBottomLeft => "内左下",
+            WindowBindingCorners.InsideBottomRight => "内右下",
             _ => "左上"
         };
     }
@@ -2805,17 +2824,23 @@ public sealed class CloudQuickPanelConfigSnapshot
             ContextDisplayName = group.ContextDisplayName,
             Slots = group.Slots.ToList(),
             SlotItems = group.SlotItems
-                .Select(static item => item == null
-                    ? null
-                    : new QuickPanelSlotItem
-                    {
-                        ItemType = item.ItemType,
-                        ExtensionId = item.ExtensionId,
-                        FolderName = item.FolderName,
-                        FolderExtensionIds = item.FolderExtensionIds.ToList()
-                    })
+                .Select(CloneQuickPanelSlotItem)
                 .ToList()
         }).ToList();
+    }
+
+    private static QuickPanelSlotItem? CloneQuickPanelSlotItem(QuickPanelSlotItem? item)
+    {
+        return item == null
+            ? null
+            : new QuickPanelSlotItem
+            {
+                ItemType = item.ItemType,
+                ExtensionId = item.ExtensionId,
+                FolderName = item.FolderName,
+                FolderExtensionIds = item.FolderExtensionIds.ToList(),
+                FolderSlotItems = item.FolderSlotItems.Select(CloneQuickPanelSlotItem).ToList()
+            };
     }
 
     private static QuickPanelMouseTriggerSettings CloneTriggers(QuickPanelMouseTriggerSettings trigger)

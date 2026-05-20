@@ -7,8 +7,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OpenQuickHost", "src\OpenQuickHost\OpenQuickHost.csproj", "{70291FAC-9143-4D08-AC3F-97342034F310}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Yanzi.ExtensionHost", "src\Yanzi.ExtensionHost\Yanzi.ExtensionHost.csproj", "{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -31,24 +29,11 @@ Global
 		{70291FAC-9143-4D08-AC3F-97342034F310}.Release|x64.Build.0 = Release|Any CPU
 		{70291FAC-9143-4D08-AC3F-97342034F310}.Release|x86.ActiveCfg = Release|Any CPU
 		{70291FAC-9143-4D08-AC3F-97342034F310}.Release|x86.Build.0 = Release|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Debug|x64.Build.0 = Debug|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Debug|x86.Build.0 = Debug|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Release|Any CPU.Build.0 = Release|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Release|x64.ActiveCfg = Release|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Release|x64.Build.0 = Release|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Release|x86.ActiveCfg = Release|Any CPU
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{70291FAC-9143-4D08-AC3F-97342034F310} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{1C93028E-5D0E-4BFD-9BE0-7A83B426922A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 	EndGlobalSection
 EndGlobal

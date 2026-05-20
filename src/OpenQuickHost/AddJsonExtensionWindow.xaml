@@ -10,6 +10,8 @@
         WindowStartupLocation="CenterOwner"
         WindowStyle="None"
         ResizeMode="NoResize"
+        ShowInTaskbar="True"
+        Topmost="False"
         Background="#FF1A1A1A"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
@@ -343,6 +345,7 @@
             <Grid Grid.Column="2">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
@@ -357,18 +360,86 @@
                             <TextBlock Text="编辑扩展 JSON" Foreground="{StaticResource TextBrush}" FontSize="17" FontWeight="Bold" />
                             <TextBlock Text="直接修改代码，实时同步或保存。" Foreground="{StaticResource Text2Brush}" FontSize="13" Margin="0,4,0,0" />
                         </StackPanel>
-                        <Button x:Name="ManualCopyPromptButton"
-                                Grid.Column="1"
-                                Content="复制提示词"
-                                Style="{StaticResource GhostButtonStyle}"
-                                Height="36"
-                                Padding="18,0"
-                                VerticalAlignment="Center"
-                                Click="ManualCopyPromptButton_Click" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="ManualCopyJsonButton"
+                                    Content="复制 JSON"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Height="36"
+                                    Padding="18,0"
+                                    Click="ManualCopyJsonButton_Click" />
+                            <Button x:Name="ManualCopyPromptButton"
+                                    Content="复制提示词"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Height="36"
+                                    Padding="18,0"
+                                    Margin="8,0,0,0"
+                                    Click="ManualCopyPromptButton_Click" />
+                        </StackPanel>
                     </Grid>
                 </Border>
 
-                <Border Grid.Row="1" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="1.5" CornerRadius="12">
+                <Border Grid.Row="1" Margin="0,0,0,12" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrushSoft}" BorderThickness="1" CornerRadius="12" Padding="12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="10" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <Button Content="格式化 JSON"
+                                Style="{StaticResource GhostButtonStyle}"
+                                Height="32"
+                                Padding="14,0"
+                                Click="FormatManualJsonButton_Click" />
+
+                        <TextBox x:Name="ManualJsonFindBox"
+                                 Grid.Column="2"
+                                 Height="32"
+                                 Padding="10,6"
+                                 Background="{StaticResource BgBrush}"
+                                 BorderBrush="{StaticResource BorderBrushSoft}"
+                                 BorderThickness="1"
+                                 Foreground="{StaticResource TextBrush}"
+                                 FontFamily="Consolas"
+                                 ToolTip="查找内容，Ctrl+F 可快速聚焦" />
+
+                        <TextBox x:Name="ManualJsonReplaceBox"
+                                 Grid.Column="4"
+                                 Height="32"
+                                 Padding="10,6"
+                                 Background="{StaticResource BgBrush}"
+                                 BorderBrush="{StaticResource BorderBrushSoft}"
+                                 BorderThickness="1"
+                                 Foreground="{StaticResource TextBrush}"
+                                 FontFamily="Consolas"
+                                 ToolTip="替换为" />
+
+                        <StackPanel Grid.Column="5" Orientation="Horizontal" Margin="10,0,0,0">
+                            <Button Content="查找"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Height="32"
+                                    Padding="12,0"
+                                    Click="FindManualJsonButton_Click" />
+                            <Button Content="替换"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Height="32"
+                                    Padding="12,0"
+                                    Margin="8,0,0,0"
+                                    Click="ReplaceManualJsonButton_Click" />
+                            <Button Content="全部替换"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Height="32"
+                                    Padding="12,0"
+                                    Margin="8,0,0,0"
+                                    Click="ReplaceAllManualJsonButton_Click" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="2" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrushStrong}" BorderThickness="1.5" CornerRadius="12">
                     <Grid>
                         <TextBox x:Name="ManualJsonInputBox"
                                  Padding="18"
@@ -401,7 +472,7 @@
                 </Border>
 
                 <!-- Test Controls -->
-                <StackPanel Grid.Row="2" Margin="0,16,0,0">
+                <StackPanel Grid.Row="3" Margin="0,16,0,0">
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                         <Button x:Name="ManualTestExtensionButton"
                                 Content="测试扩展运行"
@@ -428,7 +499,7 @@
                                 <TextBlock Text="测试执行日志" Foreground="{StaticResource TextBrush}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center" />
                                 <Button x:Name="ManualCopyTestFailureButton"
                                         Grid.Column="1"
-                                        Content="复制错误"
+                                        Content="复制日志"
                                         Style="{StaticResource GhostButtonStyle}"
                                         Height="30"
                                         Padding="12,0"

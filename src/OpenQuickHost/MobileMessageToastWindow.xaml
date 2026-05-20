@@ -28,7 +28,8 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <DockPanel Grid.Row="0">
+            <DockPanel Grid.Row="0"
+                       LastChildFill="False">
                 <StackPanel DockPanel.Dock="Left">
                     <TextBlock x:Name="TitleText"
                                Text="手机发来消息"
@@ -72,36 +73,46 @@
                        TextTrimming="CharacterEllipsis"
                        Visibility="Collapsed" />
 
-            <StackPanel Grid.Row="3"
-                        Margin="0,14,0,0"
-                        Orientation="Horizontal"
-                        HorizontalAlignment="Right">
-                <Button x:Name="OpenLinkButton"
-                        Width="86"
-                        Height="34"
-                        Margin="0,0,8,0"
-                        Content="打开链接"
-                        Background="#FF0891B2"
-                        BorderBrush="#FF22D3EE"
-                        Foreground="White"
-                        Click="OpenLinkButton_Click"
-                        Visibility="Collapsed" />
+            <DockPanel Grid.Row="3"
+                       Margin="0,14,0,0"
+                       LastChildFill="False">
                 <Button Width="72"
                         Height="34"
-                        Margin="0,0,8,0"
-                        Content="复制全部"
+                        DockPanel.Dock="Left"
+                        Content="清理"
                         Background="#FF1F2937"
-                        BorderBrush="#334BD4FF"
-                        Foreground="White"
-                        Click="CopyButton_Click" />
-                <Button Width="72"
-                        Height="34"
-                        Content="关闭"
-                        Background="#FF111827"
-                        BorderBrush="#334BD4FF"
-                        Foreground="White"
-                        Click="CloseButton_Click" />
-            </StackPanel>
+                        BorderBrush="#55EF4444"
+                        Foreground="#FFFFA3A3"
+                        Click="ClearHistoryButton_Click" />
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal">
+                    <Button x:Name="OpenLinkButton"
+                            Width="86"
+                            Height="34"
+                            Margin="0,0,8,0"
+                            Content="打开链接"
+                            Background="#FF0891B2"
+                            BorderBrush="#FF22D3EE"
+                            Foreground="White"
+                            Click="OpenLinkButton_Click"
+                            Visibility="Collapsed" />
+                    <Button Width="72"
+                            Height="34"
+                            Margin="0,0,8,0"
+                            Content="复制全部"
+                            Background="#FF1F2937"
+                            BorderBrush="#334BD4FF"
+                            Foreground="White"
+                            Click="CopyButton_Click" />
+                    <Button Width="72"
+                            Height="34"
+                            Content="关闭"
+                            Background="#FF111827"
+                            BorderBrush="#334BD4FF"
+                            Foreground="White"
+                            Click="CloseButton_Click" />
+                </StackPanel>
+            </DockPanel>
         </Grid>
     </Border>
 </Window>

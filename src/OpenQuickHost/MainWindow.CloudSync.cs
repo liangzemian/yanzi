@@ -1681,7 +1681,8 @@ public partial class MainWindow
             if (!string.Equals(l.ItemType, r.ItemType, StringComparison.Ordinal) ||
                 !string.Equals(l.ExtensionId, r.ExtensionId, StringComparison.Ordinal) ||
                 !string.Equals(l.FolderName, r.FolderName, StringComparison.Ordinal) ||
-                !AreStringListsEqual(l.FolderExtensionIds, r.FolderExtensionIds))
+                !AreStringListsEqual(l.FolderExtensionIds, r.FolderExtensionIds) ||
+                !AreQuickPanelSlotItemsEqual(l.FolderSlotItems, r.FolderSlotItems))
             {
                 return false;
             }

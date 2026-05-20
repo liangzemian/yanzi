@@ -62,9 +62,9 @@ Extensions/
   "icon": "mdi:code",
   "runtime": "csharp",
   "entryMode": "inline",
-  "permissions": ["context.read"],
+  "permissions": [],
   "script": {
-    "source": "using OpenQuickHost.CSharpRuntime;\\n\\npublic static class YanziAction\\n{\\n    public static Task<string> RunAsync(YanziActionContext context)\\n    {\\n        return Task.FromResult(string.IsNullOrWhiteSpace(context.InputText) ? \\\"没有收到输入\\\" : context.InputText.Trim());\\n    }\\n}"
+    "source": "public static class YanziAction\\n{\\n    public static Task<string> RunAsync(YanziActionContext context)\\n    {\\n        return Task.FromResult(string.IsNullOrWhiteSpace(context.InputText) ? \\\"没有收到输入\\\" : context.InputText.Trim());\\n    }\\n}"
   }
 }
 ```
@@ -355,8 +355,6 @@ Extensions/
 C# 内联动作需要提供 `YanziAction` 类：
 
 ```csharp
-using OpenQuickHost.CSharpRuntime;
-
 public static class YanziAction
 {
     public static Task<string> RunAsync(YanziActionContext context)

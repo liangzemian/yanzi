@@ -432,7 +432,7 @@
                     </StackPanel>
                 </Grid>
 
-                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer x:Name="MainContentScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="30,10,30,30">
                         
                         <!-- General Settings View -->
@@ -454,6 +454,25 @@
                             <Grid Margin="0,5">
                                 <TextBlock Text="启动后自动刷新云状态" Foreground="White" FontSize="13" VerticalAlignment="Center"/>
                                 <CheckBox HorizontalAlignment="Right" Style="{StaticResource RaycastSwitchStyle}" IsChecked="{Binding RefreshCloudOnStartup, Mode=TwoWay}" Click="SaveSettingsToggle_Click"/>
+                            </Grid>
+                            <Rectangle Height="1" Fill="#FF222222" Margin="0,12"/>
+
+                            <Grid Margin="0,5">
+                                <TextBlock Text="窗口快速排列（鼠标靠近窗口角落时显示布局轮盘）" Foreground="White" FontSize="13" VerticalAlignment="Center"/>
+                                <CheckBox HorizontalAlignment="Right" Style="{StaticResource RaycastSwitchStyle}" IsChecked="{Binding EnableWindowSnapAssist, Mode=TwoWay}" Click="SaveSettingsToggle_Click"/>
+                            </Grid>
+                            <Grid Margin="0,8,0,0" Visibility="{Binding EnableWindowSnapAssist, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="窗口排列快捷键" Foreground="#FF8E8E8E" FontSize="12" VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <Border Background="#FF2D2D2D" CornerRadius="4" Padding="8,4" VerticalAlignment="Center" Margin="0,0,8,0">
+                                        <TextBlock Text="{Binding WindowSnapAssistHotkey, TargetNullValue='未设置'}" Foreground="White" FontSize="12"/>
+                                    </Border>
+                                    <Button Content="设置" Style="{StaticResource SecondaryBtn}" Height="26" Padding="10,0" Click="EditSnapAssistHotkeyButton_Click"/>
+                                </StackPanel>
                             </Grid>
                             <Rectangle Height="1" Fill="#FF222222" Margin="0,12"/>
 
@@ -2063,384 +2082,461 @@
                         </StackPanel>
 
                         <!-- Extensions View -->
-                        <StackPanel Visibility="{Binding IsExtensionsSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <TextBlock Text="扩展管理" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
+                        <Grid Visibility="{Binding IsExtensionsSelected, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="0" x:Name="ExtensionDetailColumn" />
+                            </Grid.ColumnDefinitions>
 
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16">
-                                <StackPanel>
-                                    <TextBlock Text="{Binding LocalExtensionSummary}" Foreground="White" FontSize="13"/>
-                                    <TextBlock Text="{Binding ExtensionsRootPath}" Foreground="#FF8E8E8E" FontSize="12" TextWrapping="Wrap" Margin="0,8,0,0"/>
-                                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                                        <Button Content="打开目录" Style="{StaticResource PrimaryBtn}" Margin="0,0,10,0" Click="OpenExtensionsFolderButton_Click"/>
-                                        <Button Content="刷新" Style="{StaticResource SecondaryBtn}" Click="RefreshExtensionStatsButton_Click" IsEnabled="{Binding CanRefreshExtensions}"/>
-                                    </StackPanel>
-                                </StackPanel>
-                            </Border>
+                            <!-- Main Content Area -->
+                            <StackPanel Grid.Column="0" Margin="0,0,16,0">
+                                <TextBlock Text="扩展管理" Foreground="#FF888888" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,15"/>
 
-                            <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16" Margin="0,16,0,0">
-                                <StackPanel>
-                                    <!-- Filter Tabs -->
-                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                                        <Border x:Name="FilterAllTab" Style="{StaticResource FilterTabActiveStyle}" MouseLeftButtonDown="FilterTab_Click" Tag="all">
-                                            <TextBlock Text="全部" Foreground="White" FontSize="13" FontWeight="Medium"/>
-                                        </Border>
-                                        <Border x:Name="FilterPublishedTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="published">
-                                            <TextBlock Text="已发布" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
-                                        </Border>
-                                        <Border x:Name="FilterDisabledTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="disabled">
-                                            <TextBlock Text="已禁用" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
-                                        </Border>
-                                        <Border x:Name="FilterShortcutTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="shortcut">
-                                            <TextBlock Text="快捷键" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
-                                        </Border>
-                                        <Border x:Name="FilterRecycleTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="recycle">
-                                            <TextBlock Text="回收站" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
-                                        </Border>
-                                    </StackPanel>
-
-                                    <Grid Margin="0,0,0,12">
+                                <!-- Top Info Card -->
+                                <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16" Margin="0,0,0,16">
+                                    <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBox Text="{Binding ExtensionSearchText, UpdateSourceTrigger=PropertyChanged}"
-                                                 Height="34"
-                                                 Padding="12,8"
-                                                 VerticalContentAlignment="Center"
-                                                 ToolTip="按名称、ID、分类搜索扩展"
-                                                 IsEnabled="{Binding CanRefreshExtensions}" />
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding ExtensionSearchSummary}"
-                                                   Foreground="#FF8E8E8E"
-                                                   FontSize="12"
-                                                   Margin="12,0,0,0"
-                                                   VerticalAlignment="Center" />
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding LocalExtensionSummary}" Foreground="White" FontSize="13" FontWeight="Medium"/>
+                                            <TextBlock Text="{Binding ExtensionsRootPath}" Foreground="#FF8E8E8E" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="打开目录" Style="{StaticResource SecondaryBtn}" Height="32" Padding="12,0" Margin="0,0,8,0" Click="OpenExtensionsFolderButton_Click"/>
+                                            <Button Content="刷新" Style="{StaticResource SecondaryBtn}" Height="32" Padding="12,0" Click="RefreshExtensionStatsButton_Click" IsEnabled="{Binding CanRefreshExtensions}"/>
+                                        </StackPanel>
                                     </Grid>
+                                </Border>
 
-                                    <Border Background="#FF181818" CornerRadius="6" BorderBrush="#FF262626" BorderThickness="1">
+                                <!-- Filter Tabs and Search -->
+                                <Border Background="#FF1E1E1E" CornerRadius="8" BorderBrush="#FF2A2A2A" BorderThickness="1" Padding="16" Margin="0,0,0,16">
+                                    <StackPanel>
+                                        <!-- Filter Tabs -->
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,14">
+                                            <Border x:Name="FilterAllTab" Style="{StaticResource FilterTabActiveStyle}" MouseLeftButtonDown="FilterTab_Click" Tag="all">
+                                                <TextBlock Text="全部" Foreground="White" FontSize="13" FontWeight="Medium"/>
+                                            </Border>
+                                            <Border x:Name="FilterPublishedTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="published">
+                                                <TextBlock Text="已发布" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
+                                            </Border>
+                                            <Border x:Name="FilterDisabledTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="disabled">
+                                                <TextBlock Text="已禁用" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
+                                            </Border>
+                                            <Border x:Name="FilterShortcutTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="shortcut">
+                                                <TextBlock Text="快捷键" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
+                                            </Border>
+                                            <Border x:Name="FilterRecycleTab" Style="{StaticResource FilterTabStyle}" Margin="8,0,0,0" MouseLeftButtonDown="FilterTab_Click" Tag="recycle">
+                                                <TextBlock Text="回收站" Foreground="#FF8E8E8E" FontSize="13" FontWeight="Medium"/>
+                                            </Border>
+                                        </StackPanel>
+
+                                        <!-- Search Box -->
                                         <Grid>
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="Auto" />
-                                                <RowDefinition Height="*" />
-                                            </Grid.RowDefinitions>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Text="{Binding ExtensionSearchText, UpdateSourceTrigger=PropertyChanged}"
+                                                     Height="34"
+                                                     Padding="12,8"
+                                                     VerticalContentAlignment="Center"
+                                                     ToolTip="按名称、ID、分类搜索扩展"
+                                                     IsEnabled="{Binding CanRefreshExtensions}" />
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding ExtensionSearchSummary}"
+                                                       Foreground="#FF8E8E8E"
+                                                       FontSize="12"
+                                                       Margin="12,0,0,0"
+                                                       VerticalAlignment="Center" />
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
 
-                                            <Grid Margin="14,12,14,10">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="2.3*" />
-                                                    <ColumnDefinition Width="1.1*" />
-                                                    <ColumnDefinition Width="0.8*" />
-                                                    <ColumnDefinition Width="0.8*" />
-                                                    <ColumnDefinition Width="Auto" />
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Text="扩展" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold"/>
-                                                <TextBlock Grid.Column="1" Text="分类" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold"/>
-                                                <TextBlock Grid.Column="2" Text="版本" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold"/>
-                                                <TextBlock Grid.Column="3" Text="启用" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold"/>
-                                                <TextBlock Grid.Column="4" Text="操作" Foreground="#FF8E8E8E" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Right"/>
-                                            </Grid>
+                                <!-- Card Grid View -->
+                                <ScrollViewer x:Name="ExtensionCardsScrollViewer"
+                                              VerticalScrollBarVisibility="Auto"
+                                              HorizontalScrollBarVisibility="Disabled"
+                                              MaxHeight="600"
+                                              SizeChanged="ExtensionCardsScrollViewer_SizeChanged">
+                                    <ItemsControl ItemsSource="{Binding ExtensionItems}"
+                                                  Visibility="{Binding ExtensionsListVisibility}"
+                                                  Width="{Binding ViewportWidth, ElementName=ExtensionCardsScrollViewer}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel Orientation="Horizontal" />
+                                            </ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <!-- Extension Card -->
+                                                <Border Width="{Binding DataContext.ExtensionCardWidth, RelativeSource={RelativeSource AncestorType=ScrollViewer}}" 
+                                                        Background="#FF1E1E1E" 
+                                                        BorderBrush="#FF2A2A2A" 
+                                                        BorderThickness="1" 
+                                                        CornerRadius="12" 
+                                                        Padding="16" 
+                                                        Margin="0,0,14,14"
+                                                        Cursor="Hand"
+                                                        MouseLeftButtonDown="ExtensionCard_Click">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Style.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter Property="BorderBrush" Value="#FF4A4A4A" />
+                                                                    <Setter Property="Background" Value="#FF222222" />
+                                                                </Trigger>
+                                                                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                    <Setter Property="BorderBrush" Value="#FF3B82F6" />
+                                                                    <Setter Property="Background" Value="#FF1A1F2E" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <Grid>
+                                                        <Grid.RowDefinitions>
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                            <RowDefinition Height="Auto" />
+                                                        </Grid.RowDefinitions>
 
-                                            <ItemsControl Grid.Row="1"
-                                                          ItemsSource="{Binding ExtensionItems}"
-                                                          Visibility="{Binding ExtensionsListVisibility}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <Border BorderBrush="#FF252525" BorderThickness="0,1,0,0" Padding="14,12">
-                                                            <Grid>
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="2.3*" />
-                                                                    <ColumnDefinition Width="1.1*" />
-                                                                    <ColumnDefinition Width="0.8*" />
-                                                                    <ColumnDefinition Width="0.8*" />
-                                                                    <ColumnDefinition Width="Auto" />
-                                                                </Grid.ColumnDefinitions>
+                                                        <!-- Card Header -->
+                                                        <Grid Grid.Row="0" Margin="0,0,0,12">
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="Auto" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="Auto" />
+                                                            </Grid.ColumnDefinitions>
+                                                            
+                                                            <!-- Icon -->
+                                                            <Border Width="40" Height="40" Background="{Binding AccentBrush}" CornerRadius="10" VerticalAlignment="Top" ClipToBounds="True">
+                                                                <Grid>
+                                                                    <Image Source="{Binding IconSource}"
+                                                                           Margin="4"
+                                                                           Stretch="Uniform"
+                                                                           RenderOptions.BitmapScalingMode="HighQuality"
+                                                                           SnapsToDevicePixels="True"
+                                                                           Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                    <Viewbox Margin="7"
+                                                                             Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                                        <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
+                                                                    </Viewbox>
+                                                                    <TextBlock Text="{Binding DisplayGlyph}"
+                                                                               Foreground="White"
+                                                                               FontSize="14"
+                                                                               FontWeight="Bold"
+                                                                               HorizontalAlignment="Center"
+                                                                               VerticalAlignment="Center"
+                                                                               Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                                </Grid>
+                                                            </Border>
 
-                                                                <StackPanel>
-                                                                    <StackPanel Orientation="Horizontal">
-                                                                        <TextBlock Text="{Binding Title}" Foreground="White" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                                                        <!-- Published Badge -->
-                                                                        <Border Style="{StaticResource PublishedBadgeStyle}" Margin="8,0,0,0" Visibility="{Binding PublishedBadgeVisibility}">
-                                                                            <TextBlock Text="已发布" Foreground="#FF16A34A" FontSize="10" FontWeight="SemiBold"/>
-                                                                        </Border>
-                                                                        <!-- Shortcut Badge -->
-                                                                        <Border Background="#1A3B82F6" BorderBrush="#FF3B82F6" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="8,0,0,0" Visibility="{Binding ShortcutBadgeVisibility}">
-                                                                            <TextBlock Text="{Binding ShortcutLabel}" Foreground="#FF3B82F6" FontSize="10" FontWeight="SemiBold"/>
-                                                                        </Border>
-                                                                    </StackPanel>
-                                                                    <TextBlock Text="{Binding ExtensionId}" Foreground="#FF8E8E8E" FontSize="11" Margin="0,4,0,0"/>
+                                                            <!-- Title and ID -->
+                                                            <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                                                                <TextBlock Text="{Binding Title}" 
+                                                                           Foreground="White" 
+                                                                           FontSize="14" 
+                                                                           FontWeight="SemiBold" 
+                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                <TextBlock Text="{Binding ExtensionId}" 
+                                                                           Foreground="#FF6B7280" 
+                                                                           FontSize="11" 
+                                                                           Margin="0,2,0,0"
+                                                                           TextTrimming="CharacterEllipsis"/>
+                                                            </StackPanel>
+
+                                                            <!-- Toggle Switch -->
+                                                            <CheckBox Grid.Column="2"
+                                                                      Style="{StaticResource RaycastSwitchStyle}"
+                                                                      IsChecked="{Binding IsEnabled, Mode=OneWay}"
+                                                                      VerticalAlignment="Top"
+                                                                      Click="ExtensionEnabledSwitch_Click"/>
+                                                        </Grid>
+
+                                                        <!-- Badges -->
+                                                        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
+                                                            <Border Style="{StaticResource PublishedBadgeStyle}" Margin="0,0,6,6" Visibility="{Binding PublishedBadgeVisibility}">
+                                                                <TextBlock Text="已发布" Foreground="#FF16A34A" FontSize="10" FontWeight="SemiBold"/>
+                                                            </Border>
+                                                            <Border Background="#1A3B82F6" BorderBrush="#FF3B82F6" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="0,0,6,6" Visibility="{Binding ShortcutBadgeVisibility}">
+                                                                <TextBlock Text="{Binding ShortcutLabel}" Foreground="#FF3B82F6" FontSize="10" FontWeight="SemiBold"/>
+                                                            </Border>
+                                                            <!-- 开机自启徽标 -->
+                                                            <Border Background="#1AEC4899" BorderBrush="#FFEC4899" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="0,0,6,6" Visibility="{Binding AutoStartBadgeVisibility}" ToolTip="开机自启已启用">
+                                                                <TextBlock Text="自启" Foreground="#FFEC4899" FontSize="10" FontWeight="SemiBold"/>
+                                                            </Border>
+                                                            <!-- 定时运行徽标 -->
+                                                            <Border Background="#1A60A5FA" BorderBrush="#FF60A5FA" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="0,0,6,6" Visibility="{Binding ScheduleBadgeVisibility}" ToolTip="{Binding ScheduleDetailLabel}">
+                                                                <StackPanel Orientation="Horizontal">
+                                                                    <TextBlock Text="⏰ " Foreground="#FF60A5FA" FontSize="10" FontWeight="SemiBold"/>
+                                                                    <TextBlock Text="{Binding ScheduleDetailLabel}" Foreground="#FF60A5FA" FontSize="10" FontWeight="SemiBold"/>
                                                                 </StackPanel>
+                                                            </Border>
+                                                            <Border Background="#1AFBBF24" BorderBrush="#FFFBBF24" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="0,0,0,6">
+                                                                <TextBlock Text="{Binding Category}" Foreground="#FFFBBF24" FontSize="10" FontWeight="SemiBold"/>
+                                                            </Border>
+                                                        </WrapPanel>
 
-                                                                <TextBlock Grid.Column="1" Text="{Binding Category}" Foreground="#FFE5E5E5" FontSize="12" VerticalAlignment="Center"/>
-                                                                <TextBlock Grid.Column="2" Text="{Binding Version}" Foreground="#FFE5E5E5" FontSize="12" VerticalAlignment="Center"/>
-                                                                <CheckBox Grid.Column="3"
-                                                                          Style="{StaticResource RaycastSwitchStyle}"
-                                                                          IsChecked="{Binding IsEnabled, Mode=OneWay}"
-                                                                          VerticalAlignment="Center"
-                                                                          Click="ExtensionEnabledSwitch_Click"/>
-
-                                                                <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right">
-                                                                    <!-- Shortcut Icon Button -->
-                                                                    <Button Style="{StaticResource IconButtonStyle}" 
-                                                                            Margin="0,0,4,0" 
-                                                                            Click="EditExtensionShortcutButton_Click"
-                                                                            ToolTip="设置快捷键">
-                                                                        <Viewbox Width="14" Height="14">
-                                                                            <Path Data="{local:IconGeometry shortcut}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
-                                                                        </Viewbox>
-                                                                    </Button>
-                                                                    <!-- Edit Icon Button -->
-                                                                    <Button Style="{StaticResource IconButtonStyle}" 
-                                                                            Margin="0,0,4,0" 
-                                                                            IsEnabled="{Binding EditButtonEnabled}" 
-                                                                            Click="EditExtensionButton_Click"
-                                                                            ToolTip="编辑">
-                                                                        <Viewbox Width="14" Height="14">
-                                                                            <Path Data="{local:IconGeometry edit}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
-                                                                        </Viewbox>
-                                                                    </Button>
-                                                                    <!-- Open Directory Icon Button -->
-                                                                    <Button Style="{StaticResource IconButtonStyle}" 
-                                                                            Margin="0,0,4,0" 
-                                                                            IsEnabled="{Binding OpenDirectoryButtonEnabled}" 
-                                                                            Click="OpenExtensionDirectoryButton_Click"
-                                                                            ToolTip="打开目录">
-                                                                        <Viewbox Width="14" Height="14">
-                                                                            <Path Data="{local:IconGeometry folder}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
-                                                                        </Viewbox>
-                                                                    </Button>
-                                                                    <!-- Delete Icon Button (Recycle) -->
-                                                                    <Button Style="{StaticResource IconButtonStyle}" 
-                                                                            Margin="0,0,8,0" 
-                                                                            IsEnabled="{Binding DeleteButtonEnabled}" 
-                                                                            Click="DeleteExtensionButton_Click"
-                                                                            ToolTip="移入回收站">
-                                                                        <Viewbox Width="14" Height="14">
-                                                                            <Path Data="{local:IconGeometry recycle}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
-                                                                        </Viewbox>
-                                                                    </Button>
-                                                                    <!-- Publish/Unpublish Icon Buttons -->
-                                                                    <Button Style="{StaticResource IconButtonStyle}" 
-                                                                            Margin="0,0,4,0" 
-                                                                            IsEnabled="{Binding PublishButtonEnabled}" 
-                                                                            Visibility="{Binding PublishNewButtonVisibility}" 
-                                                                            Click="PublishExtensionButton_Click"
-                                                                            ToolTip="发布到商店">
-                                                                        <Grid Width="14" Height="14">
-                                                                            <Grid Visibility="{Binding PublishSpinnerVisibility}">
-                                                                                <Ellipse Stroke="#FF4B5563" StrokeThickness="2"/>
-                                                                                <Path Data="M 7,1 A 6,6 0 1 1 6.99,1"
-                                                                                      Stroke="#FFFFFFFF"
-                                                                                      StrokeThickness="2"
-                                                                                      StrokeStartLineCap="Round"
-                                                                                      StrokeEndLineCap="Round">
-                                                                                    <Path.RenderTransform>
-                                                                                        <RotateTransform CenterX="7" CenterY="7"/>
-                                                                                    </Path.RenderTransform>
-                                                                                    <Path.Triggers>
-                                                                                        <EventTrigger RoutedEvent="Loaded">
-                                                                                            <BeginStoryboard>
-                                                                                                <Storyboard RepeatBehavior="Forever">
-                                                                                                    <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
-                                                                                                                     From="0"
-                                                                                                                     To="360"
-                                                                                                                     Duration="0:0:0.8"/>
-                                                                                                </Storyboard>
-                                                                                            </BeginStoryboard>
-                                                                                        </EventTrigger>
-                                                                                    </Path.Triggers>
-                                                                                </Path>
-                                                                            </Grid>
-                                                                            <Viewbox Visibility="{Binding PublishIconVisibility}">
-                                                                                <Path Data="{local:IconGeometry store}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
-                                                                            </Viewbox>
-                                                                        </Grid>
-                                                                    </Button>
-                                                                    <Button Style="{StaticResource IconButtonStyle}" 
-                                                                            Margin="0,0,4,0" 
-                                                                            IsEnabled="{Binding PublishButtonEnabled}" 
-                                                                            Visibility="{Binding PublishUpdateButtonVisibility}" 
-                                                                            Click="PublishExtensionButton_Click"
-                                                                            ToolTip="更新商店版本">
-                                                                        <Grid Width="14" Height="14">
-                                                                            <Grid Visibility="{Binding PublishSpinnerVisibility}">
-                                                                                <Ellipse Stroke="#FF16A34A" StrokeThickness="2"/>
-                                                                                <Path Data="M 7,1 A 6,6 0 1 1 6.99,1"
-                                                                                      Stroke="#FFFFFFFF"
-                                                                                      StrokeThickness="2"
-                                                                                      StrokeStartLineCap="Round"
-                                                                                      StrokeEndLineCap="Round">
-                                                                                    <Path.RenderTransform>
-                                                                                        <RotateTransform CenterX="7" CenterY="7"/>
-                                                                                    </Path.RenderTransform>
-                                                                                    <Path.Triggers>
-                                                                                        <EventTrigger RoutedEvent="Loaded">
-                                                                                            <BeginStoryboard>
-                                                                                                <Storyboard RepeatBehavior="Forever">
-                                                                                                    <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
-                                                                                                                     From="0"
-                                                                                                                     To="360"
-                                                                                                                     Duration="0:0:0.8"/>
-                                                                                                </Storyboard>
-                                                                                            </BeginStoryboard>
-                                                                                        </EventTrigger>
-                                                                                    </Path.Triggers>
-                                                                                </Path>
-                                                                            </Grid>
-                                                                            <Viewbox Visibility="{Binding PublishIconVisibility}">
-                                                                                <Path Data="{local:IconGeometry store}" Fill="#FF16A34A" Stretch="Uniform"/>
-                                                                            </Viewbox>
-                                                                        </Grid>
-                                                                    </Button>
-                                                                    <Button Style="{StaticResource IconButtonStyle}"
-                                                                            Margin="0,0,4,0"
-                                                                            Visibility="{Binding StoreLinkButtonVisibility}"
-                                                                            Click="CopyExtensionStoreLinkButton_Click"
-                                                                            ToolTip="复制商店链接">
-                                                                        <Viewbox Width="14" Height="14">
-                                                                            <Path Data="{local:IconGeometry link}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
-                                                                        </Viewbox>
-                                                                    </Button>
-                                                                    <Button Style="{StaticResource IconButtonStyle}"
-                                                                            Margin="0,0,4,0"
-                                                                            Visibility="{Binding StoreLinkButtonVisibility}"
-                                                                            Click="OpenExtensionStoreLinkButton_Click"
-                                                                            ToolTip="打开商店链接">
-                                                                        <Viewbox Width="14" Height="14">
-                                                                            <Path Data="{local:IconGeometry link}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
-                                                                        </Viewbox>
-                                                                    </Button>
-                                                                    <Button Style="{StaticResource IconButtonStyle}" 
-                                                                            Margin="0,0,4,0" 
-                                                                            IsEnabled="{Binding UnpublishButtonEnabled}" 
-                                                                            Visibility="{Binding UnpublishButtonVisibility}" 
-                                                                            Click="UnpublishExtensionButton_Click"
-                                                                            ToolTip="下线">
-                                                                        <Grid Width="14" Height="14">
-                                                                            <Grid Visibility="{Binding UnpublishSpinnerVisibility}">
-                                                                                <Ellipse Stroke="#FF4B5563" StrokeThickness="2"/>
-                                                                                <Path Data="M 7,1 A 6,6 0 1 1 6.99,1"
-                                                                                      Stroke="#FFFFFFFF"
-                                                                                      StrokeThickness="2"
-                                                                                      StrokeStartLineCap="Round"
-                                                                                      StrokeEndLineCap="Round">
-                                                                                    <Path.RenderTransform>
-                                                                                        <RotateTransform CenterX="7" CenterY="7"/>
-                                                                                    </Path.RenderTransform>
-                                                                                    <Path.Triggers>
-                                                                                        <EventTrigger RoutedEvent="Loaded">
-                                                                                            <BeginStoryboard>
-                                                                                                <Storyboard RepeatBehavior="Forever">
-                                                                                                    <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
-                                                                                                                     From="0"
-                                                                                                                     To="360"
-                                                                                                                     Duration="0:0:0.8"/>
-                                                                                                </Storyboard>
-                                                                                            </BeginStoryboard>
-                                                                                        </EventTrigger>
-                                                                                    </Path.Triggers>
-                                                                                </Path>
-                                                                            </Grid>
-                                                                            <Viewbox Visibility="{Binding UnpublishIconVisibility}">
-                                                                                <Path Data="{local:IconGeometry store}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
-                                                                            </Viewbox>
-                                                                        </Grid>
-                                                                    </Button>
-                                                                </StackPanel>
-                                                            </Grid>
-                                                        </Border>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-
-                                            <!-- Recycle Bin Items List -->
-                                            <ItemsControl Grid.Row="1"
-                                                          ItemsSource="{Binding RecycleBinItems}"
-                                                          Visibility="{Binding RecycleBinListVisibility}">
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <Border BorderBrush="#FF252525" BorderThickness="0,1,0,0" Padding="14,12">
-                                                            <Grid>
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="2.3*" />
-                                                                    <ColumnDefinition Width="1.1*" />
-                                                                    <ColumnDefinition Width="0.8*" />
-                                                                    <ColumnDefinition Width="0.8*" />
-                                                                    <ColumnDefinition Width="Auto" />
-                                                                </Grid.ColumnDefinitions>
-
-                                                                <StackPanel>
-                                                                    <TextBlock Text="{Binding Title}" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
-                                                                    <TextBlock Text="{Binding ExtensionId}" Foreground="#FF8E8E8E" FontSize="11" Margin="0,4,0,0"/>
-                                                                </StackPanel>
-
-                                                                <TextBlock Grid.Column="1" Text="{Binding Category}" Foreground="#FFE5E5E5" FontSize="12" VerticalAlignment="Center"/>
-                                                                <TextBlock Grid.Column="2" Text="{Binding Version}" Foreground="#FFE5E5E5" FontSize="12" VerticalAlignment="Center"/>
-                                                                <TextBlock Grid.Column="3" Text="{Binding DeletedAtLabel}" Foreground="#FF8E8E8E" FontSize="11" VerticalAlignment="Center"/>
-
-                                                                <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right">
-                                                                    <!-- Restore Button -->
-                                                                    <Button Style="{StaticResource SecondaryBtn}" 
-                                                                            Height="28" 
-                                                                            Padding="10,0" 
-                                                                            Margin="0,0,8,0" 
-                                                                            Content="恢复" 
-                                                                            Click="RestoreRecycleBinExtensionButton_Click"
-                                                                            ToolTip="恢复扩展"/>
-                                                                    <!-- Permanent Delete Button -->
-                                                                    <Button Style="{StaticResource IconButtonStyle}" 
-                                                                            Margin="0,0,4,0" 
-                                                                            Click="DeleteRecycleBinExtensionButton_Click"
-                                                                            ToolTip="永久删除">
-                                                                        <Viewbox Width="14" Height="14">
-                                                                            <Path Data="{local:IconGeometry trash}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
-                                                                        </Viewbox>
-                                                                    </Button>
-                                                                </StackPanel>
-                                                            </Grid>
-                                                        </Border>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
-                                            </ItemsControl>
-
-                                            <Grid Grid.Row="1" Visibility="{Binding ExtensionsLoadingVisibility}">
-                                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                    <Grid Width="36" Height="36">
-                                                        <Ellipse Stroke="#FF2F2F2F" StrokeThickness="3"/>
-                                                        <Path Data="M 18,3 A 15,15 0 1 1 17.99,3"
-                                                              Stroke="#FFF97316"
-                                                              StrokeThickness="3"
-                                                              StrokeStartLineCap="Round"
-                                                              StrokeEndLineCap="Round">
-                                                            <Path.RenderTransform>
-                                                                <RotateTransform CenterX="18" CenterY="18"/>
-                                                            </Path.RenderTransform>
-                                                            <Path.Triggers>
-                                                                <EventTrigger RoutedEvent="Loaded">
+                                                        <!-- Card Footer -->
+                                                        <Border Grid.Row="2" BorderBrush="#FF2A2A2A" BorderThickness="0,1,0,0" Padding="0,12,0,0">
+                                                            <Border.Triggers>
+                                                                <EventTrigger RoutedEvent="Border.MouseEnter">
                                                                     <BeginStoryboard>
-                                                                        <Storyboard RepeatBehavior="Forever">
-                                                                            <DoubleAnimation Storyboard.TargetProperty="(Path.RenderTransform).(RotateTransform.Angle)"
-                                                                                             From="0"
-                                                                                             To="360"
-                                                                                             Duration="0:0:0.8"/>
+                                                                        <Storyboard>
+                                                                            <DoubleAnimation Storyboard.TargetName="FooterActions" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.12"/>
                                                                         </Storyboard>
                                                                     </BeginStoryboard>
                                                                 </EventTrigger>
-                                                            </Path.Triggers>
-                                                        </Path>
+                                                                <EventTrigger RoutedEvent="Border.MouseLeave">
+                                                                    <BeginStoryboard>
+                                                                        <Storyboard>
+                                                                            <DoubleAnimation Storyboard.TargetName="FooterActions" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12"/>
+                                                                        </Storyboard>
+                                                                    </BeginStoryboard>
+                                                                </EventTrigger>
+                                                            </Border.Triggers>
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*" />
+                                                                    <ColumnDefinition Width="Auto" />
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Text="{Binding Version}" 
+                                                                           Foreground="#FF6B7280" 
+                                                                           FontSize="11" 
+                                                                           VerticalAlignment="Center"/>
+                                                                <StackPanel x:Name="FooterActions" Grid.Column="1" Orientation="Horizontal" Opacity="0">
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Width="24" Height="24"
+                                                                            Margin="0,0,4,0" 
+                                                                            Click="EditExtensionButton_Click"
+                                                                            ToolTip="编辑">
+                                                                        <Viewbox Width="12" Height="12">
+                                                                            <Path Data="{local:IconGeometry edit}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                        </Viewbox>
+                                                                    </Button>
+                                                                    <Button Style="{StaticResource IconButtonStyle}" 
+                                                                            Width="24" Height="24"
+                                                                            Click="OpenExtensionDirectoryButton_Click"
+                                                                            ToolTip="打开目录">
+                                                                        <Viewbox Width="12" Height="12">
+                                                                            <Path Data="{local:IconGeometry folder}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                                        </Viewbox>
+                                                                    </Button>
+                                                                </StackPanel>
+                                                            </Grid>
+                                                        </Border>
                                                     </Grid>
-                                                    <TextBlock Text="正在后台刷新扩展数据..."
-                                                               Foreground="#FFE5E5E5"
-                                                               FontSize="12"
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </StackPanel>
+
+                            <!-- Right Detail Panel -->
+                            <Border Grid.Column="1" 
+                                    x:Name="ExtensionDetailPanel"
+                                    DataContext="{Binding SelectedExtensionItem}"
+                                    Visibility="Collapsed"
+                                    Background="#FF16181C" 
+                                    BorderBrush="#FF2A2A2A" 
+                                    BorderThickness="1,0,0,0">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+
+                                    <Border Grid.Row="0" BorderBrush="#FF2A2A2A" BorderThickness="0,0,0,1" Padding="18">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <Border Width="48" Height="48" Background="{Binding AccentBrush}" CornerRadius="12" ClipToBounds="True">
+                                                <Grid>
+                                                    <Image Source="{Binding IconSource}"
+                                                           Margin="5"
+                                                           Stretch="Uniform"
+                                                           RenderOptions.BitmapScalingMode="HighQuality"
+                                                           SnapsToDevicePixels="True"
+                                                           Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                    <Viewbox Margin="8"
+                                                             Visibility="{Binding HasVectorIcon, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <Path Data="{Binding VectorIcon}" Fill="White" Stretch="Uniform"/>
+                                                    </Viewbox>
+                                                    <TextBlock Text="{Binding DisplayGlyph}"
+                                                               Foreground="White"
+                                                               FontSize="18"
+                                                               FontWeight="Bold"
                                                                HorizontalAlignment="Center"
-                                                               Margin="0,12,0,0"/>
+                                                               VerticalAlignment="Center"
+                                                               Visibility="{Binding UseGlyphIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                </Grid>
+                                            </Border>
+
+                                            <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Title}" Foreground="White" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding ExtensionId}" Foreground="#FF8E8E8E" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+                                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                                    <Border Style="{StaticResource PublishedBadgeStyle}" Margin="0,0,6,0" Visibility="{Binding PublishedBadgeVisibility}">
+                                                        <TextBlock Text="已发布" Foreground="#FF16A34A" FontSize="10" FontWeight="SemiBold"/>
+                                                    </Border>
+                                                    <Border Background="#1A3B82F6" BorderBrush="#FF3B82F6" BorderThickness="1" CornerRadius="4" Padding="6,2" Margin="0,0,6,0" Visibility="{Binding ShortcutBadgeVisibility}">
+                                                        <TextBlock Text="{Binding ShortcutLabel}" Foreground="#FF3B82F6" FontSize="10" FontWeight="SemiBold"/>
+                                                    </Border>
+                                                    <Border Background="#1AFBBF24" BorderBrush="#FFFBBF24" BorderThickness="1" CornerRadius="4" Padding="6,2">
+                                                        <TextBlock Text="{Binding Category}" Foreground="#FFFBBF24" FontSize="10" FontWeight="SemiBold"/>
+                                                    </Border>
                                                 </StackPanel>
-                                            </Grid>
+                                            </StackPanel>
+
+                                            <Button Grid.Column="2"
+                                                    Width="28"
+                                                    Height="28"
+                                                    Style="{StaticResource IconButtonStyle}"
+                                                    Click="CloseExtensionDetailPanelButton_Click"
+                                                    ToolTip="关闭详情">
+                                                <Viewbox Width="12" Height="12">
+                                                    <Path Data="{local:IconGeometry close}" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" Stretch="Uniform"/>
+                                                </Viewbox>
+                                            </Button>
                                         </Grid>
                                     </Border>
-                                </StackPanel>
+
+                                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="18">
+                                        <StackPanel>
+                                            <TextBlock Text="{Binding DescriptionOrFallback}" Foreground="#FFD1D5DB" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,16"/>
+
+                                            <!-- ═══ 触发方式段卡 ═══ -->
+                                            <TextBlock Text="触发方式" Foreground="#FF6B7280" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,10"/>
+
+                                            <!-- 开机自启 段卡 -->
+                                            <Border Background="#FF1E1E1E" CornerRadius="10" BorderBrush="#FF2A2A2A" BorderThickness="1" Margin="0,0,0,10">
+                                                <Grid Margin="14,12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Width="28" Height="28" Background="#1A7C3AED" CornerRadius="7" VerticalAlignment="Center">
+                                                        <TextBlock Text="⚡" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="开机自启" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                                        <TextBlock Text="主程序启动后自动运行此扩展" Foreground="#FF6B7280" FontSize="11" Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                    <CheckBox Grid.Column="2"
+                                                              Style="{StaticResource RaycastSwitchStyle}"
+                                                              IsChecked="{Binding HasAppLaunchStartup, Mode=OneWay}"
+                                                              VerticalAlignment="Center"
+                                                              Click="ToggleExtensionStartupButton_Click"/>
+                                                </Grid>
+                                            </Border>
+
+                                            <!-- 定时运行 段卡 -->
+                                            <Border Background="#FF1E1E1E" CornerRadius="10" BorderBrush="#FF2A2A2A" BorderThickness="1" Margin="0,0,0,10">
+                                                <Grid Margin="14,12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Width="28" Height="28" Background="#1A059669" CornerRadius="7" VerticalAlignment="Center">
+                                                        <TextBlock Text="⏰" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="定时运行" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                                        <TextBlock Text="{Binding ScheduleDetailLabel}" Foreground="#FF6B7280" FontSize="11" Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="2"
+                                                            Content="配置"
+                                                            Style="{StaticResource SecondaryBtn}"
+                                                            Height="28" Padding="12,0"
+                                                            VerticalAlignment="Center"
+                                                            Click="ConfigureExtensionScheduleButton_Click"/>
+                                                </Grid>
+                                            </Border>
+
+                                            <!-- 快捷键 段卡 -->
+                                            <Border Background="#FF1E1E1E" CornerRadius="10" BorderBrush="#FF2A2A2A" BorderThickness="1" Margin="0,0,0,16">
+                                                <Grid Margin="14,12">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Width="28" Height="28" Background="#1A3B82F6" CornerRadius="7" VerticalAlignment="Center">
+                                                        <TextBlock Text="⌨" FontSize="14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="快捷键" Foreground="White" FontSize="13" FontWeight="SemiBold"/>
+                                                        <TextBlock Text="{Binding ShortcutDetailLabel}" Foreground="#FF6B7280" FontSize="11" Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                    <Button Grid.Column="2"
+                                                            Content="设置"
+                                                            Style="{StaticResource SecondaryBtn}"
+                                                            Height="28" Padding="12,0"
+                                                            VerticalAlignment="Center"
+                                                            Click="EditExtensionShortcutButton_Click"/>
+                                                </Grid>
+                                            </Border>
+
+                                            <!-- ═══ 快捷操作 ═══ -->
+                                            <TextBlock Text="快捷操作" Foreground="#FF6B7280" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                                            <WrapPanel Margin="0,0,0,16">
+                                                <Button Content="复制商店链接" Background="#FF1E1E1E" Style="{StaticResource SecondaryBtn}" Margin="0,0,8,8" Click="CopyExtensionStoreLinkButton_Click" Visibility="{Binding StoreLinkButtonVisibility}"/>
+                                                <Button Content="打开商店链接" Background="#FF1E1E1E" Style="{StaticResource SecondaryBtn}" Margin="0,0,8,8" Click="OpenExtensionStoreLinkButton_Click" Visibility="{Binding StoreLinkButtonVisibility}"/>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </ScrollViewer>
+
+                                    <Border Grid.Row="2" BorderBrush="#FF2A2A2A" BorderThickness="0,1,0,0" Padding="16">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <CheckBox Grid.Column="0"
+                                                      Margin="0,0,12,0"
+                                                      VerticalAlignment="Center"
+                                                      Style="{StaticResource RaycastSwitchStyle}"
+                                                      IsChecked="{Binding IsEnabled, Mode=OneWay}"
+                                                      Click="ExtensionEnabledSwitch_Click"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding EnabledStateLabel}" Foreground="#FFD1D5DB" FontSize="12" VerticalAlignment="Center"/>
+                                            <Button Grid.Column="2"
+                                                    Content="{Binding PublishButtonText}"
+                                                    Style="{StaticResource SecondaryBtn}"
+                                                    Margin="0,0,8,0"
+                                                    Click="PublishExtensionButton_Click"
+                                                    Visibility="{Binding PublishNewButtonVisibility}"
+                                                    IsEnabled="{Binding PublishButtonEnabled}"/>
+                                            <Button Grid.Column="2"
+                                                    Content="{Binding PublishButtonText}"
+                                                    Style="{StaticResource SecondaryBtn}"
+                                                    Margin="0,0,8,0"
+                                                    Click="PublishExtensionButton_Click"
+                                                    Visibility="{Binding PublishUpdateButtonVisibility}"
+                                                    IsEnabled="{Binding PublishButtonEnabled}"/>
+                                            <Button Grid.Column="3"
+                                                    Content="{Binding UnpublishButtonText}"
+                                                    Style="{StaticResource SecondaryBtn}"
+                                                    Click="UnpublishExtensionButton_Click"
+                                                    Visibility="{Binding UnpublishButtonVisibility}"
+                                                    IsEnabled="{Binding UnpublishButtonEnabled}"/>
+                                        </Grid>
+                                    </Border>
+                                </Grid>
                             </Border>
-                        </StackPanel>
-
-
+                        </Grid>
                     </StackPanel>
                 </ScrollViewer>
             </Grid>

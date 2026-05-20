@@ -52,6 +52,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private bool _hasInitializedRadialEditor;
     private IReadOnlyList<SettingsExtensionItem> _cachedExtensionItems = [];
     private IReadOnlyList<SettingsRecycleBinItem> _cachedRecycleBinItems = [];
+    private SettingsExtensionItem? _selectedExtensionItem;
+    private double _extensionCardWidth = 280;
     private bool _suppressWindowBoundsPersistence;
     private bool _isRefreshingRadialMenu;
     private bool _isRenamingRadialMenuPage;
@@ -98,6 +100,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         LaunchAtStartup = _settings.LaunchAtStartup;
         RefreshCloudOnStartup = _settings.RefreshCloudOnStartup;
         CloseToTray = _settings.CloseToTray;
+        EnableWindowSnapAssist = _settings.EnableWindowSnapAssist;
         LauncherHotkey = _settings.LauncherHotkey;
         EnableWebDavSync = _settings.EnableWebDavSync;
         WebDavServerUrl = string.IsNullOrWhiteSpace(_settings.WebDavServerUrl) ? "https://dav.jianguoyun.com/dav/" : _settings.WebDavServerUrl;
@@ -238,6 +241,56 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             {
                 EnsureRadialEditorLoaded();
             }
+
+            if (!IsExtensionsSelected)
+            {
+                ClearSelectedExtensionItem();
+            }
+        }
+    }
+
+    public SettingsExtensionItem? SelectedExtensionItem
+    {
+        get => _selectedExtensionItem;
+        private set
+        {
+            if (ReferenceEquals(_selectedExtensionItem, value))
+            {
+                return;
+            }
+
+            if (_selectedExtensionItem != null)
+            {
+                _selectedExtensionItem.IsSelected = false;
+            }
+
+            _selectedExtensionItem = value;
+
+            if (_selectedExtensionItem != null)
+            {
+                _selectedExtensionItem.IsSelected = true;
+            }
+
+            UpdateExtensionDetailPanelState();
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IsExtensionDetailOpen));
+        }
+    }
+
+    public bool IsExtensionDetailOpen => SelectedExtensionItem != null;
+
+    public double ExtensionCardWidth
+    {
+        get => _extensionCardWidth;
+        private set
+        {
+            if (Math.Abs(_extensionCardWidth - value) < 0.5)
+            {
+                return;
+            }
+
+            _extensionCardWidth = value;
+            OnPropertyChanged();
         }
     }
 
@@ -294,6 +347,32 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             }
 
             _settings = _settings with { CloseToTray = value };
+            OnPropertyChanged();
+        }
+    }
+
+    public bool EnableWindowSnapAssist
+    {
+        get => _settings.EnableWindowSnapAssist;
+        set
+        {
+            if (value == _settings.EnableWindowSnapAssist)
+            {
+                return;
+            }
+
+            _settings = _settings with { EnableWindowSnapAssist = value };
+            OnPropertyChanged();
+            _mainWindow.SetWindowSnapAssistEnabled(value);
+        }
+    }
+
+    public string WindowSnapAssistHotkey
+    {
+        get => string.IsNullOrWhiteSpace(_settings.WindowSnapAssistHotkey) ? "未设置" : _settings.WindowSnapAssistHotkey;
+        private set
+        {
+            _settings = _settings with { WindowSnapAssistHotkey = value };
             OnPropertyChanged();
         }
     }
@@ -1214,6 +1293,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         
         // Initialize gesture card colors
         UpdateAllGestureCardColors();
+        ScheduleExtensionCardWidthUpdate();
     }
 
     private void SettingsWindow_Activated(object? sender, EventArgs e)
@@ -2357,6 +2437,32 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         });
     }
 
+    private void ExtensionCard_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is DependencyObject source &&
+            IsInteractiveSource(source))
+        {
+            return;
+        }
+
+        if (sender is not FrameworkElement { DataContext: SettingsExtensionItem item })
+        {
+            return;
+        }
+
+        SelectedExtensionItem = item;
+    }
+
+    private void CloseExtensionDetailPanelButton_Click(object sender, RoutedEventArgs e)
+    {
+        ClearSelectedExtensionItem();
+    }
+
+    private void ExtensionCardsScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        ScheduleExtensionCardWidthUpdate();
+    }
+
     private async void EditExtensionButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { DataContext: SettingsExtensionItem item })
@@ -2364,6 +2470,61 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        await EditExtensionItemAsync(item);
+    }
+
+    private async void ToggleExtensionStartupButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SettingsExtensionItem item })
+        {
+            return;
+        }
+
+        var nextMode = item.HasAppLaunchStartup ? null : "on_app_launch";
+        var result = await _mainWindow.UpdateExtensionStartupFromSettingsAsync(item.ExtensionId, nextMode, item.StartupSchedule);
+        SyncStatusText = result.message;
+        if (!result.ok || result.updated == null)
+        {
+            System.Windows.MessageBox.Show(this, result.message, "更新开机自启失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        item.StartupMode = result.updated.Startup?.Mode ?? string.Empty;
+        item.StartupSchedule = result.updated.Startup?.Schedule ?? string.Empty;
+        RefreshExtensionCacheFromMainWindow();
+    }
+
+    private async void ConfigureExtensionScheduleButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SettingsExtensionItem item })
+        {
+            return;
+        }
+
+        var dialog = new ScheduleConfigWindow(item.StartupSchedule)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var result = await _mainWindow.UpdateExtensionStartupFromSettingsAsync(item.ExtensionId, item.StartupMode, dialog.ResultSchedule);
+        SyncStatusText = result.message;
+        if (!result.ok || result.updated == null)
+        {
+            System.Windows.MessageBox.Show(this, result.message, "更新定时运行失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        item.StartupMode = result.updated.Startup?.Mode ?? string.Empty;
+        item.StartupSchedule = result.updated.Startup?.Schedule ?? string.Empty;
+        RefreshExtensionCacheFromMainWindow();
+    }
+
+    private async Task EditExtensionItemAsync(SettingsExtensionItem item)
+    {
         var result = await _mainWindow.EditExtensionFromSettingsAsync(item.ExtensionId, this);
         if (!string.IsNullOrWhiteSpace(result.message))
         {
@@ -2647,38 +2808,6 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                         item.Version,
                         item.DeletedAtUtc))
                     .ToList();
-                var settings = _mainWindow.GetCurrentAppSettings();
-                settings.DisabledExtensionIds ??= [];
-                var disabledIds = new HashSet<string>(settings.DisabledExtensionIds, StringComparer.OrdinalIgnoreCase);
-                var extensionItems = entries
-                    .Select(entry => new
-                    {
-                        entry.Manifest.Id,
-                        entry.Manifest.Name,
-                        Category = entry.Manifest.Category ?? "扩展",
-                        Version = entry.Manifest.Version ?? "0.1.0",
-                        DirectoryPath = Path.GetDirectoryName(entry.ManifestPath) ?? string.Empty,
-                        entry.Manifest.GlobalShortcut
-                    })
-                    .OrderBy(static item => item.Category, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(static item => item.Name, StringComparer.OrdinalIgnoreCase)
-                    .Select(item =>
-                    {
-                        publishedMap.TryGetValue(item.Id, out var cloudRecord);
-                        return new SettingsExtensionItem(
-                            item.Id,
-                            item.Name,
-                            item.Category,
-                            item.Version,
-                            item.DirectoryPath,
-                            item.Category.Contains("网页搜索", StringComparison.OrdinalIgnoreCase) ? "网页搜索扩展" : "本地扩展",
-                            true,
-                            !disabledIds.Contains(item.Id),
-                            cloudRecord?.IsPublished != 0,
-                            cloudRecord?.PublisherUsername ?? string.Empty,
-                            item.GlobalShortcut ?? string.Empty);
-                    })
-                    .ToList();
                 var shortcutItems = entries
                     .Select(entry => new
                     {
@@ -2696,9 +2825,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                     .ToList();
                 HostAssets.AppendLog(
                     $"Settings extensions refresh background prepared: version={refreshVersion}, " +
-                    $"entries={entries.Count}, extensionItems={extensionItems.Count}, recycleBinItems={recycleBinItems.Count}, shortcutItems={shortcutItems.Count}, " +
+                    $"entries={entries.Count}, recycleBinItems={recycleBinItems.Count}, shortcutItems={shortcutItems.Count}, " +
                     $"elapsedMs={backgroundStartedAt.ElapsedMilliseconds}");
-                return (entries, extensionItems, recycleBinItems, shortcutItems);
+                return (entries, recycleBinItems, shortcutItems);
             });
 
             if (refreshVersion != _extensionsRefreshVersion)
@@ -2711,7 +2840,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             await Dispatcher.InvokeAsync(() =>
             {
                 _mainWindow.ReloadLocalExtensionsFromEntries(data.entries, "已刷新本地扩展。");
-                _cachedExtensionItems = data.extensionItems;
+                _cachedExtensionItems = BuildSettingsExtensionItems(_mainWindow.GetExtensionsForSettings(), publishedMap);
                 _cachedRecycleBinItems = data.recycleBinItems;
                 if (IsExtensionsSelected)
                 {
@@ -2821,6 +2950,34 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         if (_mainWindow.TryUpdateLauncherHotkey("Alt+Space", out var message))
         {
             LauncherHotkey = _mainWindow.GetLauncherHotkey();
+            SyncStatusText = message;
+            RefreshSyncActivityLog();
+            return;
+        }
+
+        System.Windows.MessageBox.Show(this, message, "快捷键设置失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    private void EditSnapAssistHotkeyButton_Click(object sender, RoutedEventArgs e)
+    {
+        var currentHotkey = _settings.WindowSnapAssistHotkey;
+        var dialog = new HotkeyCaptureWindow(
+            "设置窗口排列快捷键",
+            "按下组合键后，将在前台窗口位置弹出布局轮盘。留空表示仅通过鼠标触发。",
+            string.IsNullOrWhiteSpace(currentHotkey) ? null : currentHotkey,
+            allowEmpty: true)
+        {
+            Owner = this
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        if (_mainWindow.TryUpdateWindowSnapAssistHotkey(dialog.ShortcutText, out var message))
+        {
+            _settings = AppSettingsStore.Load();
+            OnPropertyChanged(nameof(WindowSnapAssistHotkey));
             SyncStatusText = message;
             RefreshSyncActivityLog();
             return;
@@ -2991,6 +3148,11 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         // 刷新扩展列表
         RefreshExtensionItems();
+
+        if (_extensionFilterMode == "recycle")
+        {
+            ClearSelectedExtensionItem();
+        }
     }
 
     private void UpdateFilterTabStyles()
@@ -3349,6 +3511,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             RefreshExtensionCacheFromMainWindow();
         }
 
+        var selectedExtensionId = SelectedExtensionItem?.ExtensionId;
         ExtensionItems.Clear();
         RecycleBinItems.Clear();
 
@@ -3399,7 +3562,83 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             }
         }
 
+        if (!string.IsNullOrWhiteSpace(selectedExtensionId))
+        {
+            SelectedExtensionItem = ExtensionItems.FirstOrDefault(item =>
+                item.ExtensionId.Equals(selectedExtensionId, StringComparison.OrdinalIgnoreCase));
+        }
+        else
+        {
+            UpdateExtensionDetailPanelState();
+        }
+
         OnPropertyChanged(nameof(ExtensionSearchSummary));
+    }
+
+    private void ClearSelectedExtensionItem()
+    {
+        SelectedExtensionItem = null;
+    }
+
+    private void UpdateExtensionDetailPanelState()
+    {
+        if (ExtensionDetailColumn == null || ExtensionDetailPanel == null)
+        {
+            return;
+        }
+
+        // Preserve scroll position to prevent unwanted scroll jump
+        var scrollOffset = MainContentScrollViewer?.VerticalOffset ?? 0;
+
+        var isOpen = SelectedExtensionItem != null;
+        ExtensionDetailColumn.Width = isOpen ? new GridLength(380) : new GridLength(0);
+        ExtensionDetailPanel.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
+        ScheduleExtensionCardWidthUpdate();
+
+        // Restore scroll position after layout update
+        if (MainContentScrollViewer != null)
+        {
+            Dispatcher.BeginInvoke(new Action(() => MainContentScrollViewer.ScrollToVerticalOffset(scrollOffset)), DispatcherPriority.Loaded);
+        }
+    }
+
+    private void ScheduleExtensionCardWidthUpdate()
+    {
+        if (ExtensionCardsScrollViewer == null)
+        {
+            return;
+        }
+
+        Dispatcher.BeginInvoke(new Action(UpdateExtensionCardWidth), DispatcherPriority.Loaded);
+    }
+
+    private void UpdateExtensionCardWidth()
+    {
+        if (ExtensionCardsScrollViewer == null)
+        {
+            return;
+        }
+
+        const double minCardWidth = 240;
+        const double cardGap = 14;
+        const double viewportPaddingAllowance = 24;
+
+        var viewportWidth = ExtensionCardsScrollViewer.ViewportWidth;
+        if (double.IsNaN(viewportWidth) || viewportWidth <= 0 || double.IsInfinity(viewportWidth))
+        {
+            viewportWidth = ExtensionCardsScrollViewer.ActualWidth;
+        }
+
+        var availableWidth = Math.Max(0, viewportWidth - viewportPaddingAllowance);
+        if (availableWidth <= 0)
+        {
+            ExtensionCardWidth = 280;
+            return;
+        }
+
+        var columnCount = Math.Max(1, (int)Math.Floor((availableWidth + cardGap) / (minCardWidth + cardGap)));
+        var computedWidth = (availableWidth - ((columnCount - 1) * cardGap)) / columnCount;
+        ExtensionCardWidth = Math.Max(minCardWidth, computedWidth);
     }
 
     private void RefreshRecycleBinItems()
@@ -3425,19 +3664,41 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
     private void RefreshExtensionCacheFromMainWindow()
     {
-        _cachedExtensionItems = _mainWindow.GetExtensionsForSettings()
-            .Select(command => new SettingsExtensionItem(
-                command.ExtensionId,
-                command.Title,
-                command.Category,
-                command.DeclaredVersion,
-                command.ExtensionDirectoryPath ?? string.Empty,
-                command.Category.Contains("网页搜索", StringComparison.OrdinalIgnoreCase) ? "网页搜索扩展" : "本地扩展",
-                command.Source == CommandSource.LocalExtension,
-                _mainWindow.IsExtensionEnabled(command.ExtensionId),
-                false,
-                string.Empty,
-                command.GlobalShortcut ?? string.Empty))
+        _cachedExtensionItems = BuildSettingsExtensionItems(
+            _mainWindow.GetExtensionsForSettings(),
+            publishedMap: null);
+    }
+
+    private List<SettingsExtensionItem> BuildSettingsExtensionItems(
+        IReadOnlyList<CommandItem> commands,
+        IReadOnlyDictionary<string, CloudExtensionRecord>? publishedMap)
+    {
+        return commands
+            .Select(command =>
+            {
+                CloudExtensionRecord? cloudRecord = null;
+                publishedMap?.TryGetValue(command.ExtensionId, out cloudRecord);
+
+                return new SettingsExtensionItem(
+                    command.ExtensionId,
+                    command.Title,
+                    command.Subtitle,
+                    command.Category,
+                    command.DeclaredVersion,
+                    command.ExtensionDirectoryPath ?? string.Empty,
+                    command.Category.Contains("网页搜索", StringComparison.OrdinalIgnoreCase) ? "网页搜索扩展" : "本地扩展",
+                    command.Source == CommandSource.LocalExtension,
+                    _mainWindow.IsExtensionEnabled(command.ExtensionId),
+                    cloudRecord?.IsPublished != 0,
+                    cloudRecord?.PublisherUsername ?? string.Empty,
+                    command.GlobalShortcut ?? string.Empty,
+                    command.IconSource,
+                    command.VectorIcon,
+                    command.AccentBrush,
+                    command.DisplayGlyph,
+                    command.Startup?.Mode ?? string.Empty,
+                    command.Startup?.Schedule ?? string.Empty);
+            })
             .ToList();
     }
 
@@ -5569,10 +5830,14 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
     private bool _isPublishing;
     private bool _isUnpublishing;
     private string _shortcut;
+    private string _startupMode;
+    private string _startupSchedule;
+    private bool _isSelected;
 
     public SettingsExtensionItem(
         string extensionId,
         string title,
+        string description,
         string category,
         string version,
         string directoryPath,
@@ -5581,10 +5846,17 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
         bool isEnabled,
         bool isPublished,
         string publisherName,
-        string shortcut)
+        string shortcut,
+        ImageSource? iconSource,
+        Geometry? vectorIcon,
+        System.Windows.Media.Brush accentBrush,
+        string displayGlyph,
+        string startupMode,
+        string startupSchedule)
     {
         ExtensionId = extensionId;
         Title = title;
+        Description = description;
         Category = category;
         Version = version;
         DirectoryPath = directoryPath;
@@ -5594,11 +5866,19 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
         _isPublished = isPublished;
         _publisherName = publisherName;
         _shortcut = shortcut ?? string.Empty;
+        IconSource = iconSource;
+        VectorIcon = vectorIcon;
+        AccentBrush = accentBrush;
+        DisplayGlyph = displayGlyph;
+        _startupMode = startupMode ?? string.Empty;
+        _startupSchedule = startupSchedule ?? string.Empty;
     }
 
     public string ExtensionId { get; }
 
     public string Title { get; }
+
+    public string Description { get; }
 
     public string Category { get; }
 
@@ -5611,6 +5891,20 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
     public bool CanOpenDirectory { get; }
 
     public bool IsEnabled { get; }
+
+    public ImageSource? IconSource { get; }
+
+    public Geometry? VectorIcon { get; }
+
+    public System.Windows.Media.Brush AccentBrush { get; }
+
+    public string DisplayGlyph { get; }
+
+    public bool HasImageIcon => IconSource != null;
+
+    public bool HasVectorIcon => VectorIcon != null;
+
+    public bool UseGlyphIcon => !HasImageIcon && !HasVectorIcon && !string.IsNullOrWhiteSpace(DisplayGlyph);
 
     public string Shortcut
     {
@@ -5627,6 +5921,7 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
             OnPropertyChanged(nameof(ShortcutLabel));
             OnPropertyChanged(nameof(HasShortcut));
             OnPropertyChanged(nameof(ShortcutBadgeVisibility));
+            OnPropertyChanged(nameof(ShortcutDetailLabel));
         }
     }
 
@@ -5635,6 +5930,75 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
     public bool HasShortcut => !string.IsNullOrWhiteSpace(Shortcut);
 
     public Visibility ShortcutBadgeVisibility => HasShortcut ? Visibility.Visible : Visibility.Collapsed;
+
+    public string ShortcutDetailLabel => HasShortcut ? Shortcut : "未设置";
+
+    public string StartupMode
+    {
+        get => _startupMode;
+        set
+        {
+            value ??= string.Empty;
+            if (_startupMode == value)
+            {
+                return;
+            }
+
+            _startupMode = value;
+            NotifyStartupStateChanged();
+        }
+    }
+
+    public string StartupSchedule
+    {
+        get => _startupSchedule;
+        set
+        {
+            value ??= string.Empty;
+            if (_startupSchedule == value)
+            {
+                return;
+            }
+
+            _startupSchedule = value;
+            NotifyStartupStateChanged();
+        }
+    }
+
+    public bool HasAppLaunchStartup => StartupMode.Equals("on_app_launch", StringComparison.OrdinalIgnoreCase);
+
+    public bool HasScheduleStartup => !string.IsNullOrWhiteSpace(StartupSchedule);
+
+    public string StartupActionLabel => HasAppLaunchStartup ? "关闭自启" : "开机自启";
+
+    public string StartupDetailLabel => HasAppLaunchStartup ? "已启用" : "未启用";
+
+    public string ScheduleDetailLabel => HasScheduleStartup ? ScheduleConfigWindow.CronToFriendly(StartupSchedule) : "未设置";
+
+    public Visibility AutoStartBadgeVisibility => HasAppLaunchStartup ? Visibility.Visible : Visibility.Collapsed;
+
+    public Visibility ScheduleBadgeVisibility => HasScheduleStartup ? Visibility.Visible : Visibility.Collapsed;
+
+    public string EnabledStateLabel => IsEnabled ? "已启用" : "已禁用";
+
+    public string PublishedStateLabel => IsPublishedInStore ? "已发布到商店" : "仅本地";
+
+    public string DescriptionOrFallback => string.IsNullOrWhiteSpace(Description) ? "这个扩展没有提供额外说明。" : Description;
+
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+            {
+                return;
+            }
+
+            _isSelected = value;
+            OnPropertyChanged();
+        }
+    }
 
     public bool IsPublished
     {
@@ -5759,6 +6123,7 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
         OnPropertyChanged(nameof(UnpublishButtonVisibility));
         OnPropertyChanged(nameof(UnpublishButtonEnabled));
         OnPropertyChanged(nameof(PublishedBadgeVisibility));
+        OnPropertyChanged(nameof(PublishedStateLabel));
     }
 
     private void NotifyBusyStateChanged()
@@ -5777,6 +6142,19 @@ public sealed class SettingsExtensionItem : INotifyPropertyChanged
         OnPropertyChanged(nameof(EditButtonEnabled));
         OnPropertyChanged(nameof(DeleteButtonEnabled));
         OnPropertyChanged(nameof(OpenDirectoryButtonEnabled));
+    }
+
+    private void NotifyStartupStateChanged()
+    {
+        OnPropertyChanged(nameof(StartupMode));
+        OnPropertyChanged(nameof(StartupSchedule));
+        OnPropertyChanged(nameof(HasAppLaunchStartup));
+        OnPropertyChanged(nameof(HasScheduleStartup));
+        OnPropertyChanged(nameof(StartupActionLabel));
+        OnPropertyChanged(nameof(StartupDetailLabel));
+        OnPropertyChanged(nameof(ScheduleDetailLabel));
+        OnPropertyChanged(nameof(AutoStartBadgeVisibility));
+        OnPropertyChanged(nameof(ScheduleBadgeVisibility));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)

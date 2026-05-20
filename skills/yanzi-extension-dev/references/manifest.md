@@ -53,6 +53,13 @@ PowerShell file script example:
 }
 ```
 
+Capability strategy:
+
+- Choose the runtime by task: C#/.NET/WPF/Windows APIs for complex app logic, native windows, P/Invoke, and strongly typed APIs; PowerShell/cmdlets for Windows automation, registry, services, processes, scheduled tasks, and simple command sequences.
+- Use `YanziActionContext` only for documented host concierge capabilities: input, launch metadata, extension directories, state, and storage.
+- Do not invent undocumented host methods such as `context.SetTheme()`, `context.GetTheme()`, `context.OpenFilePicker()`, `context.ShowMessage()`, or `context.GetStateAsync<T>()`.
+- The compiler injects the runtime namespace for `YanziActionContext`; extension source should not add host runtime usings. The app assembly is `Yanzi`; do not generate legacy product-name pack URIs, assembly references, resource paths, or assumed theme dictionaries.
+
 Inline C# action example:
 
 ```json
@@ -61,9 +68,9 @@ Inline C# action example:
   "name": "C# 输入回显",
   "runtime": "csharp",
   "entryMode": "inline",
-  "permissions": ["context.read"],
+  "permissions": [],
   "script": {
-    "source": "using OpenQuickHost.CSharpRuntime;\\n\\npublic static class YanziAction\\n{\\n    public static Task<string> RunAsync(YanziActionContext context)\\n    {\\n        return Task.FromResult(context.InputText);\\n    }\\n}"
+    "source": "public static class YanziAction\\n{\\n    public static Task<string> RunAsync(YanziActionContext context)\\n    {\\n        return Task.FromResult(context.InputText);\\n    }\\n}"
   }
 }
 ```
@@ -100,7 +107,7 @@ Hosted C# action example:
     "actionButtonText": "执行"
   },
   "script": {
-    "source": "using OpenQuickHost.CSharpRuntime;\\n\\npublic static class YanziAction\\n{\\n    public static Task<string> RunAsync(YanziActionContext context)\\n    {\\n        return Task.FromResult(context.InputText.ToUpperInvariant());\\n    }\\n}"
+    "source": "public static class YanziAction\\n{\\n    public static Task<string> RunAsync(YanziActionContext context)\\n    {\\n        return Task.FromResult(context.InputText.ToUpperInvariant());\\n    }\\n}"
   }
 }
 ```

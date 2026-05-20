@@ -117,7 +117,8 @@ public sealed class WebDavSyncService
     private static bool IsAllowedTemporaryPath(string relativePath)
     {
         return relativePath.StartsWith("temp/", StringComparison.OrdinalIgnoreCase) ||
-               relativePath.StartsWith("mobile-screenshot-", StringComparison.OrdinalIgnoreCase);
+               relativePath.StartsWith("mobile-screenshot-", StringComparison.OrdinalIgnoreCase) ||
+               relativePath.StartsWith("mobile-photo-", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task<WebDavSyncResult> SyncExtensionsAsync(CancellationToken cancellationToken = default)

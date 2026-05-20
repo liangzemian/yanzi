@@ -56,7 +56,6 @@ public partial class App : WpfApplication
         }
 
         StartLocalAgentApi(window, settings);
-        _ = WarmupExtensionHostAsync();
         _singleInstanceService.StartServer(message => HandleSecondaryLaunchMessageAsync(window, message));
         _ = HandleLaunchArgumentsAsync(window, e.Args);
     }
@@ -245,19 +244,6 @@ public partial class App : WpfApplication
         catch (Exception ex)
         {
             HostAssets.AppendLog($"Local Agent API failed to start: {ex.Message}");
-        }
-    }
-
-    private static async Task WarmupExtensionHostAsync()
-    {
-        try
-        {
-            await Task.Delay(800).ConfigureAwait(false);
-            await Task.Run(() => ScriptExtensionRunner.WarmupExtensionHostAsync()).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            HostAssets.AppendLog($"ExtensionHost warmup failed: {ex.Message}");
         }
     }
 

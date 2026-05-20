@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.Text.Json;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows;
@@ -13,6 +15,9 @@ namespace OpenQuickHost;
 
 public partial class MobileMessageToastWindow : Window
 {
+    private const int MaxHistoryMessages = 120;
+    private const int TailReadChunkBytes = 64 * 1024;
+
     private static readonly Regex UrlRegex = new(
         @"https?://[^\s<>""]+|www\.[^\s<>""]+",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -20,17 +25,73 @@ public partial class MobileMessageToastWindow : Window
     private readonly StringBuilder _conversationText = new();
     private string? _lastUrl;
 
+    public MobileMessageToastWindow()
+    {
+        InitializeComponent();
+        LoadInboxHistory();
+
+        Loaded += (_, _) => PositionBottomRight();
+    }
+
     public MobileMessageToastWindow(string title, string messageText, string sourceDeviceId, DateTimeOffset receivedAt, string? screenshotDataUrl = null, string? screenshotFilePath = null)
     {
         InitializeComponent();
         TitleText.Text = string.IsNullOrWhiteSpace(title) ? "手机发来消息" : title.Trim();
-        AppendMessage(title, messageText, sourceDeviceId, receivedAt, screenshotDataUrl, screenshotFilePath);
+        AppendMessageCore(title, messageText, sourceDeviceId, receivedAt, screenshotDataUrl, screenshotFilePath, updateHeader: true);
 
         Loaded += (_, _) => PositionBottomRight();
     }
 
     public void AppendMessage(string title, string messageText, string sourceDeviceId, DateTimeOffset receivedAt, string? screenshotDataUrl = null, string? screenshotFilePath = null)
     {
+        AppendMessageCore(title, messageText, sourceDeviceId, receivedAt, screenshotDataUrl, screenshotFilePath, updateHeader: true);
+    }
+
+    public void LoadInboxHistory()
+    {
+        MessageStack.Children.Clear();
+        _conversationText.Clear();
+        _lastUrl = null;
+
+        TitleText.Text = "手机聊天记录";
+        MetaText.Text = "手机与电脑对话";
+
+        var entries = ReadInboxHistory();
+        if (entries.Count == 0)
+        {
+            MessageStack.Children.Add(new TextBlock
+            {
+                Text = "暂无手机消息记录。",
+                Foreground = new SolidColorBrush(System.Windows.Media.Color.FromRgb(148, 163, 184)),
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(2, 4, 2, 4)
+            });
+            UpdateUrlActions();
+            return;
+        }
+
+        foreach (var entry in entries)
+        {
+            AppendMessageCore(
+                entry.Title,
+                entry.Text,
+                entry.SourceDeviceName,
+                entry.ReceivedAt,
+                entry.ScreenshotDataUrl,
+                entry.LocalFilePath,
+                updateHeader: false);
+        }
+
+        var latest = entries[^1];
+        MetaText.Text = $"共 {entries.Count} 条 · 最近来自 {latest.SourceDeviceName} · {latest.ReceivedAt:MM-dd HH:mm}";
+        UpdateUrlActions();
+        Dispatcher.InvokeAsync(() => MessageScrollViewer.ScrollToEnd());
+    }
+
+    private void AppendMessageCore(string title, string messageText, string sourceDeviceId, DateTimeOffset receivedAt, string? screenshotDataUrl, string? screenshotFilePath, bool updateHeader)
+    {
+        var sourceLabel = MobileDeviceNameNormalizer.Normalize(sourceDeviceId);
         _lastUrl = ExtractUrl(messageText) ?? _lastUrl;
         if (_conversationText.Length > 0)
         {
@@ -38,11 +99,15 @@ public partial class MobileMessageToastWindow : Window
         }
 
         _conversationText.Append('[').Append(receivedAt.ToString("HH:mm:ss")).Append("] ")
-            .Append(sourceDeviceId).Append(": ").Append(messageText);
+            .Append(sourceLabel).Append(": ").Append(messageText);
 
-        TitleText.Text = string.IsNullOrWhiteSpace(title) ? "手机发来消息" : title.Trim();
-        MetaText.Text = $"最近来自 {sourceDeviceId} · {receivedAt:HH:mm:ss}";
-        AddMessageBubble(messageText, sourceDeviceId, receivedAt, screenshotDataUrl, screenshotFilePath);
+        if (updateHeader)
+        {
+            TitleText.Text = string.IsNullOrWhiteSpace(title) ? "手机发来消息" : title.Trim();
+            MetaText.Text = $"最近来自 {sourceLabel} · {receivedAt:HH:mm:ss}";
+        }
+
+        AddMessageBubble(messageText, sourceLabel, receivedAt, screenshotDataUrl, screenshotFilePath);
         UpdateUrlActions();
         Dispatcher.InvokeAsync(() => MessageScrollViewer.ScrollToEnd());
     }
@@ -110,6 +175,13 @@ public partial class MobileMessageToastWindow : Window
                 FontSize = 11,
                 Padding = new Thickness(0)
             };
+            pathBox.Cursor = System.Windows.Input.Cursors.Hand;
+            pathBox.ToolTip = "双击打开文件";
+            pathBox.MouseDoubleClick += (_, e) =>
+            {
+                TryOpenFilePath(screenshot.FilePath);
+                e.Handled = true;
+            };
             panel.Children.Add(pathBox);
         }
 
@@ -159,9 +231,19 @@ public partial class MobileMessageToastWindow : Window
                 MaxWidth = 300,
                 MaxHeight = 180,
                 Stretch = Stretch.Uniform,
-                HorizontalAlignment = System.Windows.HorizontalAlignment.Left
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Left,
+                Cursor = System.Windows.Input.Cursors.Hand,
+                ToolTip = "双击打开文件，右键更多操作"
             };
             image.ContextMenu = BuildScreenshotContextMenu(bitmap, bytes, filePath);
+            image.MouseLeftButtonDown += (_, e) =>
+            {
+                if (e.ClickCount >= 2)
+                {
+                    TryOpenFilePath(filePath);
+                    e.Handled = true;
+                }
+            };
             image.MouseRightButtonUp += (_, e) =>
             {
                 image.ContextMenu.IsOpen = true;
@@ -196,7 +278,7 @@ public partial class MobileMessageToastWindow : Window
         var copyPath = new System.Windows.Controls.MenuItem { Header = "复制文件路径" };
         copyPath.Click += (_, _) => ClipboardService.SetText(filePath);
         var open = new System.Windows.Controls.MenuItem { Header = "打开图片" };
-        open.Click += (_, _) => Process.Start(new ProcessStartInfo(filePath) { UseShellExecute = true });
+        open.Click += (_, _) => TryOpenFilePath(filePath);
         var saveAs = new System.Windows.Controls.MenuItem { Header = "另存为..." };
         saveAs.Click += (_, _) =>
         {
@@ -216,6 +298,206 @@ public partial class MobileMessageToastWindow : Window
         menu.Items.Add(open);
         menu.Items.Add(saveAs);
         return menu;
+    }
+
+    private static bool TryOpenFilePath(string? filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+        {
+            HostAssets.AppendLog($"Mobile inbox open file skipped: path={filePath ?? "(empty)"}.");
+            return false;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(filePath) { UseShellExecute = true });
+            return true;
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Mobile inbox open file failed: path={filePath}, {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static List<MobileInboxEntry> ReadInboxHistory()
+    {
+        var entries = new List<MobileInboxEntry>();
+        try
+        {
+            if (!File.Exists(HostAssets.MobileInboxPath))
+            {
+                return entries;
+            }
+
+            foreach (var line in ReadRecentLines(HostAssets.MobileInboxPath, MaxHistoryMessages))
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
+
+                var entry = TryReadInboxEntry(line);
+                if (entry == null)
+                {
+                    continue;
+                }
+
+                entries.Add(entry);
+            }
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Mobile inbox history load failed: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        return entries;
+    }
+
+    private static IReadOnlyList<string> ReadRecentLines(string path, int maxLines)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        if (stream.Length == 0)
+        {
+            return [];
+        }
+
+        var chunks = new List<byte[]>();
+        var position = stream.Length;
+        var newlineCount = 0;
+
+        while (position > 0 && newlineCount <= maxLines)
+        {
+            var bytesToRead = (int)Math.Min(TailReadChunkBytes, position);
+            position -= bytesToRead;
+            var buffer = new byte[bytesToRead];
+            stream.Seek(position, SeekOrigin.Begin);
+            var read = stream.Read(buffer, 0, bytesToRead);
+            if (read <= 0)
+            {
+                break;
+            }
+
+            if (read != bytesToRead)
+            {
+                Array.Resize(ref buffer, read);
+            }
+
+            newlineCount += buffer.Count(static value => value == (byte)'\n');
+            chunks.Add(buffer);
+        }
+
+        if (chunks.Count == 0)
+        {
+            return [];
+        }
+
+        var totalLength = chunks.Sum(static chunk => chunk.Length);
+        var data = new byte[totalLength];
+        var offset = 0;
+        for (var index = chunks.Count - 1; index >= 0; index--)
+        {
+            var chunk = chunks[index];
+            Buffer.BlockCopy(chunk, 0, data, offset, chunk.Length);
+            offset += chunk.Length;
+        }
+
+        var text = Encoding.UTF8.GetString(data).TrimEnd('\r', '\n');
+        return text
+            .Split(['\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(static line => line.TrimEnd('\r'))
+            .Where(static line => !string.IsNullOrWhiteSpace(line))
+            .TakeLast(maxLines)
+            .ToList();
+    }
+
+    private static MobileInboxEntry? TryReadInboxEntry(string line)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(line);
+            var root = doc.RootElement;
+            var payload = root.TryGetProperty("payload", out var payloadElement) && payloadElement.ValueKind == JsonValueKind.Object
+                ? payloadElement
+                : default;
+
+            var source = FirstNonEmpty(
+                ReadString(root, "sourceDeviceName"),
+                ReadString(payload, "sourceDeviceName"),
+                ReadString(root, "sourceDeviceId"),
+                "手机");
+            var title = FirstNonEmpty(ReadString(root, "title"), "手机发来消息");
+            var text = FirstNonEmpty(ReadString(root, "text"), ReadString(root, "kind"), "手机消息");
+            var localFilePath = FirstNonEmpty(
+                ReadString(root, "localFilePath"),
+                ReadString(root, "screenshotFilePath"),
+                ReadString(payload, "localFilePath"),
+                ReadString(payload, "screenshotFilePath"),
+                ReadString(payload, "filePath"));
+            var screenshotDataUrl = FirstNonEmpty(
+                ReadString(root, "screenshotDataUrl"),
+                ReadString(payload, "screenshotDataUrl"));
+
+            return new MobileInboxEntry(
+                title,
+                text,
+                MobileDeviceNameNormalizer.Normalize(source, ReadString(root, "sourceDeviceId")),
+                ReadReceivedAt(root),
+                string.IsNullOrWhiteSpace(screenshotDataUrl) ? null : screenshotDataUrl,
+                string.IsNullOrWhiteSpace(localFilePath) ? null : localFilePath);
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Mobile inbox history entry skipped: {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static DateTimeOffset ReadReceivedAt(JsonElement root)
+    {
+        var receivedAtText = FirstNonEmpty(ReadString(root, "receivedAtUtc"), ReadString(root, "createdAt"));
+        if (DateTimeOffset.TryParse(receivedAtText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var receivedAt))
+        {
+            return receivedAt.ToLocalTime();
+        }
+
+        if (root.TryGetProperty("createdAt", out var createdAt) &&
+            createdAt.ValueKind == JsonValueKind.Number &&
+            createdAt.TryGetInt64(out var createdAtMillis))
+        {
+            return DateTimeOffset.FromUnixTimeMilliseconds(createdAtMillis).ToLocalTime();
+        }
+
+        return DateTimeOffset.Now;
+    }
+
+    private static string? ReadString(JsonElement element, string key)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(key, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Null => null,
+            JsonValueKind.Undefined => null,
+            _ => value.ToString()
+        };
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return string.Empty;
     }
 
     private void UpdateUrlActions()
@@ -267,6 +549,23 @@ public partial class MobileMessageToastWindow : Window
         ClipboardService.SetText(_conversationText.ToString());
     }
 
+    private void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(HostAssets.MobileInboxPath)!);
+            File.WriteAllText(HostAssets.MobileInboxPath, string.Empty);
+            LoadInboxHistory();
+            MetaText.Text = "手机聊天记录已清理";
+            HostAssets.AppendLog("Mobile inbox history cleared by user.");
+        }
+        catch (Exception ex)
+        {
+            MetaText.Text = "清理失败，详情见日志";
+            HostAssets.AppendLog($"Mobile inbox history clear failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     private void CloseButton_Click(object sender, RoutedEventArgs e)
     {
         Close();
@@ -277,4 +576,12 @@ public partial class MobileMessageToastWindow : Window
         var match = UrlRegex.Match(text ?? string.Empty);
         return match.Success ? match.Value.TrimEnd('.', ',', ';', ')', ']', '}') : null;
     }
+
+    private sealed record MobileInboxEntry(
+        string Title,
+        string Text,
+        string SourceDeviceName,
+        DateTimeOffset ReceivedAt,
+        string? ScreenshotDataUrl,
+        string? LocalFilePath);
 }

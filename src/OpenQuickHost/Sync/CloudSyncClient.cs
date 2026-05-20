@@ -765,6 +765,10 @@ public sealed class DeviceMessageRecord
 
     public string? SourceDeviceId { get; set; }
 
+    public string? SourceDeviceName { get; set; }
+
+    public string? SourceDeviceDisplayName { get; set; }
+
     public string? TargetDeviceId { get; set; }
 
     public string? TargetPlatform { get; set; }

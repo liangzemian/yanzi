@@ -19,7 +19,7 @@ namespace OpenQuickHost;
 
 public static class ScriptExtensionRunner
 {
-    private const string CSharpCacheVersion = "v8";
+    private const string CSharpCacheVersion = "v11";
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> CSharpBuildLocks = new(StringComparer.OrdinalIgnoreCase);
 
     public static async Task<ScriptExecutionResult> PreparePortableAssetsAsync(
@@ -288,6 +288,7 @@ public static class ScriptExtensionRunner
             CSharpCacheVersion,
             command.ExtensionId ?? string.Empty,
             source,
+            CSharpGlobalUsingsSource,
             CSharpRuntimeSource);
         var sourceHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(cacheFingerprint)))[..16].ToLowerInvariant();
         var buildRoot = CSharpExtensionCacheService.GetBuildRoot(command.ExtensionDirectoryPath!, sourceHash);
@@ -330,9 +331,11 @@ public static class ScriptExtensionRunner
         var outputDirectory = Path.GetDirectoryName(dllPath)!;
         Directory.CreateDirectory(outputDirectory);
         await File.WriteAllTextAsync(Path.Combine(buildRoot, "Action.cs"), source, Encoding.UTF8, cancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(buildRoot, "YanziGlobalUsings.cs"), CSharpGlobalUsingsSource, Encoding.UTF8, cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(buildRoot, "YanziRuntime.cs"), CSharpRuntimeSource, Encoding.UTF8, cancellationToken);
         var syntaxTrees = new[]
         {
+            CSharpSyntaxTree.ParseText(SourceText.From(CSharpGlobalUsingsSource, Encoding.UTF8), new CSharpParseOptions(LanguageVersion.Latest), path: "YanziGlobalUsings.cs", cancellationToken: cancellationToken),
             CSharpSyntaxTree.ParseText(SourceText.From(source, Encoding.UTF8), new CSharpParseOptions(LanguageVersion.Latest), path: "Action.cs", cancellationToken: cancellationToken),
             CSharpSyntaxTree.ParseText(SourceText.From(CSharpRuntimeSource, Encoding.UTF8), new CSharpParseOptions(LanguageVersion.Latest), path: "YanziRuntime.cs", cancellationToken: cancellationToken)
         };
@@ -402,8 +405,9 @@ public static class ScriptExtensionRunner
             : string.Join(Environment.NewLine, diagnostics);
         if (useNativeWindowMode)
         {
-            error = BuildNativeWindowReferenceDebugInfo() + Environment.NewLine + error;
+            HostAssets.AppendLog("ScriptRunner native-window reference diagnostics:" + Environment.NewLine + BuildNativeWindowReferenceDebugInfo());
         }
+
         return new ScriptExecutionResult(false, string.Empty, error, -1);
     }
 
@@ -538,10 +542,41 @@ public static class ScriptExtensionRunner
             }
 
             var location = assembly.Location;
+            var assemblyName = assembly.GetName().Name;
+            if (string.Equals(assemblyName, "YanziExtension", StringComparison.OrdinalIgnoreCase) ||
+                IsGeneratedExtensionAssemblyPath(location))
+            {
+                return;
+            }
+
             if (!string.IsNullOrWhiteSpace(location) && File.Exists(location))
             {
                 set.Add(location);
             }
+        }
+
+        static bool IsGeneratedExtensionAssemblyPath(string? location)
+        {
+            if (string.IsNullOrWhiteSpace(location))
+            {
+                return false;
+            }
+
+            var normalized = location.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+            return normalized.Contains($"{Path.DirectorySeparatorChar}.yanzi-csharp-cache{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
+        }
+
+        static void AddCandidatePath(HashSet<string> set, string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path) ||
+                IsGeneratedExtensionAssemblyPath(path) ||
+                !File.Exists(path) ||
+                !IsLoadableManagedAssembly(path))
+            {
+                return;
+            }
+
+            set.Add(path);
         }
 
         static void AddCandidateFile(HashSet<string> set, string? directory, string fileName)
@@ -552,9 +587,19 @@ public static class ScriptExtensionRunner
             }
 
             var fullPath = Path.Combine(directory, fileName);
-            if (File.Exists(fullPath))
+            AddCandidatePath(set, fullPath);
+        }
+
+        static void AddCandidateDirectoryAssemblies(HashSet<string> set, string? directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
             {
-                set.Add(fullPath);
+                return;
+            }
+
+            foreach (var path in Directory.EnumerateFiles(directory, "*.dll", SearchOption.TopDirectoryOnly))
+            {
+                AddCandidatePath(set, path);
             }
         }
 
@@ -602,6 +647,8 @@ public static class ScriptExtensionRunner
         var appDirectory = AppContext.BaseDirectory;
         var trustedPlatformAssemblies = AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES") as string;
 
+        AddCandidateDirectoryAssemblies(paths, appDirectory);
+
         foreach (var fileName in new[]
                  {
                      "System.Private.CoreLib.dll",
@@ -614,6 +661,8 @@ public static class ScriptExtensionRunner
                      "System.Text.RegularExpressions.dll",
                      "System.Threading.dll",
                      "System.Threading.Tasks.dll",
+                     "System.Drawing.Common.dll",
+                     "System.Management.dll",
                      "netstandard.dll",
                      "WindowsBase.dll",
                      "PresentationCore.dll",
@@ -636,6 +685,8 @@ public static class ScriptExtensionRunner
             AddCandidateFile(paths, directory, "System.Text.RegularExpressions.dll");
             AddCandidateFile(paths, directory, "System.Threading.dll");
             AddCandidateFile(paths, directory, "System.Threading.Tasks.dll");
+            AddCandidateFile(paths, directory, "System.Drawing.Common.dll");
+            AddCandidateFile(paths, directory, "System.Management.dll");
             AddCandidateFile(paths, directory, "netstandard.dll");
             AddCandidateFile(paths, directory, "WindowsBase.dll");
             AddCandidateFile(paths, directory, "PresentationCore.dll");
@@ -984,9 +1035,15 @@ public static class ScriptExtensionRunner
         var stateUpdates = await TryReadStateUpdatesAsync(stateUpdatePath, cancellationToken);
         HostAssets.AppendLog(
             $"ScriptRunner process exited: label={label}, pid={process.Id}, exitCode={process.ExitCode}, elapsedMs={processStopwatch.ElapsedMilliseconds}, outputLength={output.Length}, errorLength={error.Length}");
-        var result = process.ExitCode == 0
+        var hasErrorOutput = !string.IsNullOrWhiteSpace(error);
+        var result = process.ExitCode == 0 && !hasErrorOutput
             ? new ScriptExecutionResult(true, output, error, process.ExitCode, stateUpdates)
-            : new ScriptExecutionResult(false, output, string.IsNullOrWhiteSpace(error) ? $"{label}退出码：{process.ExitCode}" : error, process.ExitCode, stateUpdates);
+            : new ScriptExecutionResult(
+                false,
+                output,
+                hasErrorOutput ? error : $"{label}退出码：{process.ExitCode}",
+                process.ExitCode == 0 && hasErrorOutput ? -1 : process.ExitCode,
+                stateUpdates);
         process.Dispose();
         return result;
     }
@@ -1096,6 +1153,8 @@ public static class ScriptExtensionRunner
             "[Console]::InputEncoding = $utf8\r\n" +
             "[Console]::OutputEncoding = $utf8\r\n" +
             "$OutputEncoding = $utf8\r\n" +
+            "$yanziAssemblies = @('System.Drawing','System.Windows.Forms','System.Management','Microsoft.VisualBasic','System.ServiceProcess')\r\n" +
+            "foreach ($yanziAssembly in $yanziAssemblies) { try { Add-Type -AssemblyName $yanziAssembly -ErrorAction Stop } catch { } }\r\n" +
             $"& '{escapedEntryPath}' -InputText '{escapedInputText}' -ContextPath '{escapedContextPath}'\r\n";
     }
 
@@ -1502,6 +1561,19 @@ public static class ScriptExtensionRunner
 
             private sealed record StorageWriteRequest(string Key, string Content, string Scope);
         }
+        """;
+
+    private const string CSharpGlobalUsingsSource =
+        """
+        global using System;
+        global using System.Collections.Generic;
+        global using System.Diagnostics;
+        global using System.IO;
+        global using System.Linq;
+        global using System.Text;
+        global using System.Threading;
+        global using System.Threading.Tasks;
+        global using OpenQuickHost.CSharpRuntime;
         """;
 }
 
