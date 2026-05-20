@@ -719,6 +719,32 @@ public static class YanziAction
         return SaveJsonExtension(JsonSerializer.Serialize(updated, JsonOptions));
     }
 
+    public static CommandItem SetStartup(string extensionId, string? mode, string? schedule)
+    {
+        var manifestPath = GetManifestPath(extensionId);
+        if (!File.Exists(manifestPath))
+        {
+            throw new FileNotFoundException("没有找到对应扩展的 manifest.json。", manifestPath);
+        }
+
+        var normalizedMode = string.IsNullOrWhiteSpace(mode) ? null : mode.Trim();
+        var normalizedSchedule = string.IsNullOrWhiteSpace(schedule) ? null : schedule.Trim();
+        var manifest = ParseManifest(File.ReadAllText(manifestPath));
+        var updated = manifest with
+        {
+            Startup = normalizedMode == null && normalizedSchedule == null
+                ? null
+                : new LocalExtensionStartupManifest
+                {
+                    Mode = normalizedMode,
+                    Schedule = normalizedSchedule
+                }
+        };
+
+        File.WriteAllText(manifestPath, JsonSerializer.Serialize(updated, JsonOptions));
+        return SaveJsonExtension(JsonSerializer.Serialize(updated, JsonOptions));
+    }
+
     public static string CreateTemplateJson()
     {
         var manifest = new LocalExtensionManifest

@@ -409,6 +409,12 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         _mainWindow.OpenSettingsWindow("quickpanel");
     }
 
+    private void MobileMessagesButton_Click(object sender, RoutedEventArgs e)
+    {
+        HidePanel();
+        _mainWindow.ShowMobileInboxWindow();
+    }
+
     private void AddGlobalGroupButton_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new SimpleTextInputWindow("新建分组", "输入新分组名称。", string.Empty)
@@ -680,7 +686,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
 
     private void SlotButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (!IsEditMode || sender is not FrameworkElement { Tag: SlotViewModel vm } || vm.Item == null)
+        if (sender is not FrameworkElement { Tag: SlotViewModel vm } || vm.Item == null)
         {
             _dragStartPoint = null;
             _dragSourceSlot = null;
@@ -693,8 +699,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
 
     private void SlotButton_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
     {
-        if (!IsEditMode ||
-            e.LeftButton != MouseButtonState.Pressed ||
+        if (e.LeftButton != MouseButtonState.Pressed ||
             _dragStartPoint == null ||
             _dragSourceSlot?.Item == null)
         {
@@ -710,10 +715,65 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
 
         StopFolderHoverTimer();
         var payload = new System.Windows.DataObject(typeof(SlotViewModel), _dragSourceSlot);
-        DragDrop.DoDragDrop((DependencyObject)sender, payload, System.Windows.DragDropEffects.Move);
+        WindowBindingDropOverlayWindow? bindingOverlay = null;
+        DispatcherTimer? bindingOverlayTimer = null;
+        var draggedCommand = _dragSourceSlot.Command;
+        if (!_dragSourceSlot.IsFolder && draggedCommand != null)
+        {
+            payload.SetData(typeof(CommandItem), draggedCommand);
+            bindingOverlay = new WindowBindingDropOverlayWindow(draggedCommand);
+            bindingOverlay.BindingDropped += (hwnd, corner) =>
+            {
+                _ = _mainWindow.BindExtensionToWindowFromDropAsync(draggedCommand, hwnd, corner);
+            };
+            bindingOverlayTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(80)
+            };
+            bindingOverlayTimer.Tick += (_, _) =>
+            {
+                if (bindingOverlay == null || bindingOverlay.IsVisible || IsCursorInsideQuickPanel())
+                {
+                    return;
+                }
+
+                bindingOverlay.ShowFullDesktop();
+            };
+            bindingOverlayTimer.Start();
+        }
+
+        var sourceElement = (UIElement)sender;
+        System.Windows.GiveFeedbackEventHandler feedbackHandler = (_, args) =>
+        {
+            args.UseDefaultCursors = false;
+            System.Windows.Input.Mouse.SetCursor(System.Windows.Input.Cursors.Arrow);
+            args.Handled = true;
+        };
+        sourceElement.GiveFeedback += feedbackHandler;
+
+        try
+        {
+            DragDrop.DoDragDrop((DependencyObject)sender, payload, System.Windows.DragDropEffects.Move | System.Windows.DragDropEffects.Copy);
+        }
+        finally
+        {
+            sourceElement.GiveFeedback -= feedbackHandler;
+            bindingOverlayTimer?.Stop();
+            if (bindingOverlay?.IsVisible == true)
+            {
+                bindingOverlay.Close();
+            }
+        }
         _dragStartPoint = null;
         _dragSourceSlot = null;
         ClearReleaseTarget();
+    }
+
+    private bool IsCursorInsideQuickPanel()
+    {
+        var cursor = System.Windows.Forms.Cursor.Position;
+        var point = PointFromScreen(new System.Windows.Point(cursor.X, cursor.Y));
+        return point.X >= 0 && point.Y >= 0 && point.X <= ActualWidth && point.Y <= ActualHeight;
     }
 
     private void SlotButton_DragOver(object sender, System.Windows.DragEventArgs e)
@@ -725,6 +785,35 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             return;
         }
 
+        // Internal panel slot drag (highest priority)
+        if (e.Data.GetDataPresent(typeof(SlotViewModel)))
+        {
+            var source = e.Data.GetData(typeof(SlotViewModel)) as SlotViewModel;
+            if (source == null || ReferenceEquals(source, target))
+            {
+                e.Effects = System.Windows.DragDropEffects.None;
+                StopFolderHoverTimer();
+                return;
+            }
+
+            e.Effects = System.Windows.DragDropEffects.Move;
+            _suspendReleaseTargetPollingUntilUtc = DateTimeOffset.UtcNow.AddMilliseconds(350);
+            SetReleaseTarget(target);
+
+            if (!source.IsFolder && !target.IsFolder && source.Command != null && target.Command != null)
+            {
+                StartFolderHoverTimer(source, target);
+            }
+            else
+            {
+                StopFolderHoverTimer();
+            }
+
+            e.Handled = true;
+            return;
+        }
+
+        // External command drop (from main window)
         if (e.Data.GetDataPresent(typeof(CommandItem)))
         {
             var command = e.Data.GetData(typeof(CommandItem)) as CommandItem;
@@ -740,6 +829,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             }
 
             StopFolderHoverTimer();
+            e.Handled = true;
             return;
         }
 
@@ -761,33 +851,8 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (!IsEditMode || !e.Data.GetDataPresent(typeof(SlotViewModel)))
-        {
-            e.Effects = System.Windows.DragDropEffects.None;
-            StopFolderHoverTimer();
-            return;
-        }
-
-        var source = e.Data.GetData(typeof(SlotViewModel)) as SlotViewModel;
-        if (source == null || ReferenceEquals(source, target))
-        {
-            e.Effects = System.Windows.DragDropEffects.None;
-            StopFolderHoverTimer();
-            return;
-        }
-
-        e.Effects = System.Windows.DragDropEffects.Move;
-        _suspendReleaseTargetPollingUntilUtc = DateTimeOffset.UtcNow.AddMilliseconds(350);
-        SetReleaseTarget(target);
-
-        if (!source.IsFolder && !target.IsFolder && source.Command != null && target.Command != null)
-        {
-            StartFolderHoverTimer(source, target);
-        }
-        else
-        {
-            StopFolderHoverTimer();
-        }
+        e.Effects = System.Windows.DragDropEffects.None;
+        StopFolderHoverTimer();
 
         e.Handled = true;
     }
@@ -804,7 +869,20 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             return;
         }
 
-        if (e.Data.GetDataPresent(typeof(CommandItem)))
+        // Check for internal panel slot drag first (has both SlotViewModel and CommandItem)
+        if (e.Data.GetDataPresent(typeof(SlotViewModel)))
+        {
+            var source = e.Data.GetData(typeof(SlotViewModel)) as SlotViewModel;
+            if (source != null && !ReferenceEquals(source, target))
+            {
+                StopFolderHoverTimer();
+                MoveOrSwapSlot(source, target);
+                e.Handled = true;
+                return;
+            }
+        }
+
+        if (e.Data.GetDataPresent(typeof(CommandItem)) && !e.Data.GetDataPresent(typeof(SlotViewModel)))
         {
             var command = e.Data.GetData(typeof(CommandItem)) as CommandItem;
             if (command != null && target.Item == null)
@@ -830,20 +908,6 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             e.Handled = true;
             return;
         }
-
-        if (!IsEditMode || !e.Data.GetDataPresent(typeof(SlotViewModel)))
-        {
-            return;
-        }
-
-        var source = e.Data.GetData(typeof(SlotViewModel)) as SlotViewModel;
-        if (source == null || ReferenceEquals(source, target))
-        {
-            return;
-        }
-
-        StopFolderHoverTimer();
-        MoveOrSwapSlot(source, target);
         e.Handled = true;
     }
 
@@ -969,7 +1033,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             }
             else
             {
-                HostAssets.AppendLog("Quick panel execute: selection capture skipped for direct open target.");
+                HostAssets.AppendLog("Quick panel execute: selection capture skipped for command without context input.");
             }
 
             _mainWindow.ExecuteCommandExternally(command, input, launchSource);
@@ -1906,6 +1970,7 @@ public class SlotViewModel : INotifyPropertyChanged
     public bool CanRemoveFromFixedSlots => _item != null;
     public string FavoriteLabel => _isFavorite ? "取消收藏" : "收藏";
     public string Title => IsFolder ? _folderName : _command?.Title ?? string.Empty;
+    public string DisplayTitle => IsCSharpPrebuilding ? "编译中..." : Title;
     public ImageSource? Icon => IsFolder ? null : _command?.IconSource;
     public Geometry? VectorIcon => IsFolder ? FolderGeometry : _command?.VectorIcon;
     public bool HasImageIcon => !IsFolder && (_command?.HasImageIcon ?? false);
@@ -1913,6 +1978,7 @@ public class SlotViewModel : INotifyPropertyChanged
     public bool UseGlyphIcon => !IsFolder && (_command?.UseGlyphIcon ?? false);
     public string DisplayGlyph => _command?.DisplayGlyph ?? string.Empty;
     public bool HasNewBadge => !IsFolder && (_command?.HasNewBadge ?? false);
+    public bool IsCSharpPrebuilding => !IsFolder && (_command?.IsCSharpPrebuilding ?? false);
     public bool HasFolderBadge => IsFolder;
     public string FolderBadgeText => _folderExtensionIds.Count > 99 ? "99+" : _folderExtensionIds.Count.ToString();
     public IReadOnlyList<string> FolderExtensionIds => _folderExtensionIds;
@@ -1938,6 +2004,7 @@ public class SlotViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(IsOccupied));
         OnPropertyChanged(nameof(Title));
+        OnPropertyChanged(nameof(DisplayTitle));
         OnPropertyChanged(nameof(Icon));
         OnPropertyChanged(nameof(VectorIcon));
         OnPropertyChanged(nameof(HasImageIcon));
@@ -1945,6 +2012,7 @@ public class SlotViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(UseGlyphIcon));
         OnPropertyChanged(nameof(DisplayGlyph));
         OnPropertyChanged(nameof(HasNewBadge));
+        OnPropertyChanged(nameof(IsCSharpPrebuilding));
         OnPropertyChanged(nameof(IsFavorite));
         OnPropertyChanged(nameof(FavoriteLabel));
         OnPropertyChanged(nameof(IsContextual));
@@ -1979,6 +2047,13 @@ public class SlotViewModel : INotifyPropertyChanged
             string.Equals(e.PropertyName, nameof(CommandItem.HasNewBadge), StringComparison.Ordinal))
         {
             OnPropertyChanged(nameof(HasNewBadge));
+        }
+
+        if (string.IsNullOrWhiteSpace(e.PropertyName) ||
+            string.Equals(e.PropertyName, nameof(CommandItem.IsCSharpPrebuilding), StringComparison.Ordinal))
+        {
+            OnPropertyChanged(nameof(IsCSharpPrebuilding));
+            OnPropertyChanged(nameof(DisplayTitle));
         }
     }
 
@@ -2049,4 +2124,3 @@ public class BooleanToColorConverter : System.Windows.Data.IValueConverter
     }
     public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture) => throw new NotImplementedException();
 }
-

@@ -24,6 +24,7 @@ using System.Windows.Markup;
 using System.Windows.Forms;
 using Microsoft.VisualBasic.FileIO;
 using Forms = System.Windows.Forms;
+using System.Text;
 
 namespace OpenQuickHost;
 
@@ -32,6 +33,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private const int HotKeyId = 0x5301;
     private const int YanmHotKeyId = 0x5302;
     private const int RadialHotKeyId = 0x5303;
+    private const int WindowSnapAssistHotKeyId = 0x5304;
     private const uint ModControl = 0x0002;
     private const uint ModAlt = 0x0001;
     private const uint ModShift = 0x0004;
@@ -73,6 +75,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private RadialMenuWindow? _radialMenu;
     private YanmOverlayWindow? _yanmOverlay;
     private MobileMessageToastWindow? _mobileMessageToastWindow;
+    private readonly WindowBoundExtensionsService _windowBoundExtensionsService;
+    private readonly WindowSnapAssistService _windowSnapAssistService;
     private readonly DispatcherTimer _backgroundWebDavSyncTimer;
     private readonly DispatcherTimer _cloudReconnectTimer;
     private readonly DispatcherTimer _mobileMessagePollTimer;
@@ -185,19 +189,32 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Closing += MainWindow_Closing;
         StateChanged += MainWindow_StateChanged;
 
+        _quickPanel = new QuickPanelWindow(this);
+        _radialMenu = new RadialMenuWindow(this);
+        _yanmOverlay = new YanmOverlayWindow(this);
+        _windowBoundExtensionsService = new WindowBoundExtensionsService(this);
+        _windowSnapAssistService = new WindowSnapAssistService();
+        _windowSnapAssistService.DisabledByUser += () =>
+        {
+            var settings = AppSettingsStore.Load();
+            settings.EnableWindowSnapAssist = false;
+            AppSettingsStore.Save(settings);
+            _appSettings = settings;
+            UnregisterWindowSnapAssistHotkey();
+            HostAssets.AppendLog("Window snap assist disabled by user via context menu.");
+        };
+
         Closing += (s, e) =>
         {
             InputHookService.Stop();
             KeyboardDoubleTapService.Stop();
             YanyuTriggerService.Stop();
             YarnSelectService.Stop();
+            _windowBoundExtensionsService.Stop();
+            _windowSnapAssistService.Stop();
             _mobileMessageBridgeCts?.Cancel();
             _mobileMessagePollTimer.Stop();
         };
-
-        _quickPanel = new QuickPanelWindow(this);
-        _radialMenu = new RadialMenuWindow(this);
-        _yanmOverlay = new YanmOverlayWindow(this);
 
         NetworkChange.NetworkAvailabilityChanged += NetworkChange_NetworkAvailabilityChanged;
         NetworkChange.NetworkAddressChanged += NetworkChange_NetworkAddressChanged;
@@ -539,6 +556,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         SearchBox.Focus();
         SetSearchScopePopupOpen(true);
         StartBackgroundWebDavSync();
+        _windowBoundExtensionsService.Start(_appSettings.WindowBindings);
+        if (_appSettings.EnableWindowSnapAssist)
+        {
+            _windowSnapAssistService.Start();
+        }
 
         if (_cloudSyncClient == null)
         {
@@ -912,7 +934,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         var payload = new System.Windows.DataObject(typeof(CommandItem), runnable);
-        DragDrop.DoDragDrop(CommandList, payload, System.Windows.DragDropEffects.Copy);
+        WindowBindingDropOverlayWindow? bindingOverlay = null;
+        if (runnable.Source is CommandSource.LocalExtension or CommandSource.Cloud)
+        {
+            bindingOverlay = new WindowBindingDropOverlayWindow(runnable);
+            bindingOverlay.BindingDropped += (hwnd, corner) =>
+            {
+                _ = BindExtensionToWindowHandleAsync(runnable, hwnd, corner, restorePanel: false);
+            };
+            bindingOverlay.ShowFullDesktop();
+        }
+
+        try
+        {
+            DragDrop.DoDragDrop(CommandList, payload, System.Windows.DragDropEffects.Copy);
+        }
+        finally
+        {
+            if (bindingOverlay?.IsVisible == true)
+            {
+                bindingOverlay.Close();
+            }
+        }
     }
 
     private static bool TryResolveCommandListItem(object sender, DependencyObject? originalSource, out CommandItem? command)
@@ -1505,6 +1548,354 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return sender is MenuItem { CommandParameter: CommandItem command } ? command : null;
     }
 
+    private async Task BindExtensionToForegroundWindowAsync(CommandItem command, string corner)
+    {
+        var launcherHandle = new WindowInteropHelper(this).Handle;
+        var startedAt = DateTimeOffset.Now;
+
+        try
+        {
+            LastRunMessage = "窗口绑定：请切换到目标窗口（10 秒内）。";
+            SyncStatus = "窗口绑定：请切换到目标窗口（10 秒内）。";
+            WindowState = WindowState.Minimized;
+            await Task.Delay(120);
+
+            IntPtr target = IntPtr.Zero;
+            while (DateTimeOffset.Now - startedAt < TimeSpan.FromSeconds(10))
+            {
+                target = GetForegroundWindow();
+                if (target != IntPtr.Zero &&
+                    target != launcherHandle &&
+                    IsWindowVisible(target) &&
+                    !IsIconic(target) &&
+                    TryGetWindowProcessId(target, out var pid) &&
+                    pid != 0 &&
+                    pid != (uint)Environment.ProcessId)
+                {
+                    break;
+                }
+
+                target = IntPtr.Zero;
+                await Task.Delay(100);
+            }
+
+            if (target == IntPtr.Zero)
+            {
+                LastRunMessage = "窗口绑定：超时，未检测到目标窗口。";
+                SyncStatus = "窗口绑定：超时，未检测到目标窗口。";
+                return;
+            }
+
+            await BindExtensionToWindowHandleAsync(command, target, corner, restorePanel: false);
+        }
+        catch (Exception ex)
+        {
+            LastRunMessage = $"窗口绑定失败：{FormatExceptionMessage(ex)}";
+            SyncStatus = $"窗口绑定失败：{FormatExceptionMessage(ex)}";
+        }
+        finally
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                WindowState = WindowState.Normal;
+                ShowPanel();
+            });
+        }
+    }
+
+    private Task BindExtensionToWindowHandleAsync(CommandItem command, IntPtr target, string corner, bool restorePanel)
+    {
+        try
+        {
+            var processName = GetProcessName(target);
+            var windowClass = GetWindowClassName(target);
+            var windowTitle = GetWindowTitle(target);
+
+            if (string.IsNullOrWhiteSpace(processName))
+            {
+                LastRunMessage = "窗口绑定：读取窗口进程失败。";
+                SyncStatus = "窗口绑定：读取窗口进程失败。";
+                return Task.CompletedTask;
+            }
+
+            var settings = AppSettingsStore.Load();
+            settings.WindowBindings ??= new WindowBindingSettings();
+            settings.WindowBindings.Rules ??= [];
+            settings.WindowBindings.Enabled = true;
+            settings.WindowBindings.Rules.RemoveAll(rule =>
+                rule.Enabled &&
+                rule.ExtensionId.Equals(command.ExtensionId, StringComparison.OrdinalIgnoreCase) &&
+                rule.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase) &&
+                rule.WindowClass.Equals(windowClass, StringComparison.OrdinalIgnoreCase) &&
+                WindowBindingCorners.Normalize(rule.Corner) == corner);
+
+            settings.WindowBindings.Rules.Add(new WindowBindingRuleSettings
+            {
+                Enabled = true,
+                ExtensionId = command.ExtensionId,
+                ProcessName = processName,
+                WindowClass = windowClass,
+                TitleContains = string.Empty,
+                Corner = WindowBindingCorners.Normalize(corner)
+            });
+
+            AppSettingsStore.Save(settings);
+            _appSettings = AppSettingsStore.Load();
+            _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
+            _windowBoundExtensionsService.RefreshForWindow(target);
+
+            var cornerText = ToWindowBindingCornerText(corner);
+            LastRunMessage = $"窗口绑定成功：{command.Title}（{processName} · {cornerText}）";
+            SyncStatus = $"窗口绑定成功：{command.Title}（{processName}）";
+            HostAssets.AppendLog($"Window binding saved: extension={command.ExtensionId}, process={processName}, class={windowClass}, title={windowTitle}, corner={corner}.");
+
+            if (restorePanel)
+            {
+                ShowPanel();
+            }
+        }
+        catch (Exception ex)
+        {
+            LastRunMessage = $"窗口绑定失败：{FormatExceptionMessage(ex)}";
+            SyncStatus = $"窗口绑定失败：{FormatExceptionMessage(ex)}";
+            HostAssets.AppendLog($"Window binding save failed: extension={command.ExtensionId}, error={ex}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task BindExtensionToWindowFromDropAsync(CommandItem command, IntPtr target, string corner)
+    {
+        return BindExtensionToWindowHandleAsync(command, target, corner, restorePanel: false);
+    }
+
+    public void ShowWindowBindingContextMenu(CommandItem command, string bindingRuleId, WindowBoundExtensionOverlayWindow placementTarget)
+    {
+        SelectCommandForExtensionAction(command);
+
+        var menu = new ContextMenu
+        {
+            PlacementTarget = placementTarget,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint
+        };
+
+        AddMenuItem(menu, "添加桌面快捷方式", "desktop-shortcut", async () => await CreateDesktopShortcutAsync(), command.OpenTarget is { Length: > 0 } && !IsInternalCommand(command));
+        menu.Items.Add(new Separator());
+        AddMenuItem(menu, "设置快捷键", "shortcut", async () => await SetSelectedExtensionShortcutAsync(), command.Source == CommandSource.LocalExtension);
+        AddMenuItem(menu, "重命名", "pen", async () => await RenameSelectedExtensionAsync(), command.Source == CommandSource.LocalExtension);
+        AddMenuItem(menu, "编辑扩展", "pen", async () => await EditSelectedExtensionAsync(), command.Source == CommandSource.LocalExtension);
+        AddMenuItem(menu, "发布到商店", "publish", async () =>
+        {
+            var ok = await PublishSelectedExtensionAsync();
+            if (!ok)
+            {
+                SyncStatus = string.IsNullOrWhiteSpace(SyncStatus) ? "发布到商店失败。" : SyncStatus;
+            }
+        }, command.Source == CommandSource.LocalExtension && _cloudSyncClient != null);
+        AddMenuItem(menu, "复制商店链接", "link", () => CopyExtensionStoreLinkMenuItem_Click(CreateMenuSender(command), new RoutedEventArgs()), command.Source == CommandSource.LocalExtension);
+        AddMenuItem(menu, "打开商店链接", "link", () => OpenExtensionStoreLinkMenuItem_Click(CreateMenuSender(command), new RoutedEventArgs()), command.Source == CommandSource.LocalExtension);
+        AddMenuItem(menu, "删除", "delete", async () => await DeleteSelectedExtensionAsync(), command.Source == CommandSource.LocalExtension);
+        menu.Items.Add(new Separator());
+        AddMenuItem(menu, "复制扩展", "copy", () => CopyExtensionMenuItem_Click(CreateMenuSender(command), new RoutedEventArgs()), true);
+        AddMenuItem(menu, "剪切扩展", "cut", () => CutExtensionMenuItem_Click(CreateMenuSender(command), new RoutedEventArgs()), true);
+        AddMenuItem(menu, "粘贴扩展", "paste", () => PasteExtensionMenuItem_Click(CreateMenuSender(command), new RoutedEventArgs()), true);
+        menu.Items.Add(new Separator());
+        AddMenuItem(menu, "添加到鼠标面板", "plus", () => AddCurrentCommandToQuickPanel(), true);
+        menu.Items.Add(new Separator());
+        var hoverModeEnabled = IsWindowBindingHoverMode(bindingRuleId);
+        AddMenuItem(menu, hoverModeEnabled ? "始终显示" : "悬停时显示", "pin", () => ToggleWindowBindingHoverMode(bindingRuleId), true);
+        AddMenuItem(menu, "取消窗口绑定", "delete", () => RemoveWindowBinding(bindingRuleId, command.Title), true);
+
+        menu.IsOpen = true;
+    }
+
+    private static MenuItem CreateMenuSender(CommandItem command) => new() { CommandParameter = command };
+
+    private void AddMenuItem(ContextMenu menu, string header, string iconReference, Action action, bool isEnabled)
+    {
+        var item = new MenuItem
+        {
+            Header = header,
+            IsEnabled = isEnabled,
+            Icon = CreateMenuIcon(iconReference)
+        };
+        item.Click += (_, _) => action();
+        menu.Items.Add(item);
+    }
+
+    private static object? CreateMenuIcon(string iconReference)
+    {
+        var geometry = ExtensionIconLibrary.ResolveVectorIcon($"mdi:{iconReference}");
+        if (geometry == null)
+        {
+            return null;
+        }
+
+        return new System.Windows.Shapes.Path
+        {
+            Data = geometry,
+            Fill = new SolidColorBrush(System.Windows.Media.Color.FromRgb(160, 174, 192)),
+            Width = 16,
+            Height = 16,
+            Stretch = Stretch.Uniform
+        };
+    }
+
+    private void SelectCommandForExtensionAction(CommandItem command)
+    {
+        SelectedCommand = command;
+        CommandList.SelectedItem = command;
+        _lastActionableCommand = command;
+    }
+
+    public void UpdateWindowBindingOffset(string ruleId, int offsetX, int offsetY)
+    {
+        if (string.IsNullOrWhiteSpace(ruleId))
+        {
+            return;
+        }
+
+        var settings = AppSettingsStore.Load();
+        var rule = settings.WindowBindings?.Rules?.FirstOrDefault(item => item.Id.Equals(ruleId, StringComparison.OrdinalIgnoreCase));
+        if (rule == null)
+        {
+            return;
+        }
+
+        rule.OffsetX = RoundToGrid(offsetX, 10);
+        rule.OffsetY = RoundToGrid(offsetY, 10);
+        AppSettingsStore.Save(settings);
+        _appSettings = AppSettingsStore.Load();
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
+        LastRunMessage = $"已移动窗口绑定位置：{rule.OffsetX}, {rule.OffsetY}";
+    }
+
+    private void RemoveWindowBinding(string ruleId, string commandTitle)
+    {
+        var settings = AppSettingsStore.Load();
+        var removed = settings.WindowBindings?.Rules?.RemoveAll(rule => rule.Id.Equals(ruleId, StringComparison.OrdinalIgnoreCase)) ?? 0;
+        if (removed <= 0)
+        {
+            return;
+        }
+
+        AppSettingsStore.Save(settings);
+        _appSettings = AppSettingsStore.Load();
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
+        LastRunMessage = $"已取消窗口绑定：{commandTitle}";
+        SyncStatus = $"已取消窗口绑定：{commandTitle}";
+    }
+
+    private bool IsWindowBindingHoverMode(string ruleId)
+    {
+        var rule = _appSettings.WindowBindings?.Rules?.FirstOrDefault(r => r.Id.Equals(ruleId, StringComparison.OrdinalIgnoreCase));
+        return rule?.HoverMode ?? false;
+    }
+
+    private void ToggleWindowBindingHoverMode(string ruleId)
+    {
+        var settings = AppSettingsStore.Load();
+        var rule = settings.WindowBindings?.Rules?.FirstOrDefault(r => r.Id.Equals(ruleId, StringComparison.OrdinalIgnoreCase));
+        if (rule == null)
+        {
+            return;
+        }
+
+        rule.HoverMode = !rule.HoverMode;
+        AppSettingsStore.Save(settings);
+        _appSettings = AppSettingsStore.Load();
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
+        SyncStatus = rule.HoverMode ? "已设为悬停时显示" : "已设为始终显示";
+    }
+
+    private static int RoundToGrid(int value, int gridSize)
+    {
+        return (int)Math.Round(value / (double)gridSize, MidpointRounding.AwayFromZero) * gridSize;
+    }
+
+    private static string ToWindowBindingCornerText(string corner)
+    {
+        return WindowBindingCorners.Normalize(corner) switch
+        {
+            WindowBindingCorners.TopRight => "右上",
+            WindowBindingCorners.BottomLeft => "左下",
+            WindowBindingCorners.BottomRight => "右下",
+            _ => "左上"
+        };
+    }
+
+    private static string GetWindowClassName(IntPtr hwnd)
+    {
+        try
+        {
+            var builder = new StringBuilder(256);
+            _ = GetClassName(hwnd, builder, builder.Capacity);
+            return builder.ToString();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string GetWindowTitle(IntPtr hwnd)
+    {
+        try
+        {
+            var builder = new StringBuilder(1024);
+            _ = GetWindowText(hwnd, builder, builder.Capacity);
+            return builder.ToString();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string GetProcessName(IntPtr hwnd)
+    {
+        try
+        {
+            if (!TryGetWindowProcessId(hwnd, out var pid) || pid == 0)
+            {
+                return string.Empty;
+            }
+
+            return Process.GetProcessById((int)pid).ProcessName;
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static bool TryGetWindowProcessId(IntPtr hwnd, out uint pid)
+    {
+        pid = 0;
+        try
+        {
+            _ = GetWindowThreadProcessId(hwnd, out pid);
+            return true;
+        }
+        catch
+        {
+            pid = 0;
+            return false;
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
 
     private async void RunSelectedCommand()
     {
@@ -1899,7 +2290,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _searchUsageMemory.Record(command.ExtensionId);
         SearchUsageMemory.Save(_searchUsageMemory);
-        QueueBackgroundWebDavSync("search-memory");
     }
 
     private static List<string> BuildContextAliases(string processName, string windowTitle)
@@ -2454,6 +2844,7 @@ public sealed class CommandItem : INotifyPropertyChanged
     private string? _queryPreviewActionLabel;
     private ImageSource? _iconSource;
     private bool _hasNewBadge;
+    private bool _isCSharpPrebuilding;
 
     public CommandItem(
         string glyph,
@@ -2544,6 +2935,10 @@ public sealed class CommandItem : INotifyPropertyChanged
 
     public string DisplaySubtitle => string.IsNullOrWhiteSpace(_queryPreviewSubtitle) ? Subtitle : _queryPreviewSubtitle;
 
+    public string EffectiveSubtitle => IsCSharpPrebuilding
+        ? "正在编译扩展，首次运行完成后会更快"
+        : DisplaySubtitle;
+
     public string Category { get; }
 
     public System.Windows.Media.Brush AccentBrush { get; }
@@ -2597,7 +2992,6 @@ public sealed class CommandItem : INotifyPropertyChanged
     public bool SupportsQueryArgument => QueryPrefixes.Count > 0 && (!string.IsNullOrWhiteSpace(QueryTargetTemplate) || HasScriptEntry || HasHostedView);
 
     public bool ShouldCaptureSelectedInput =>
-        SupportsQueryArgument ||
         HasPermission("context.read");
 
     public bool HasSearchProvider => SearchProvider != null;
@@ -2622,6 +3016,8 @@ public sealed class CommandItem : INotifyPropertyChanged
     public bool HasGlobalShortcut => !string.IsNullOrWhiteSpace(GlobalShortcut);
 
     public bool HasNewBadge => _hasNewBadge;
+
+    public bool IsCSharpPrebuilding => _isCSharpPrebuilding;
 
     public bool IsFileSystemResult => ResultKind is ResultItemKind.File or ResultItemKind.Folder;
 
@@ -2739,6 +3135,7 @@ public sealed class CommandItem : INotifyPropertyChanged
         _queryPreviewSubtitle = subtitle;
         _queryPreviewActionLabel = actionLabel;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplaySubtitle)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(EffectiveSubtitle)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayActionLabel)));
     }
 
@@ -2764,6 +3161,18 @@ public sealed class CommandItem : INotifyPropertyChanged
 
         _hasNewBadge = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasNewBadge)));
+    }
+
+    public void SetCSharpPrebuildState(bool value)
+    {
+        if (_isCSharpPrebuilding == value)
+        {
+            return;
+        }
+
+        _isCSharpPrebuilding = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsCSharpPrebuilding)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(EffectiveSubtitle)));
     }
 
     private void NotifyCloudChanged()

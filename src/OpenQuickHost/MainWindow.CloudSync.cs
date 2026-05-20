@@ -885,7 +885,7 @@ public partial class MainWindow
 
             LastRunMessage = $"{title}：{text}";
             SyncStatus = "已收到手机端消息。";
-            SaveMobileInboxMessage(message, title, text, sourceLabel);
+            SaveMobileInboxMessage(message, title, text, sourceLabel, screenshotDataUrl, screenshotFilePath);
             ShowMobileMessageToast(title, text, sourceLabel, screenshotDataUrl, screenshotFilePath);
         });
     }
@@ -947,21 +947,30 @@ public partial class MainWindow
 
     private static string GetMobileSourceLabel(DeviceMessageRecord message)
     {
-        if (message.Payload.TryGetValue("sourceDeviceName", out var nameElement))
+        var label = FirstNonEmpty(
+            message.SourceDeviceDisplayName,
+            message.SourceDeviceName,
+            GetPayloadString(message, "sourceDeviceDisplayName"),
+            GetPayloadString(message, "sourceDeviceName"),
+            GetPayloadString(message, "deviceName"),
+            GetPayloadString(message, "displayName"));
+        return MobileDeviceNameNormalizer.Normalize(label, message.SourceDeviceId);
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
         {
-            var name = nameElement.ValueKind == JsonValueKind.String
-                ? nameElement.GetString()
-                : nameElement.ToString();
-            if (!string.IsNullOrWhiteSpace(name))
+            if (!string.IsNullOrWhiteSpace(value))
             {
-                return name.Trim();
+                return value.Trim();
             }
         }
 
-        return message.SourceDeviceId ?? "unknown";
+        return string.Empty;
     }
 
-    private static void SaveMobileInboxMessage(DeviceMessageRecord message, string title, string text, string sourceLabel)
+    private static void SaveMobileInboxMessage(DeviceMessageRecord message, string title, string text, string sourceLabel, string? screenshotDataUrl, string? screenshotFilePath)
     {
         try
         {
@@ -974,6 +983,8 @@ public partial class MainWindow
                 title,
                 text,
                 payload = message.Payload,
+                screenshotDataUrl = string.IsNullOrWhiteSpace(screenshotFilePath) ? screenshotDataUrl : null,
+                localFilePath = screenshotFilePath,
                 receivedAtUtc = DateTimeOffset.UtcNow.ToString("O"),
                 createdAt = message.CreatedAt
             };
@@ -984,6 +995,27 @@ public partial class MainWindow
         catch (Exception ex)
         {
             HostAssets.AppendLog($"Mobile inbox save failed: id={message.MessageId}, {FormatExceptionMessage(ex)}");
+        }
+    }
+
+    public void ShowMobileInboxWindow()
+    {
+        try
+        {
+            if (_mobileMessageToastWindow is { IsVisible: true })
+            {
+                _mobileMessageToastWindow.LoadInboxHistory();
+                _mobileMessageToastWindow.Activate();
+                return;
+            }
+
+            _mobileMessageToastWindow = new MobileMessageToastWindow();
+            _mobileMessageToastWindow.Closed += (_, _) => _mobileMessageToastWindow = null;
+            _mobileMessageToastWindow.Show();
+        }
+        catch (Exception ex)
+        {
+            HostAssets.AppendLog($"Mobile inbox window failed: {FormatExceptionMessage(ex)}");
         }
     }
 
@@ -1099,8 +1131,12 @@ public partial class MainWindow
         try
         {
             HostAssets.AppendLog($"WebDAV background sync started: {reason}");
-            var service = new WebDavSyncService(AppSettingsStore.Load());
-            var result = await service.SyncExtensionsAsync();
+            var settings = AppSettingsStore.Load();
+            var result = await Task.Run(async () =>
+            {
+                var service = new WebDavSyncService(settings);
+                return await service.SyncExtensionsAsync();
+            });
             ApplyWebDavSyncResult(result);
             SyncStatus = $"个人扩展后台同步完成：上传 {result.UploadedCount} 个，拉取 {result.PulledCount} 个。";
             HostAssets.AppendLog($"WebDAV background sync completed: {reason}, uploaded={result.UploadedCount}, pulled={result.PulledCount}, configUploaded={result.ConfigUploaded}, configPulled={result.ConfigPulled}");
@@ -1124,7 +1160,11 @@ public partial class MainWindow
 
     private void ApplyWebDavSyncResult(WebDavSyncResult result)
     {
-        ReloadLocalExtensionsFromWebDav();
+        if (result.PulledCount > 0 || result.ConfigPulled)
+        {
+            ReloadLocalExtensionsFromWebDav();
+        }
+
         if (!result.ConfigPulled)
         {
             return;
@@ -1196,6 +1236,7 @@ public partial class MainWindow
         }
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         if (!string.IsNullOrWhiteSpace(snapshot.WebDavPassword))
         {
             SaveWebDavCredential(snapshot.WebDavUsername ?? string.Empty, snapshot.WebDavPassword);
@@ -1409,6 +1450,7 @@ public partial class MainWindow
 
         AppSettingsStore.Save(settings);
         _appSettings = AppSettingsStore.Load();
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();
@@ -1499,6 +1541,7 @@ public partial class MainWindow
             settings.LauncherConfigUpdatedAtUtc = DateTime.UtcNow.ToString("O");
             AppSettingsStore.Save(settings);
             _appSettings = AppSettingsStore.Load();
+            _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
             if (!_listenerServicesPaused)
             {
                 InputHookService.ReloadSettings();
@@ -1792,6 +1835,7 @@ public partial class MainWindow
     {
         var settings = AppSettingsStore.Load();
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         OnPropertyChanged(nameof(AiChatModelDisplayText));
         if (!_listenerServicesPaused)
         {
@@ -1805,7 +1849,9 @@ public partial class MainWindow
 
             RefreshYanyuRules();
             _yanmOverlay?.ReloadSettings();
+            _windowSnapAssistService.ReloadCustomLayouts();
             RefreshLauncherHotkeyRegistration();
+            RefreshWindowSnapAssistHotkeyRegistration();
             RefreshExtensionHotkeys();
         }
         SyncStatus = settings.LaunchAtStartup
@@ -1819,6 +1865,38 @@ public partial class MainWindow
 
     public AppSettings GetCurrentAppSettings() => AppSettingsStore.Load();
 
+    public bool TryUpdateWindowSnapAssistHotkey(string shortcut, out string message)
+    {
+        message = string.Empty;
+        if (!string.IsNullOrWhiteSpace(shortcut) &&
+            (!TryParseHotkey(shortcut, out _, out _) || IsDoubleTapShortcut(shortcut)))
+        {
+            message = "窗口排列快捷键格式无效。示例：Ctrl+Alt+S";
+            return false;
+        }
+
+        var settings = AppSettingsStore.Load();
+        var previous = settings.WindowSnapAssistHotkey;
+        settings.WindowSnapAssistHotkey = shortcut.Trim();
+        AppSettingsStore.Save(settings);
+        _appSettings = settings;
+
+        if (!RefreshWindowSnapAssistHotkeyRegistration())
+        {
+            settings.WindowSnapAssistHotkey = previous;
+            AppSettingsStore.Save(settings);
+            _appSettings = settings;
+            RefreshWindowSnapAssistHotkeyRegistration();
+            message = "窗口排列快捷键注册失败，可能与系统或其他程序冲突。";
+            return false;
+        }
+
+        message = string.IsNullOrWhiteSpace(settings.WindowSnapAssistHotkey)
+            ? "已清除窗口排列快捷键。"
+            : $"窗口排列快捷键已更新为 {settings.WindowSnapAssistHotkey}";
+        return true;
+    }
+
     public void SaveWebDavSettings(bool enabled, string serverUrl, string rootPath, string username)
     {
         var settings = AppSettingsStore.Load();
@@ -1829,6 +1907,7 @@ public partial class MainWindow
         settings.WebDavUsername = username.Trim();
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         if (enabled)
         {
             StartBackgroundWebDavSync();
@@ -1853,6 +1932,7 @@ public partial class MainWindow
         settings.WebDavUsername = username.Trim();
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         StartBackgroundWebDavSync();
         QueueBackgroundWebDavSync("credential-saved");
         QueueCloudWebDavConfigSync("credential-saved");
@@ -1864,6 +1944,7 @@ public partial class MainWindow
         settings.LauncherConfigUpdatedAtUtc = DateTime.UtcNow.ToString("O");
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();

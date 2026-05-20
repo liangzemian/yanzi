@@ -18,6 +18,7 @@ public partial class MainWindow
     private const uint InputKeyboard = 1;
     private const uint KeyeventfKeyup = 0x0002;
     private static readonly IntPtr SimulatedInputMarker = new(0x59414E5B);
+    private static readonly SemaphoreSlim CSharpPrebuildGate = new(1, 1);
 
     private void UpsertLocalExtensionCommand(CommandItem command)
     {
@@ -53,16 +54,7 @@ public partial class MainWindow
     {
         HostAssets.AppendLog($"PersistJsonExtensionFromDialog: start, editMode={isEditMode}.");
         var command = LocalExtensionCatalog.SaveJsonExtension(json);
-        if (string.Equals(command.Runtime, "csharp", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(command.Runtime, "cs", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(command.Runtime, "c#", StringComparison.OrdinalIgnoreCase))
-        {
-            var prepareResult = Task.Run(() => ScriptExtensionRunner.PreparePortableAssetsAsync(command)).GetAwaiter().GetResult();
-            if (!prepareResult.Success)
-            {
-                HostAssets.AppendLog($"PersistJsonExtensionFromDialog: csharp prebuild skipped -> {prepareResult.Error}");
-            }
-        }
+        QueueCSharpPrebuild(command, isEditMode ? "extension-edit" : "extension-add");
 
         if (!isEditMode)
         {
@@ -169,6 +161,7 @@ public partial class MainWindow
 
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
     }
 
     private void RemoveExtensionUiTracking(string extensionId)
@@ -191,6 +184,7 @@ public partial class MainWindow
 
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
     }
 
     private void ApplyNewExtensionState(CommandItem command)
@@ -218,6 +212,7 @@ public partial class MainWindow
 
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         command.SetHasNewBadge(false);
     }
 
@@ -252,6 +247,7 @@ public partial class MainWindow
             {
                 HostAssets.AppendLog("ShowJsonExtensionEditorForOwner: persisting after dialog return.");
                 var command = LocalExtensionCatalog.SaveJsonExtension(dialog.JsonContent);
+                QueueCSharpPrebuild(command, isEditMode ? "extension-edit-fallback" : "extension-add-fallback");
                 UpsertLocalExtensionCommand(command);
                 ApplyFilter(SearchBox.Text);
                 SelectedCommand = _allCommands.FirstOrDefault(x => x.ExtensionId.Equals(command.ExtensionId, StringComparison.OrdinalIgnoreCase));
@@ -275,6 +271,58 @@ public partial class MainWindow
                 currentJson = retryDialog.JsonContent;
             }
         }
+    }
+
+    private static bool IsCSharpRuntime(CommandItem command)
+    {
+        return string.Equals(command.Runtime, "csharp", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(command.Runtime, "cs", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(command.Runtime, "c#", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void QueueCSharpPrebuild(CommandItem command, string reason)
+    {
+        if (!IsCSharpRuntime(command))
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            HostAssets.AppendLog(
+                $"CSharp prebuild queued: id={command.ExtensionId}, title={command.Title}, reason={reason}");
+            SetCSharpPrebuildState(command, true);
+            await CSharpPrebuildGate.WaitAsync().ConfigureAwait(false);
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                var result = await ScriptExtensionRunner.PreparePortableAssetsAsync(command).ConfigureAwait(false);
+                HostAssets.AppendLog(
+                    $"CSharp prebuild completed: id={command.ExtensionId}, title={command.Title}, reason={reason}, success={result.Success}, elapsedMs={stopwatch.ElapsedMilliseconds}, exitCode={result.ExitCode}, error={result.Error}");
+            }
+            catch (Exception ex)
+            {
+                HostAssets.AppendLog(
+                    $"CSharp prebuild failed: id={command.ExtensionId}, title={command.Title}, reason={reason}, elapsedMs={stopwatch.ElapsedMilliseconds}, error={ex}");
+            }
+            finally
+            {
+                CSharpPrebuildGate.Release();
+                SetCSharpPrebuildState(command, false);
+            }
+        });
+    }
+
+    private static void SetCSharpPrebuildState(CommandItem command, bool isPrebuilding)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher == null || dispatcher.CheckAccess())
+        {
+            command.SetCSharpPrebuildState(isPrebuilding);
+            return;
+        }
+
+        _ = dispatcher.BeginInvoke(() => command.SetCSharpPrebuildState(isPrebuilding));
     }
 
     private static string CreateWebSearchTemplateJson()
@@ -465,7 +513,34 @@ public partial class MainWindow
                 // 多个自启动扩展之间稍微间隔下，避免瞬间压力过大
                 await Task.Delay(500);
             }
+
+            // 启动定时调度服务
+            await Dispatcher.InvokeAsync(() => StartExtensionScheduler());
         });
+    }
+
+    private ExtensionSchedulerService? _extensionScheduler;
+
+    private void StartExtensionScheduler()
+    {
+        _extensionScheduler ??= new ExtensionSchedulerService(this);
+        _extensionScheduler.Start();
+    }
+
+    /// <summary>
+    /// 供 ExtensionSchedulerService 调用，执行定时触发的扩展
+    /// </summary>
+    public async Task ExecuteScheduledExtensionAsync(CommandItem command)
+    {
+        await ExecuteCommandAsync(command, launchSource: "scheduler");
+    }
+
+    /// <summary>
+    /// 通知调度服务某个扩展的 Schedule 已变更
+    /// </summary>
+    public void NotifyScheduleChanged(string extensionId, string? schedule)
+    {
+        _extensionScheduler?.RefreshExtension(extensionId, schedule);
     }
 
     public void StartMousePanelService()
@@ -490,6 +565,25 @@ public partial class MainWindow
     }
 
     public bool IsMousePanelServiceRunning => InputHookService.IsRunning;
+
+    public void SetWindowSnapAssistEnabled(bool enabled)
+    {
+        if (enabled)
+        {
+            _windowSnapAssistService.Start();
+            RefreshWindowSnapAssistHotkeyRegistration();
+        }
+        else
+        {
+            _windowSnapAssistService.Stop();
+            UnregisterWindowSnapAssistHotkey();
+        }
+    }
+
+    public void TriggerWindowSnapAssist()
+    {
+        _windowSnapAssistService.TriggerAtForegroundWindow();
+    }
 
     public IReadOnlyList<RadialMenuRuntimeItem> GetRadialMenuItems(string? pageId = null)
     {
@@ -877,8 +971,11 @@ public partial class MainWindow
         KeyboardDoubleTapService.Stop();
         YanyuTriggerService.Stop();
         YarnSelectService.Stop();
+        _windowBoundExtensionsService.Stop();
+        _windowSnapAssistService.Stop();
         UnregisterLauncherHotkey();
         UnregisterYanmHotkey();
+        UnregisterWindowSnapAssistHotkey();
         UnregisterExtensionHotkeys();
         SyncStatus = "已暂停快捷键、扩展快捷键、燕选和鼠标面板监听。";
     }
@@ -892,9 +989,12 @@ public partial class MainWindow
         YanyuTriggerService.Start(HandleYanyuRuleTriggered);
         YarnSelectService.Start(HandleYarnSelectAction);
         RefreshYanyuRules();
+        _windowBoundExtensionsService.Start(_appSettings.WindowBindings);
+        _windowSnapAssistService.Start();
         RefreshLauncherHotkeyRegistration();
         RefreshYanmHotkeyRegistration();
         RefreshRadialHotkeyRegistration();
+        RefreshWindowSnapAssistHotkeyRegistration();
         RefreshExtensionHotkeys();
         SyncStatus = "已恢复快捷键、扩展快捷键、燕选和鼠标面板监听。";
     }
@@ -945,6 +1045,7 @@ public partial class MainWindow
             RefreshLauncherHotkeyRegistration();
             RefreshYanmHotkeyRegistration();
             RefreshRadialHotkeyRegistration();
+            RefreshWindowSnapAssistHotkeyRegistration();
             RefreshExtensionHotkeys();
         }
     }
@@ -964,6 +1065,7 @@ public partial class MainWindow
                 UnregisterLauncherHotkey();
                 UnregisterYanmHotkey();
                 UnregisterRadialHotkey();
+                UnregisterWindowSnapAssistHotkey();
                 KeyboardDoubleTapService.Stop();
                 YanyuTriggerService.Stop();
                 YarnSelectService.Stop();
@@ -1099,6 +1201,22 @@ public partial class MainWindow
             if (IsRadialAllowedForForegroundProcess())
             {
                 _radialMenu?.ShowAtMouse();
+            }
+
+            handled = true;
+        }
+        else if (msg == WmHotKey && wParam.ToInt32() == WindowSnapAssistHotKeyId)
+        {
+            var settings = AppSettingsStore.Load();
+            if (TryParseHotkey(settings.WindowSnapAssistHotkey, out var modifiers, out var key))
+            {
+                _windowSnapAssistService.BeginShortcutSelectionAtMouse(
+                    modifiers,
+                    KeyInterop.VirtualKeyFromKey(key));
+            }
+            else
+            {
+                TriggerWindowSnapAssist();
             }
 
             handled = true;
@@ -1525,6 +1643,40 @@ public partial class MainWindow
         return success;
     }
 
+    private bool RefreshWindowSnapAssistHotkeyRegistration()
+    {
+        if (_source == null)
+        {
+            return false;
+        }
+
+        UnregisterWindowSnapAssistHotkey();
+        var settings = AppSettingsStore.Load();
+        if (!settings.EnableWindowSnapAssist || string.IsNullOrWhiteSpace(settings.WindowSnapAssistHotkey))
+        {
+            return true;
+        }
+
+        if (!TryParseHotkey(settings.WindowSnapAssistHotkey, out var modifiers, out var key) ||
+            IsDoubleTapShortcut(settings.WindowSnapAssistHotkey))
+        {
+            HostAssets.AppendLog($"Invalid window snap assist hotkey skipped: {settings.WindowSnapAssistHotkey}");
+            return false;
+        }
+
+        var success = RegisterHotKey(
+            _source.Handle,
+            WindowSnapAssistHotKeyId,
+            modifiers | ModNoRepeat,
+            (uint)KeyInterop.VirtualKeyFromKey(key));
+        if (!success)
+        {
+            HostAssets.AppendLog($"Failed to register window snap assist hotkey: {settings.WindowSnapAssistHotkey}");
+        }
+
+        return success;
+    }
+
     private static bool IsRadialAllowedForForegroundProcess()
     {
         var radial = AppSettingsStore.Load().RadialMenu ?? new RadialMenuSettings();
@@ -1648,6 +1800,16 @@ public partial class MainWindow
         UnregisterHotKey(_source.Handle, RadialHotKeyId);
     }
 
+    private void UnregisterWindowSnapAssistHotkey()
+    {
+        if (_source == null)
+        {
+            return;
+        }
+
+        UnregisterHotKey(_source.Handle, WindowSnapAssistHotKeyId);
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
 
@@ -1732,6 +1894,45 @@ public partial class MainWindow
     public bool IsExtensionEnabled(string extensionId) =>
         !_appSettings.DisabledExtensionIds.Contains(extensionId, StringComparer.OrdinalIgnoreCase);
 
+    public bool TryResolveExtensionCommand(string extensionId, out CommandItem command)
+    {
+        var resolved = _allCommands.FirstOrDefault(item =>
+            item.Source is CommandSource.LocalExtension or CommandSource.Cloud &&
+            item.ExtensionId.Equals(extensionId ?? string.Empty, StringComparison.OrdinalIgnoreCase) &&
+            !item.IsProviderResult);
+        if (resolved == null)
+        {
+            command = null!;
+            return false;
+        }
+
+        if (!IsExtensionEnabled(resolved.ExtensionId))
+        {
+            command = null!;
+            return false;
+        }
+
+        command = resolved;
+        return true;
+    }
+
+    public void ExecuteExtensionFromWindowBinding(string extensionId)
+    {
+        if (_listenerServicesPaused)
+        {
+            return;
+        }
+
+        if (!TryResolveExtensionCommand(extensionId, out var command))
+        {
+            return;
+        }
+
+        MarkExtensionAsSeen(command);
+        _ = ExecuteCommandAsync(ResolveRunnableCommand(command), explicitInput: null, launchSource: "window-binding");
+        LastRunMessage = $"窗口绑定触发：{command.Title}";
+    }
+
     public void SetExtensionEnabled(string extensionId, bool enabled)
     {
         var settings = AppSettingsStore.Load();
@@ -1744,6 +1945,7 @@ public partial class MainWindow
 
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         RefreshExtensionHotkeys();
         ApplyFilter(SearchBox.Text);
     }
@@ -1946,6 +2148,7 @@ public partial class MainWindow
 
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         _quickPanel?.ReloadSlots();
         NotifyQuickPanelSettingsChanged("extension-delete-cleanup");
     }
@@ -2079,6 +2282,29 @@ public partial class MainWindow
         catch (Exception ex)
         {
             return Task.FromResult((false, $"设置快捷键失败：{FormatExceptionMessage(ex)}"));
+        }
+    }
+
+    public Task<(bool ok, string message, CommandItem? updated)> UpdateExtensionStartupFromSettingsAsync(string extensionId, string? mode, string? schedule)
+    {
+        try
+        {
+            var updated = LocalExtensionCatalog.SetStartup(extensionId, mode, schedule);
+            UpsertLocalExtensionCommand(updated);
+            ApplyFilter(SearchBox.Text);
+            QueueBackgroundWebDavSync("extension-startup-settings");
+
+            // 通知调度服务更新
+            NotifyScheduleChanged(extensionId, updated.Startup?.Schedule);
+
+            var message = updated.Startup == null
+                ? $"已关闭自动运行：{updated.Title}"
+                : $"已更新自动运行：{updated.Title}";
+            return Task.FromResult<(bool ok, string message, CommandItem? updated)>((true, message, updated));
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult<(bool ok, string message, CommandItem? updated)>((false, $"更新自动运行失败：{FormatExceptionMessage(ex)}", null));
         }
     }
 

@@ -715,6 +715,7 @@ public partial class MainWindow
         settings.PinnedSearchScopeCommandIds.Add(command.ExtensionId);
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         ReloadSearchScopes();
         SelectedSearchScope = SearchScopes.FirstOrDefault(scope => scope.Key.Equals(SearchScopeTab.CreatePinnedCommandKey(command.ExtensionId), StringComparison.OrdinalIgnoreCase))
             ?? SelectedSearchScope;
@@ -739,6 +740,7 @@ public partial class MainWindow
 
         AppSettingsStore.Save(settings);
         _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
         ReloadSearchScopes();
         SelectedSearchScope = SearchScopes.FirstOrDefault(item => item.Key.Equals(scope.Key, StringComparison.OrdinalIgnoreCase)) == null
             ? SearchScopes.FirstOrDefault(item => !item.IsPinnedCommand) ?? SearchScopes.FirstOrDefault()
@@ -1811,6 +1813,7 @@ public partial class MainWindow
 
             AppSettingsStore.Save(settings);
             _appSettings = AppSettingsStore.Load();
+            _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
             LastRunMessage = $"已收藏文件：{command.Title}";
         }
         catch (Exception ex)

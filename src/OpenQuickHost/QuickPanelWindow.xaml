@@ -207,11 +207,18 @@
                         </StackPanel>
                     </Border>
                     
-                    <Button Grid.Row="4" Style="{StaticResource SidebarButtonStyle}" VerticalAlignment="Bottom" HorizontalAlignment="Center" Click="SettingsButton_Click" Width="32" Height="32" ToolTip="设置">
-                        <Viewbox Width="16" Height="16">
-                            <Path Data="{local:IconGeometry settings}" Fill="#FF888888" Stretch="Uniform"/>
-                        </Viewbox>
-                    </Button>
+                    <StackPanel Grid.Row="4" VerticalAlignment="Bottom" HorizontalAlignment="Center">
+                        <Button Style="{StaticResource SidebarButtonStyle}" Margin="0,0,0,6" Click="MobileMessagesButton_Click" Width="32" Height="32" ToolTip="手机消息">
+                            <Viewbox Width="16" Height="16">
+                                <Path Data="{local:IconGeometry mobile}" Fill="#FF67E8F9" Stretch="Uniform"/>
+                            </Viewbox>
+                        </Button>
+                        <Button Style="{StaticResource SidebarButtonStyle}" Click="SettingsButton_Click" Width="32" Height="32" ToolTip="设置">
+                            <Viewbox Width="16" Height="16">
+                                <Path Data="{local:IconGeometry settings}" Fill="#FF888888" Stretch="Uniform"/>
+                            </Viewbox>
+                        </Button>
+                    </StackPanel>
                 </Grid>
             </Border>
 
@@ -429,6 +436,16 @@
                                                     
                                                     <!-- Occupied -->
                                                     <Grid Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <Grid.Style>
+                                                            <Style TargetType="Grid">
+                                                                <Setter Property="Opacity" Value="1" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsCSharpPrebuilding}" Value="True">
+                                                                        <Setter Property="Opacity" Value="0.55" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Grid.Style>
                                                         <Image Source="{Binding Icon}" Stretch="UniformToFill" Margin="2"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                                                Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
@@ -459,9 +476,37 @@
                                                             <TextBlock Text="{Binding FolderBadgeText}" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                         </Border>
                                                     </Grid>
+                                                    <Border Background="#C0181818"
+                                                            Visibility="{Binding IsCSharpPrebuilding, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                    <Viewbox Width="20"
+                                                             Height="20"
+                                                             HorizontalAlignment="Center"
+                                                             VerticalAlignment="Center"
+                                                             Visibility="{Binding IsCSharpPrebuilding, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <Path Data="{local:IconGeometry sync}"
+                                                              Fill="#FFE5E7EB"
+                                                              Stretch="Uniform"
+                                                              RenderTransformOrigin="0.5,0.5">
+                                                            <Path.RenderTransform>
+                                                                <RotateTransform Angle="0" />
+                                                            </Path.RenderTransform>
+                                                            <Path.Triggers>
+                                                                <EventTrigger RoutedEvent="Loaded">
+                                                                    <BeginStoryboard>
+                                                                        <Storyboard RepeatBehavior="Forever">
+                                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                                                             From="0"
+                                                                                             To="360"
+                                                                                             Duration="0:0:0.9" />
+                                                                        </Storyboard>
+                                                                    </BeginStoryboard>
+                                                                </EventTrigger>
+                                                            </Path.Triggers>
+                                                        </Path>
+                                                    </Viewbox>
                                                 </Grid>
                                             </Border>
-                                            <TextBlock Text="{Binding Title, FallbackValue='添加'}" 
+                                            <TextBlock Text="{Binding DisplayTitle, FallbackValue='添加'}" 
                                                        Foreground="{Binding IsEmpty, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#FF444444|White'}" 
                                                        FontSize="10" TextAlignment="Center" Width="56" TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
@@ -608,6 +653,16 @@
                                                     </Viewbox>
 
                                                     <Grid Visibility="{Binding IsOccupied, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <Grid.Style>
+                                                            <Style TargetType="Grid">
+                                                                <Setter Property="Opacity" Value="1" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsCSharpPrebuilding}" Value="True">
+                                                                        <Setter Property="Opacity" Value="0.55" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Grid.Style>
                                                         <Image Source="{Binding Icon}" Stretch="UniformToFill" Margin="2"
                                                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                                                Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
@@ -637,9 +692,37 @@
                                                             <TextBlock Text="{Binding FolderBadgeText}" Foreground="White" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                         </Border>
                                                     </Grid>
+                                                    <Border Background="#C0181818"
+                                                            Visibility="{Binding IsCSharpPrebuilding, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                    <Viewbox Width="20"
+                                                             Height="20"
+                                                             HorizontalAlignment="Center"
+                                                             VerticalAlignment="Center"
+                                                             Visibility="{Binding IsCSharpPrebuilding, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                        <Path Data="{local:IconGeometry sync}"
+                                                              Fill="#FFE5E7EB"
+                                                              Stretch="Uniform"
+                                                              RenderTransformOrigin="0.5,0.5">
+                                                            <Path.RenderTransform>
+                                                                <RotateTransform Angle="0" />
+                                                            </Path.RenderTransform>
+                                                            <Path.Triggers>
+                                                                <EventTrigger RoutedEvent="Loaded">
+                                                                    <BeginStoryboard>
+                                                                        <Storyboard RepeatBehavior="Forever">
+                                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                                                             From="0"
+                                                                                             To="360"
+                                                                                             Duration="0:0:0.9" />
+                                                                        </Storyboard>
+                                                                    </BeginStoryboard>
+                                                                </EventTrigger>
+                                                            </Path.Triggers>
+                                                        </Path>
+                                                    </Viewbox>
                                                 </Grid>
                                             </Border>
-                                            <TextBlock Text="{Binding Title, FallbackValue='推荐位'}"
+                                            <TextBlock Text="{Binding DisplayTitle, FallbackValue='推荐位'}"
                                                        Foreground="{Binding IsEmpty, Converter={StaticResource BooleanToColorConverter}, ConverterParameter='#FF444444|White'}"
                                                        FontSize="10" TextAlignment="Center" Width="56" TextTrimming="CharacterEllipsis"/>
                                         </StackPanel>
@@ -688,6 +771,16 @@
                                     <StackPanel Margin="0,6" HorizontalAlignment="Center">
                                         <Border Width="44" Height="44" CornerRadius="10" Background="{Binding Command.AccentBrush, FallbackValue='#FF1E1E1E'}" ClipToBounds="True" HorizontalAlignment="Center" Margin="0,0,0,5">
                                             <Grid>
+                                                <Grid.Style>
+                                                    <Style TargetType="Grid">
+                                                        <Setter Property="Opacity" Value="1" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsCSharpPrebuilding}" Value="True">
+                                                                <Setter Property="Opacity" Value="0.55" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Grid.Style>
                                                 <Image Source="{Binding Icon}" Stretch="UniformToFill" Margin="2"
                                                        HorizontalAlignment="Center" VerticalAlignment="Center"
                                                        Visibility="{Binding HasImageIcon, Converter={StaticResource BooleanToVisibilityConverter}}"/>
@@ -704,9 +797,37 @@
                                                         BorderBrush="#CCFFFFFF" BorderThickness="1"
                                                         HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,1,1,0"
                                                         Visibility="{Binding HasNewBadge, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+                                                <Border Background="#C0181818"
+                                                        Visibility="{Binding IsCSharpPrebuilding, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                <Viewbox Width="20"
+                                                         Height="20"
+                                                         HorizontalAlignment="Center"
+                                                         VerticalAlignment="Center"
+                                                         Visibility="{Binding IsCSharpPrebuilding, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <Path Data="{local:IconGeometry sync}"
+                                                          Fill="#FFE5E7EB"
+                                                          Stretch="Uniform"
+                                                          RenderTransformOrigin="0.5,0.5">
+                                                        <Path.RenderTransform>
+                                                            <RotateTransform Angle="0" />
+                                                        </Path.RenderTransform>
+                                                        <Path.Triggers>
+                                                            <EventTrigger RoutedEvent="Loaded">
+                                                                <BeginStoryboard>
+                                                                    <Storyboard RepeatBehavior="Forever">
+                                                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(RotateTransform.Angle)"
+                                                                                         From="0"
+                                                                                         To="360"
+                                                                                         Duration="0:0:0.9" />
+                                                                    </Storyboard>
+                                                                </BeginStoryboard>
+                                                            </EventTrigger>
+                                                        </Path.Triggers>
+                                                    </Path>
+                                                </Viewbox>
                                             </Grid>
                                         </Border>
-                                        <TextBlock Text="{Binding Title}" Foreground="White" FontSize="10" TextAlignment="Center" Width="56" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding DisplayTitle}" Foreground="White" FontSize="10" TextAlignment="Center" Width="56" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
                                 </Button>
                             </DataTemplate>
