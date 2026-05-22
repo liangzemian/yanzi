@@ -1393,11 +1393,25 @@ public partial class MainWindow
             !AreQuickPanelGroupsEqual(settings.QuickPanelGlobalGroups, incoming.QuickPanelGlobalGroups) ||
             !AreQuickPanelGroupsEqual(settings.QuickPanelContextGroups, incoming.QuickPanelContextGroups) ||
             !AreQuickPanelMouseTriggersEqual(settings.QuickPanelMouseTriggers, incoming.QuickPanelMouseTriggers) ||
+            !string.Equals(MouseGestureTriggerModes.Normalize(settings.MouseGestureTriggerMode), MouseGestureTriggerModes.Normalize(incoming.MouseGestureTriggerMode), StringComparison.Ordinal) ||
+            !string.Equals(MouseTriggerModes.Normalize(settings.WindowSnapAssistMouseTriggerMode), MouseTriggerModes.Normalize(incoming.WindowSnapAssistMouseTriggerMode), StringComparison.Ordinal) ||
             snapshot.YarnSelect != null && !AreJsonPayloadsEqual(settings.YarnSelect, incoming.YarnSelect) ||
             snapshot.RadialMenu != null && !AreJsonPayloadsEqual(settings.RadialMenu, incoming.RadialMenu) ||
             snapshot.YanyuRules != null && !AreJsonPayloadsEqual(settings.YanyuRules, incoming.YanyuRules) ||
             snapshot.Yanm != null && !AreJsonPayloadsEqual(settings.Yanm, incoming.Yanm) ||
             HasAiConfigPayload(snapshot) && !AreAiSettingsEqual(settings, incoming);
+        var localUpdatedAtUtc = TryParseCloudTimestamp(settings.LauncherConfigUpdatedAtUtc);
+        var remoteUpdatedAtUtc = TryParseCloudTimestamp(snapshot.UpdatedAtUtc);
+        if (changed &&
+            localUpdatedAtUtc != null &&
+            (remoteUpdatedAtUtc == null || remoteUpdatedAtUtc.Value <= localUpdatedAtUtc.Value.AddSeconds(1)))
+        {
+            HostAssets.AppendLog(
+                $"Quick panel cloud pull skipped: local config is newer, localUpdated={localUpdatedAtUtc:O}, remoteUpdated={remoteUpdatedAtUtc?.ToString("O") ?? "missing"}.");
+            await PushQuickPanelConfigToCloudAsync("cloud-refresh-local-newer");
+            return false;
+        }
+
         if (!changed)
         {
             if (shouldBackfillAiConfig)
@@ -1419,6 +1433,8 @@ public partial class MainWindow
         settings.GlobalFavoriteExtensionIds = incoming.GlobalFavoriteExtensionIds;
         settings.ContextFavoriteExtensionIds = incoming.ContextFavoriteExtensionIds;
         settings.QuickPanelMouseTriggers = incoming.QuickPanelMouseTriggers;
+        settings.MouseGestureTriggerMode = MouseGestureTriggerModes.Normalize(incoming.MouseGestureTriggerMode);
+        settings.WindowSnapAssistMouseTriggerMode = MouseTriggerModes.Normalize(incoming.WindowSnapAssistMouseTriggerMode);
         if (snapshot.YarnSelect != null)
         {
             settings.YarnSelect = incoming.YarnSelect;
@@ -1454,6 +1470,7 @@ public partial class MainWindow
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();
+            ReloadMouseGestureRegistrations();
             RefreshYanyuRules();
         }
 
@@ -1701,6 +1718,7 @@ public partial class MainWindow
                left.MiddleButtonLongPress == right.MiddleButtonLongPress &&
                left.RightButtonLongPress == right.RightButtonLongPress &&
                left.RightButtonDrag == right.RightButtonDrag &&
+               left.MiddleButtonDrag == right.MiddleButtonDrag &&
                left.HorizontalWheel == right.HorizontalWheel &&
                left.ExecuteOnButtonRelease == right.ExecuteOnButtonRelease &&
                left.LongPressMilliseconds == right.LongPressMilliseconds &&
@@ -1841,6 +1859,7 @@ public partial class MainWindow
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();
+            ReloadMouseGestureRegistrations();
             YarnSelectService.ReloadSettings();
             KeyboardDoubleTapService.ApplyYanmSettings(settings.Yanm);
             if (!YarnSelectService.IsRunning && settings.YarnSelect?.Enabled == true)
@@ -1949,6 +1968,7 @@ public partial class MainWindow
         if (!_listenerServicesPaused)
         {
             InputHookService.ReloadSettings();
+            ReloadMouseGestureRegistrations();
             YarnSelectService.ReloadSettings();
             KeyboardDoubleTapService.ApplyYanmSettings(_appSettings.Yanm);
             if (!YarnSelectService.IsRunning && _appSettings.YarnSelect?.Enabled == true)

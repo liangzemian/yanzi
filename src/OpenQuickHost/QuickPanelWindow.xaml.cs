@@ -11,6 +11,7 @@ using System.Linq;
 using System.Windows.Interop;
 using System.Windows.Threading;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Diagnostics;
 using System.IO;
 
@@ -39,6 +40,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
     private SlotViewModel? _hoveredSlot;
     private bool _isExecutingSlot;
     private IntPtr _previousForegroundWindow;
+    private IntPtr _previousFocusWindow;
     private readonly DispatcherTimer _releaseTargetTimer;
     private ForegroundAppContext? _foregroundAppContext;
     private QuickPanelGroupItem? _selectedGlobalGroup;
@@ -66,6 +68,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
     public QuickPanelWindow(MainWindow mainWindow)
     {
         InitializeComponent();
+        ShowActivated = false;
         _mainWindow = mainWindow;
         _settings = AppSettingsStore.Load();
         _releaseTargetTimer = new DispatcherTimer
@@ -1237,12 +1240,19 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             var command = vm.Command;
             HostAssets.AppendLog($"Quick panel execute: source={launchSource}, slot={vm.Index}, extension={command.ExtensionId}.");
             _releaseTargetTimer.Stop();
+            if (TryExtractGeneratedPasteText(command, out var pasteText))
+            {
+                await ExecuteGeneratedPasteAsync(command, pasteText, launchSource);
+                return;
+            }
+
             HidePanelIfAllowed();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             if (_previousForegroundWindow != IntPtr.Zero)
             {
                 var restored = NativeMethods.SetForegroundWindow(_previousForegroundWindow);
                 HostAssets.AppendLog($"Quick panel execute: restored previous foreground={restored}, {DescribeWindow(_previousForegroundWindow)}.");
+                RestorePreviousFocus("execute");
             }
 
             var input = string.Empty;
@@ -1267,6 +1277,103 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             {
                 _releaseTargetTimer.Start();
             }
+        }
+    }
+
+    private async Task ExecuteGeneratedPasteAsync(CommandItem command, string text, string launchSource)
+    {
+        var totalStopwatch = Stopwatch.StartNew();
+        try
+        {
+            var clipboardStopwatch = Stopwatch.StartNew();
+            ClipboardService.SetText(text);
+            clipboardStopwatch.Stop();
+
+            var restoreStopwatch = Stopwatch.StartNew();
+            HidePanelIfAllowed();
+            var restoredForeground = false;
+            if (_previousForegroundWindow != IntPtr.Zero)
+            {
+                restoredForeground = NativeMethods.SetForegroundWindow(_previousForegroundWindow);
+            }
+
+            var focusRestored = RestorePreviousFocus("paste");
+            restoreStopwatch.Stop();
+
+            var settleDelayMs = string.Equals(launchSource, "quick-panel-hold-release", StringComparison.OrdinalIgnoreCase)
+                ? 35
+                : 20;
+            await Task.Delay(settleDelayMs);
+
+            var sendStopwatch = Stopwatch.StartNew();
+            var sent = NativeMethods.SendCtrlV(out var inputCount, out var lastError);
+            sendStopwatch.Stop();
+
+            _mainWindow.LastRunMessage = $"已粘贴：{command.Title}";
+            _mainWindow.SyncStatus = "已粘贴。";
+            HostAssets.AppendRecent(command.Title);
+            HostAssets.AppendLog(
+                $"Quick panel paste: id={command.ExtensionId}, title={command.Title}, source={launchSource}, textLength={text.Length}, SendInput sent={sent}/{inputCount}, lastError={lastError}, elapsedMs={totalStopwatch.ElapsedMilliseconds}, clipboardMs={clipboardStopwatch.ElapsedMilliseconds}, restoreMs={restoreStopwatch.ElapsedMilliseconds}, settleMs={settleDelayMs}, sendMs={sendStopwatch.ElapsedMilliseconds}, foregroundRestored={restoredForeground}, focusRestored={focusRestored}.");
+        }
+        catch (Exception ex)
+        {
+            _mainWindow.LastRunMessage = $"粘贴失败：{command.Title}";
+            _mainWindow.SyncStatus = $"粘贴失败：{ex.Message}";
+            HostAssets.AppendLog($"Quick panel paste failed: id={command.ExtensionId}, title={command.Title}, elapsedMs={totalStopwatch.ElapsedMilliseconds}, error={ex}");
+        }
+    }
+
+    private bool RestorePreviousFocus(string stage)
+    {
+        if (_previousFocusWindow == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        if (_previousFocusWindow == _previousForegroundWindow)
+        {
+            HostAssets.AppendLog(
+                $"Quick panel focus restore: stage={stage}, skipped=top-level-focus, focus={DescribeWindow(_previousFocusWindow)}.");
+            return false;
+        }
+
+        var restored = NativeMethods.TryRestoreFocus(_previousForegroundWindow, _previousFocusWindow, out var detail);
+        HostAssets.AppendLog(
+            $"Quick panel focus restore: stage={stage}, restored={restored}, focus={DescribeWindow(_previousFocusWindow)}, detail={detail}.");
+        return restored;
+    }
+
+    private static bool TryExtractGeneratedPasteText(CommandItem command, out string text)
+    {
+        text = string.Empty;
+        var script = command.InlineScriptSource;
+        if (string.IsNullOrWhiteSpace(script) ||
+            !string.Equals(command.EntryMode, "inline", StringComparison.OrdinalIgnoreCase) ||
+            !script.Contains("FromBase64String", StringComparison.OrdinalIgnoreCase) ||
+            !(script.Contains("Set-Clipboard", StringComparison.OrdinalIgnoreCase) ||
+              script.Contains("Clipboard.SetText", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var match = Regex.Match(
+            script,
+            @"FromBase64String\((['""])(?<payload>[A-Za-z0-9+/=]+)\1\)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        try
+        {
+            text = Encoding.UTF8.GetString(Convert.FromBase64String(match.Groups["payload"].Value));
+            return true;
+        }
+        catch
+        {
+            text = string.Empty;
+            return false;
         }
     }
 
@@ -1559,6 +1666,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         {
             HostAssets.AppendLog("Quick panel show requested.");
             _previousForegroundWindow = NativeMethods.GetForegroundWindow();
+            _previousFocusWindow = NativeMethods.GetForegroundFocusWindow();
             _foregroundAppContext = BuildForegroundAppContext(_previousForegroundWindow);
             var cursorPixels = NativeMethods.GetCursorPosition();
             var cursorDips = DeviceToDips(cursorPixels);
@@ -1578,22 +1686,13 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             LoadSlots(); // Refresh
             var occupiedGlobal = GlobalSlots.Count(slot => slot.IsOccupied);
             var occupiedContext = ContextSlots.Count(slot => slot.IsOccupied);
-            HostAssets.AppendLog($"Quick panel showing at ({Left:0},{Top:0}), cursorPixels=({cursorPixels.X:0},{cursorPixels.Y:0}), cursorDips=({cursorDips.X:0},{cursorDips.Y:0}), cursorLocalX={cursorDips.X - Left:0}, topConstrained={topConstrained}, screenDips=({screenBounds.Left:0},{screenBounds.Top:0},{screenBounds.Right:0},{screenBounds.Bottom:0}), occupiedGlobal={occupiedGlobal}, occupiedContext={occupiedContext}, totalGlobal={GlobalSlots.Count}, totalContext={ContextSlots.Count}.");
+            HostAssets.AppendLog($"Quick panel showing at ({Left:0},{Top:0}), cursorPixels=({cursorPixels.X:0},{cursorPixels.Y:0}), cursorDips=({cursorDips.X:0},{cursorDips.Y:0}), cursorLocalX={cursorDips.X - Left:0}, topConstrained={topConstrained}, screenDips=({screenBounds.Left:0},{screenBounds.Top:0},{screenBounds.Right:0},{screenBounds.Bottom:0}), occupiedGlobal={occupiedGlobal}, occupiedContext={occupiedContext}, totalGlobal={GlobalSlots.Count}, totalContext={ContextSlots.Count}, previousFocus={DescribeWindow(_previousFocusWindow)}.");
             OnPropertyChanged(nameof(ContextSectionTitle));
             OnPropertyChanged(nameof(ContextHintText));
             Topmost = true;
             Show();
+            NativeMethods.ShowWithoutActivation(new WindowInteropHelper(this).Handle);
             _releaseTargetTimer.Start();
-            Activate();
-            BringToFront();
-            Dispatcher.BeginInvoke(() =>
-            {
-                BringToFront();
-                HubSearchBox.Focus();
-                Keyboard.Focus(HubSearchBox);
-                HubSearchBox.Select(0, 0);
-                HubSearchBox.CaretIndex = 0;
-            }, DispatcherPriority.ApplicationIdle);
         }
         catch (Exception ex)
         {
@@ -1720,6 +1819,8 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         };
         _settings.QuickPanelContextGroups.Add(autoGroup);
         _settings.SelectedQuickPanelContextGroupId = autoGroup.Id;
+        HostAssets.AppendLog(
+            $"Quick panel context group auto-created: id={autoGroup.Id}, process={autoGroup.ContextProcessName}, display={autoGroup.ContextDisplayName}.");
         SaveQuickPanelSettings("quickpanel-auto-create-context-group");
         LoadGroups();
         return autoGroup;
@@ -1739,7 +1840,7 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
             return new QuickPanelSlotReference(vm.IsContextual, vm.SourceGroupId!, vm.Index, vm.ContainerPath.ToList());
         }
 
-        var group = vm.IsContextual ? GetSelectedContextGroupSettings() : GetSelectedGlobalGroupSettings();
+        var group = vm.IsContextual ? EnsureContextGroupForCurrentApp() : GetSelectedGlobalGroupSettings();
         return group == null ? null : new QuickPanelSlotReference(vm.IsContextual, group.Id, vm.Index, []);
     }
 
@@ -2195,6 +2296,8 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         var targetReference = BuildSlotReference(target);
         if (sourceReference == null || targetReference == null)
         {
+            HostAssets.AppendLog(
+                $"Quick panel drag ignored: missing slot reference, sourceContext={source.IsContextual}, targetContext={target.IsContextual}, sourceGroup={source.SourceGroupId ?? ""}, targetGroup={target.SourceGroupId ?? ""}.");
             return;
         }
 
@@ -2202,6 +2305,8 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         var targetContainer = GetSlotContainer(targetReference);
         if (sourceContainer == null || targetContainer == null)
         {
+            HostAssets.AppendLog(
+                $"Quick panel drag ignored: missing slot container, sourceGroup={sourceReference.GroupId}, targetGroup={targetReference.GroupId}.");
             return;
         }
 
@@ -2221,6 +2326,8 @@ public partial class QuickPanelWindow : Window, INotifyPropertyChanged
         sourceContainer[sourceReference.Index] = targetItem;
         RefreshAllLegacySlots();
         SaveQuickPanelSettings("quickpanel-drag-swap-slot");
+        HostAssets.AppendLog(
+            $"Quick panel drag saved: sourceGroup={sourceReference.GroupId}, sourceIndex={sourceReference.Index}, targetGroup={targetReference.GroupId}, targetIndex={targetReference.Index}, targetContext={targetReference.IsContextual}.");
         LoadSlots();
         RefreshActiveFolderAfterMutation();
     }
@@ -2991,6 +3098,17 @@ public sealed class FolderPreviewIconViewModel
 
 internal static class NativeMethods
 {
+    private const uint InputKeyboard = 1;
+    private const uint KeyeventfKeyup = 0x0002;
+    private const ushort VkControl = 0x11;
+    private const ushort VkV = 0x56;
+    private const uint SwpNoSize = 0x0001;
+    private const uint SwpNoMove = 0x0002;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpShowWindow = 0x0040;
+    private static readonly IntPtr HwndTopmost = new(-1);
+    private static readonly IntPtr SimulatedInputMarker = new(0x59414E5B);
+
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     private static extern bool GetCursorPos(out POINT lpPoint);
@@ -3008,11 +3126,217 @@ internal static class NativeMethods
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO guiThreadInfo);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetFocus(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool IsWindow(IntPtr hWnd);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
     private struct POINT
     {
         public int X;
         public int Y;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct GUITHREADINFO
+    {
+        public int cbSize;
+        public uint flags;
+        public IntPtr hwndActive;
+        public IntPtr hwndFocus;
+        public IntPtr hwndCapture;
+        public IntPtr hwndMenuOwner;
+        public IntPtr hwndMoveSize;
+        public IntPtr hwndCaret;
+        public RECT rcCaret;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int left;
+        public int top;
+        public int right;
+        public int bottom;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct INPUT
+    {
+        public uint type;
+        public InputUnion U;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Explicit)]
+    private struct InputUnion
+    {
+        [System.Runtime.InteropServices.FieldOffset(0)]
+        public MOUSEINPUT mi;
+
+        [System.Runtime.InteropServices.FieldOffset(0)]
+        public KEYBDINPUT ki;
+
+        [System.Runtime.InteropServices.FieldOffset(0)]
+        public HARDWAREINPUT hi;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MOUSEINPUT
+    {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct KEYBDINPUT
+    {
+        public ushort wVk;
+        public ushort wScan;
+        public uint dwFlags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct HARDWAREINPUT
+    {
+        public uint uMsg;
+        public ushort wParamL;
+        public ushort wParamH;
+    }
+
+    public static uint SendCtrlV(out int inputCount, out int lastError)
+    {
+        var inputs = new[]
+        {
+            KeyInput(VkControl, 0),
+            KeyInput(VkV, 0),
+            KeyInput(VkV, KeyeventfKeyup),
+            KeyInput(VkControl, KeyeventfKeyup)
+        };
+
+        inputCount = inputs.Length;
+        var sent = SendInput((uint)inputs.Length, inputs, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>());
+        lastError = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+        return sent;
+    }
+
+    private static INPUT KeyInput(ushort virtualKey, uint flags)
+    {
+        return new INPUT
+        {
+            type = InputKeyboard,
+            U = new InputUnion
+            {
+                ki = new KEYBDINPUT
+                {
+                    wVk = virtualKey,
+                    dwFlags = flags,
+                    dwExtraInfo = SimulatedInputMarker
+                }
+            }
+        };
+    }
+
+    public static void ShowWithoutActivation(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        _ = SetWindowPos(hwnd, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate | SwpShowWindow);
+    }
+
+    public static IntPtr GetForegroundFocusWindow()
+    {
+        var info = new GUITHREADINFO
+        {
+            cbSize = System.Runtime.InteropServices.Marshal.SizeOf<GUITHREADINFO>()
+        };
+
+        return GetGUIThreadInfo(0, ref info)
+            ? info.hwndFocus != IntPtr.Zero ? info.hwndFocus : info.hwndCaret
+            : IntPtr.Zero;
+    }
+
+    public static bool TryRestoreFocus(IntPtr foregroundWindow, IntPtr focusWindow, out string detail)
+    {
+        if (focusWindow == IntPtr.Zero)
+        {
+            detail = "focus=zero";
+            return false;
+        }
+
+        if (!IsWindow(focusWindow))
+        {
+            detail = "focus window no longer exists";
+            return false;
+        }
+
+        var currentThreadId = GetCurrentThreadId();
+        var focusThreadId = GetWindowThreadProcessId(focusWindow, out _);
+        var foregroundThreadId = foregroundWindow == IntPtr.Zero
+            ? 0
+            : GetWindowThreadProcessId(foregroundWindow, out _);
+        var attachedFocus = false;
+        var attachedForeground = false;
+        try
+        {
+            if (focusThreadId != 0 && focusThreadId != currentThreadId)
+            {
+                attachedFocus = AttachThreadInput(currentThreadId, focusThreadId, true);
+            }
+
+            if (foregroundThreadId != 0 &&
+                foregroundThreadId != currentThreadId &&
+                foregroundThreadId != focusThreadId)
+            {
+                attachedForeground = AttachThreadInput(currentThreadId, foregroundThreadId, true);
+            }
+
+            _ = SetFocus(focusWindow);
+            var error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+            detail = $"currentThread={currentThreadId}, focusThread={focusThreadId}, foregroundThread={foregroundThreadId}, attachFocus={attachedFocus}, attachForeground={attachedForeground}, setFocusError={error}";
+            return error == 0;
+        }
+        finally
+        {
+            if (attachedForeground)
+            {
+                _ = AttachThreadInput(currentThreadId, foregroundThreadId, false);
+            }
+
+            if (attachedFocus)
+            {
+                _ = AttachThreadInput(currentThreadId, focusThreadId, false);
+            }
+        }
     }
 
     public static System.Windows.Point GetCursorPosition()

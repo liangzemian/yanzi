@@ -565,11 +565,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (_cloudSyncClient == null)
         {
             StartMousePanelService();
+            StartMouseGestureService();
             QueueBackgroundWebDavSync("startup");
             return;
         }
 
         StartMousePanelService();
+        StartMouseGestureService();
         if (!AppSettingsStore.Load().RefreshCloudOnStartup)
         {
             StartMobileMessageBridge("startup-no-cloud-refresh");
@@ -1505,13 +1507,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var canManageLocalExtension = resolved.Source == CommandSource.LocalExtension;
         var isYanyuRule = IsYanyuRuleCommand(current);
         SetCommandShortcutMenuItem.IsEnabled = canManageLocalExtension;
+        SetCommandShortcutMenuItem.Visibility = Visibility.Collapsed;
         RenameCommandMenuItem.IsEnabled = canManageLocalExtension;
+        RenameCommandMenuItem.Visibility = Visibility.Collapsed;
         EditExtensionMenuItem.IsEnabled = canManageLocalExtension || isYanyuRule;
         EditExtensionMenuItem.Header = isYanyuRule ? "编辑燕语" : "编辑扩展";
         PublishExtensionMenuItem.IsEnabled = canManageLocalExtension && _cloudSyncClient != null;
         PublishExtensionMenuItem.Visibility = isYanyuRule ? Visibility.Collapsed : Visibility.Visible;
         CopyExtensionStoreLinkMenuItem.IsEnabled = canManageLocalExtension;
-        CopyExtensionStoreLinkMenuItem.Visibility = isYanyuRule ? Visibility.Collapsed : Visibility.Visible;
+        CopyExtensionStoreLinkMenuItem.Visibility = Visibility.Collapsed;
         OpenExtensionStoreLinkMenuItem.IsEnabled = canManageLocalExtension;
         OpenExtensionStoreLinkMenuItem.Visibility = isYanyuRule ? Visibility.Collapsed : Visibility.Visible;
         DeleteExtensionMenuItem.IsEnabled = canManageLocalExtension || isYanyuRule;
@@ -1694,10 +1698,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint
         };
 
-        AddMenuItem(menu, "添加桌面快捷方式", "desktop-shortcut", async () => await CreateDesktopShortcutAsync(), command.OpenTarget is { Length: > 0 } && !IsInternalCommand(command));
-        menu.Items.Add(new Separator());
-        AddMenuItem(menu, "设置快捷键", "shortcut", async () => await SetSelectedExtensionShortcutAsync(), command.Source == CommandSource.LocalExtension);
-        AddMenuItem(menu, "重命名", "pen", async () => await RenameSelectedExtensionAsync(), command.Source == CommandSource.LocalExtension);
         AddMenuItem(menu, "编辑扩展", "pen", async () => await EditSelectedExtensionAsync(), command.Source == CommandSource.LocalExtension);
         AddMenuItem(menu, "发布到商店", "publish", async () =>
         {
@@ -1707,7 +1707,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 SyncStatus = string.IsNullOrWhiteSpace(SyncStatus) ? "发布到商店失败。" : SyncStatus;
             }
         }, command.Source == CommandSource.LocalExtension && _cloudSyncClient != null);
-        AddMenuItem(menu, "复制商店链接", "link", () => CopyExtensionStoreLinkMenuItem_Click(CreateMenuSender(command), new RoutedEventArgs()), command.Source == CommandSource.LocalExtension);
         AddMenuItem(menu, "打开商店链接", "link", () => OpenExtensionStoreLinkMenuItem_Click(CreateMenuSender(command), new RoutedEventArgs()), command.Source == CommandSource.LocalExtension);
         AddMenuItem(menu, "删除", "delete", async () => await DeleteSelectedExtensionAsync(), command.Source == CommandSource.LocalExtension);
         menu.Items.Add(new Separator());
@@ -1720,6 +1719,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var hoverModeEnabled = IsWindowBindingHoverMode(bindingRuleId);
         AddMenuItem(menu, hoverModeEnabled ? "始终显示" : "悬停时显示", "pin", () => ToggleWindowBindingHoverMode(bindingRuleId), true);
         AddMenuItem(menu, "取消窗口绑定", "delete", () => RemoveWindowBinding(bindingRuleId, command.Title), true);
+        menu.Items.Add(new Separator());
+        AddMenuItem(menu, "添加桌面快捷方式", "desktop-shortcut", async () => await CreateDesktopShortcutAsync(), command.OpenTarget is { Length: > 0 } && !IsInternalCommand(command));
 
         menu.IsOpen = true;
     }
@@ -1959,6 +1960,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (TryExecuteSimulatedKeystroke(runnable))
         {
+            return;
+        }
+
+        if (!runnable.IsProviderResult && runnable.SearchProvider != null)
+        {
+            OpenSearchProviderInLauncher(runnable, explicitInput);
             return;
         }
 
@@ -2719,6 +2726,9 @@ public sealed class CloudWebDavConfigSnapshot
 
 public sealed class CloudQuickPanelConfigSnapshot
 {
+    [JsonPropertyName("updatedAtUtc")]
+    public string? UpdatedAtUtc { get; set; }
+
     [JsonPropertyName("quickPanelSlots")]
     public List<string?> QuickPanelSlots { get; set; } = Enumerable.Repeat<string?>(null, 28).ToList();
 
@@ -2742,6 +2752,12 @@ public sealed class CloudQuickPanelConfigSnapshot
 
     [JsonPropertyName("quickPanelMouseTriggers")]
     public QuickPanelMouseTriggerSettings QuickPanelMouseTriggers { get; set; } = new();
+
+    [JsonPropertyName("mouseGestureTriggerMode")]
+    public string MouseGestureTriggerMode { get; set; } = MouseGestureTriggerModes.RightDrag;
+
+    [JsonPropertyName("windowSnapAssistMouseTriggerMode")]
+    public string WindowSnapAssistMouseTriggerMode { get; set; } = MouseTriggerModes.None;
 
     [JsonPropertyName("yarnSelect")]
     public YarnSelectSettings? YarnSelect { get; set; }
@@ -2776,13 +2792,18 @@ public sealed class CloudQuickPanelConfigSnapshot
             GlobalFavoriteExtensionIds = settings.GlobalFavoriteExtensionIds.ToList(),
             ContextFavoriteExtensionIds = settings.ContextFavoriteExtensionIds.ToList(),
             QuickPanelMouseTriggers = CloneTriggers(settings.QuickPanelMouseTriggers),
+            MouseGestureTriggerMode = MouseGestureTriggerModes.Normalize(settings.MouseGestureTriggerMode),
+            WindowSnapAssistMouseTriggerMode = MouseTriggerModes.Normalize(settings.WindowSnapAssistMouseTriggerMode),
             YarnSelect = CloneByJson(settings.YarnSelect),
             RadialMenu = CloneByJson(settings.RadialMenu),
             YanyuRules = CloneByJson(settings.YanyuRules),
             Yanm = CloneByJson(settings.Yanm),
             AiBaseUrl = settings.AiBaseUrl,
             AiApiKey = settings.AiApiKey,
-            AiModel = settings.AiModel
+            AiModel = settings.AiModel,
+            UpdatedAtUtc = string.IsNullOrWhiteSpace(settings.LauncherConfigUpdatedAtUtc)
+                ? DateTime.UtcNow.ToString("O")
+                : settings.LauncherConfigUpdatedAtUtc
         };
     }
 
@@ -2798,13 +2819,16 @@ public sealed class CloudQuickPanelConfigSnapshot
             GlobalFavoriteExtensionIds = GlobalFavoriteExtensionIds.ToList(),
             ContextFavoriteExtensionIds = ContextFavoriteExtensionIds.ToList(),
             QuickPanelMouseTriggers = CloneTriggers(QuickPanelMouseTriggers),
+            MouseGestureTriggerMode = MouseGestureTriggerModes.Normalize(MouseGestureTriggerMode),
+            WindowSnapAssistMouseTriggerMode = MouseTriggerModes.Normalize(WindowSnapAssistMouseTriggerMode),
             YarnSelect = YarnSelect == null ? new YarnSelectSettings() : CloneByJson(YarnSelect),
             RadialMenu = RadialMenu == null ? new RadialMenuSettings() : CloneByJson(RadialMenu),
             YanyuRules = YanyuRules == null ? [] : CloneByJson(YanyuRules),
             Yanm = Yanm == null ? new YanmSettings() : CloneByJson(Yanm),
             AiBaseUrl = AiBaseUrl ?? string.Empty,
             AiApiKey = AiApiKey ?? string.Empty,
-            AiModel = AiModel ?? string.Empty
+            AiModel = AiModel ?? string.Empty,
+            LauncherConfigUpdatedAtUtc = UpdatedAtUtc ?? string.Empty
         };
     }
 
@@ -2855,6 +2879,7 @@ public sealed class CloudQuickPanelConfigSnapshot
             MiddleButtonLongPress = trigger.MiddleButtonLongPress,
             RightButtonLongPress = trigger.RightButtonLongPress,
             RightButtonDrag = trigger.RightButtonDrag,
+            MiddleButtonDrag = trigger.MiddleButtonDrag,
             HorizontalWheel = trigger.HorizontalWheel,
             ExecuteOnButtonRelease = trigger.ExecuteOnButtonRelease,
             LongPressMilliseconds = trigger.LongPressMilliseconds,

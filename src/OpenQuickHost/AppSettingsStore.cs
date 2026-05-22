@@ -214,6 +214,7 @@ public static class AppSettingsStore
         settings.RadialMenu.DeadZonePixels = Math.Clamp(settings.RadialMenu.DeadZonePixels, 12, 120);
         settings.RadialMenu.RadiusPixels = Math.Clamp(settings.RadialMenu.RadiusPixels, 80, 240);
         settings.RadialMenu.DragThresholdPixels = Math.Clamp(settings.RadialMenu.DragThresholdPixels, 8, 120);
+        settings.MouseGestureTriggerMode = MouseGestureTriggerModes.Normalize(settings.MouseGestureTriggerMode);
         settings.YanyuRules ??= [];
         settings.YanyuRules = settings.YanyuRules
             .Select(NormalizeYanyuRule)
@@ -288,6 +289,7 @@ public static class AppSettingsStore
         }
 
         settings.WindowSnapAssistHotkey = settings.WindowSnapAssistHotkey?.Trim() ?? string.Empty;
+        settings.WindowSnapAssistMouseTriggerMode = MouseTriggerModes.Normalize(settings.WindowSnapAssistMouseTriggerMode);
         settings.WindowSnapAssistCustomLayouts ??= [];
         settings.WindowSnapAssistCustomLayouts = settings.WindowSnapAssistCustomLayouts
             .Where(static slot => slot.SlotIndex is >= 0 and < WindowSnapAssistCustomLayoutSettings.TotalSlotCount)
@@ -466,6 +468,8 @@ public sealed record AppSettings
 
     public QuickPanelMouseTriggerSettings QuickPanelMouseTriggers { get; set; } = new();
 
+    public string MouseGestureTriggerMode { get; set; } = MouseGestureTriggerModes.RightDrag;
+
     public YarnSelectSettings YarnSelect { get; set; } = new();
 
     public RadialMenuSettings RadialMenu { get; set; } = new();
@@ -515,6 +519,8 @@ public sealed record AppSettings
     public bool EnableWindowSnapAssist { get; set; } = true;
 
     public string WindowSnapAssistHotkey { get; set; } = string.Empty;
+
+    public string WindowSnapAssistMouseTriggerMode { get; set; } = MouseTriggerModes.None;
 
     public List<WindowSnapAssistCustomLayoutSettings> WindowSnapAssistCustomLayouts { get; set; } = [];
 
@@ -595,6 +601,8 @@ public sealed record QuickPanelMouseTriggerSettings
     public bool RightButtonLongPress { get; set; } = false;
 
     public bool RightButtonDrag { get; set; } = false;
+
+    public bool MiddleButtonDrag { get; set; } = false;
 
     public bool HorizontalWheel { get; set; } = false;
 
@@ -691,6 +699,8 @@ public sealed class RadialMenuSettings
     public bool Enabled { get; set; } = false;
 
     public bool TriggerRightButtonDrag { get; set; } = true;
+
+    public bool TriggerMiddleButtonDrag { get; set; } = false;
     
     public bool TriggerRightButtonLongPress { get; set; } = false;
     
@@ -787,6 +797,8 @@ public sealed class YanmSettings
     public bool TriggerWinDoubleTap { get; set; } = true;
 
     public bool TriggerRightButtonDrag { get; set; } = false;
+
+    public bool TriggerMiddleButtonDrag { get; set; } = false;
     
     public bool TriggerRightButtonLongPress { get; set; } = false;
     
@@ -856,6 +868,7 @@ public static class MouseTriggerModes
     public const string MiddleLongPress = "MiddleLongPress";
     public const string RightLongPress = "RightLongPress";
     public const string RightDrag = "RightDrag";
+    public const string MiddleDrag = "MiddleDrag";
     public const string HorizontalWheel = "HorizontalWheel";
 
     public static string Normalize(string? value)
@@ -871,9 +884,46 @@ public static class MouseTriggerModes
             MiddleLongPress => MiddleLongPress,
             RightLongPress => RightLongPress,
             RightDrag => RightDrag,
+            MiddleDrag => MiddleDrag,
             HorizontalWheel => HorizontalWheel,
             _ => None
         };
+    }
+}
+
+public static class MouseGestureTriggerModes
+{
+    public const string None = "None";
+    public const string RightDrag = "RightDrag";
+    public const string MiddleDrag = "MiddleDrag";
+
+    public static string Normalize(string? value)
+    {
+        return (value ?? string.Empty).Trim() switch
+        {
+            RightDrag => RightDrag,
+            MiddleDrag => MiddleDrag,
+            "right-drag" => RightDrag,
+            "middle-drag" => MiddleDrag,
+            _ => None
+        };
+    }
+
+    public static string ToRuntimeTrigger(string? value)
+    {
+        return Normalize(value) switch
+        {
+            MiddleDrag => "middle-drag",
+            RightDrag => "right-drag",
+            _ => string.Empty
+        };
+    }
+
+    public static string FromRuntimeTrigger(string? value)
+    {
+        return (value ?? string.Empty).Trim().Equals("middle-drag", StringComparison.OrdinalIgnoreCase)
+            ? MiddleDrag
+            : RightDrag;
     }
 }
 

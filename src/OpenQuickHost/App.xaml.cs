@@ -461,14 +461,29 @@ public partial class App : WpfApplication
         try
         {
             HostAssets.AppendLog($"Settings window open requested: section={sectionKey ?? "default"}, existing={_settingsWindow != null && _settingsWindow.IsLoaded}.");
-            EnsureMainWindowVisibleForOwnedDialogs(mainWindow);
+            var useMainWindowOwner = CanUseMainWindowAsSettingsOwner(mainWindow);
 
             if (_settingsWindow == null || !_settingsWindow.IsLoaded)
             {
                 _settingsWindow = new SettingsWindow(mainWindow);
-                _settingsWindow.Owner = mainWindow;
+                if (useMainWindowOwner)
+                {
+                    _settingsWindow.Owner = mainWindow;
+                    HostAssets.AppendLog("Settings window owner set to visible main window.");
+                }
+                else
+                {
+                    _settingsWindow.ShowInTaskbar = true;
+                    HostAssets.AppendLog("Settings window opened without main window owner.");
+                }
+
                 _settingsWindow.Closed += (_, _) => _settingsWindow = null;
                 HostAssets.AppendLog("Settings window created.");
+            }
+            else if (!_settingsWindow.IsVisible)
+            {
+                _settingsWindow.Owner = useMainWindowOwner ? mainWindow : null;
+                _settingsWindow.ShowInTaskbar = !useMainWindowOwner;
             }
 
             if (!_settingsWindow.IsVisible)
@@ -493,21 +508,8 @@ public partial class App : WpfApplication
         }
     }
 
-    private static void EnsureMainWindowVisibleForOwnedDialogs(MainWindow mainWindow)
-    {
-        if (!mainWindow.IsVisible)
-        {
-            mainWindow.ShowInTaskbar = true;
-            mainWindow.Show();
-            HostAssets.AppendLog("Settings window prerequisite: main window restored from tray.");
-        }
-
-        if (mainWindow.WindowState == System.Windows.WindowState.Minimized)
-        {
-            mainWindow.WindowState = System.Windows.WindowState.Normal;
-            HostAssets.AppendLog("Settings window prerequisite: main window restored from minimized state.");
-        }
-    }
+    private static bool CanUseMainWindowAsSettingsOwner(MainWindow mainWindow) =>
+        mainWindow.IsVisible && mainWindow.WindowState != System.Windows.WindowState.Minimized;
 
     public void OpenRunningExtensionsWindow()
     {

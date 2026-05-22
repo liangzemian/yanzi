@@ -131,6 +131,57 @@ public sealed class WindowSnapAssistService : IDisposable
         }
     }
 
+    public bool BeginMouseDragSelectionAtMouse()
+    {
+        if (!GetCursorPos(out var point))
+        {
+            return false;
+        }
+
+        var hwnd = ResolveTargetWindowFromPoint(point);
+        if (!IsValidTargetWindow(hwnd))
+        {
+            hwnd = GetForegroundWindow();
+        }
+
+        if (!IsValidTargetWindow(hwnd))
+        {
+            return false;
+        }
+
+        _targetWindow = hwnd;
+        UpdateOverlayIcon(_targetWindow);
+        ShowOverlay(point.X, point.Y, WindowSnapAssistActivationMode.Shortcut);
+        _overlay.BeginSelectionAtScreenPoint(point.X, point.Y);
+        return true;
+    }
+
+    public void UpdateMouseDragSelectionAtMouse()
+    {
+        if (_overlay.IsSelecting && GetCursorPos(out var point))
+        {
+            _overlay.UpdateSelectionFromScreenPoint(point.X, point.Y);
+        }
+    }
+
+    public void CompleteMouseDragSelectionAtMouse()
+    {
+        if (!_overlay.IsSelecting || !GetCursorPos(out var point))
+        {
+            HideOverlay(force: true);
+            return;
+        }
+
+        var selected = _overlay.CompleteSelectionAtScreenPoint(point.X, point.Y);
+        if (selected == WindowSnapAssistMode.None)
+        {
+            HideOverlay(force: true);
+            return;
+        }
+
+        ApplySnapMode(selected);
+    }
+
     public void Dispose()
     {
         Stop();

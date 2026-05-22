@@ -531,16 +531,9 @@
                         <ContextMenu Opened="CommandListContextMenu_Opened"
                                      Closed="CommandListContextMenu_Closed"
                                      PreviewKeyDown="CommandListContextMenu_PreviewKeyDown">
-                            <MenuItem x:Name="CreateDesktopShortcutMenuItem"
-                                      Header="添加桌面快捷方式"
-                                      Click="CreateDesktopShortcutMenuItem_Click">
-                                <MenuItem.Icon>
-                                    <Path Data="{local:IconGeometry desktop-shortcut}" Fill="#60A5FA" Stretch="Uniform" Width="16" Height="16" />
-                                </MenuItem.Icon>
-                            </MenuItem>
-                            <Separator />
                             <MenuItem x:Name="SetCommandShortcutMenuItem"
                                       Header="设置快捷键"
+                                      Visibility="Collapsed"
                                       Click="SetCommandShortcutMenuItem_Click">
                                 <MenuItem.Icon>
                                     <Path Data="{local:IconGeometry shortcut}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
@@ -548,6 +541,7 @@
                             </MenuItem>
                             <MenuItem x:Name="RenameCommandMenuItem"
                                       Header="重命名"
+                                      Visibility="Collapsed"
                                       Click="RenameCommandMenuItem_Click">
                                 <MenuItem.Icon>
                                     <Path Data="{local:IconGeometry pen}" Fill="#A0FFFFFF" Stretch="Uniform" />
@@ -569,6 +563,7 @@
                             </MenuItem>
                             <MenuItem x:Name="CopyExtensionStoreLinkMenuItem"
                                       Header="复制商店链接"
+                                      Visibility="Collapsed"
                                       Click="CopyExtensionStoreLinkMenuItem_Click">
                                 <MenuItem.Icon>
                                     <Path Data="{local:IconGeometry link}" Fill="#93C5FD" Stretch="Uniform" Width="16" Height="16" />
@@ -623,6 +618,13 @@
                                       Click="AddToQuickPanelMenuItem_Click">
                                 <MenuItem.Icon>
                                     <Path Data="{local:IconGeometry plus}" Fill="#A0FFFFFF" Stretch="Uniform" Width="16" Height="16" />
+                                </MenuItem.Icon>
+                            </MenuItem>
+                            <MenuItem x:Name="CreateDesktopShortcutMenuItem"
+                                      Header="添加桌面快捷方式"
+                                      Click="CreateDesktopShortcutMenuItem_Click">
+                                <MenuItem.Icon>
+                                    <Path Data="{local:IconGeometry desktop-shortcut}" Fill="#60A5FA" Stretch="Uniform" Width="16" Height="16" />
                                 </MenuItem.Icon>
                             </MenuItem>
                         </ContextMenu>

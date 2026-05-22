@@ -382,6 +382,19 @@ public partial class WindowBindingDropOverlayWindow : Window
         rect = default;
         corner = WindowBindingCorners.TopLeft;
 
+        var pointWindow = WindowFromPoint(point);
+        var rootWindow = pointWindow == IntPtr.Zero ? IntPtr.Zero : GetAncestor(pointWindow, GaRoot);
+        if (rootWindow != IntPtr.Zero &&
+            IsWindowCandidate(rootWindow) &&
+            GetWindowRect(rootWindow, out var rootRect) &&
+            TryResolveBindingArea(point, rootRect, out var rootCorner))
+        {
+            hwnd = rootWindow;
+            rect = rootRect;
+            corner = rootCorner;
+            return true;
+        }
+
         foreach (var candidate in EnumerateTopLevelWindows())
         {
             if (!IsWindowCandidate(candidate))
@@ -512,9 +525,12 @@ public partial class WindowBindingDropOverlayWindow : Window
             return false;
         }
 
-        var titleBuilder = new StringBuilder(256);
-        _ = GetWindowText(hwnd, titleBuilder, titleBuilder.Capacity);
-        return titleBuilder.Length > 0;
+        if (!GetWindowRect(hwnd, out var rect))
+        {
+            return false;
+        }
+
+        return rect.Right - rect.Left >= 80 && rect.Bottom - rect.Top >= 80;
     }
 
     private static IntPtr[] EnumerateTopLevelWindows()
@@ -576,6 +592,7 @@ public partial class WindowBindingDropOverlayWindow : Window
     private readonly record struct PreviewPlacement(double LeftDip, double TopDip, int OffsetX, int OffsetY);
 
     private const int GwlExstyle = -20;
+    private const uint GaRoot = 2;
     private const long WsExToolwindow = 0x00000080L;
     private const long WsExNoactivate = 0x08000000L;
 
@@ -584,6 +601,9 @@ public partial class WindowBindingDropOverlayWindow : Window
 
     [DllImport("user32.dll")]
     private static extern IntPtr WindowFromPoint(POINT point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
 
     [DllImport("user32.dll")]
     private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);

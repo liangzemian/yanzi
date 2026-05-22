@@ -45,6 +45,9 @@ public partial class AddJsonExtensionWindow : Window
     private string _aiGuidePrompt = string.Empty;
     private WizardStep _currentStep = WizardStep.Describe;
     private LocalExtensionHostedViewManifest? _manualHostedView;
+    private LocalExtensionSearchProviderManifest? _manualSearchProvider;
+    private LocalExtensionMouseGestureManifest? _manualMouseGesture;
+    private string? _manualUiMode;
     private bool _lastJsonValid;
     private bool _testCompleted;
     private bool _testSucceeded;
@@ -98,6 +101,8 @@ public partial class AddJsonExtensionWindow : Window
             RefreshPromptText();
             RefreshAllState();
             
+            // 初始化简单模式：根据已加载的 manifest 推断类型并把字段同步到简单控件
+            InitializeSimpleMode();
             // 初始化完成，允许同步
             _isInitializing = false;
         };
@@ -795,9 +800,9 @@ public partial class AddJsonExtensionWindow : Window
         ManualTestExtensionButton.Visibility = _lastJsonValid ? Visibility.Visible : Visibility.Collapsed;
         ManualTestExtensionButton.IsEnabled = _lastJsonValid;
         SaveButton.IsEnabled = _lastJsonValid;
-        SaveButton.Visibility = _lastJsonValid && (!string.IsNullOrWhiteSpace(ManualJsonInputBox.Text) || _manualMode || _currentStep == WizardStep.Test || _isEditMode)
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        // 新设计：保存按钮始终可见。无效时通过 IsEnabled=false 给出视觉反馈，
+        // 不再因为 JSON 暂时无效就把按钮藏起来（这会误导用户以为保存功能消失了）。
+        SaveButton.Visibility = Visibility.Visible;
 
         if (_testCompleted && !_testSucceeded)
         {
@@ -1311,6 +1316,7 @@ public partial class AddJsonExtensionWindow : Window
             GlobalShortcut = NullIfEmpty(GlobalShortcutBox.Text),
             HotkeyBehavior = NullIfEmpty(HotkeyBehaviorBox.Text),
             Runtime = runtime,
+            UiMode = string.Equals(runtime, "csharp", StringComparison.OrdinalIgnoreCase) ? NullIfEmpty(_manualUiMode) : null,
             EntryMode = entryMode,
             Entry = NullIfEmpty(EntryBox.Text),
             Permissions = SplitCsv(PermissionsBox.Text),
@@ -1324,7 +1330,27 @@ public partial class AddJsonExtensionWindow : Window
                 {
                     Mode = NullIfEmpty(StartupModeBox.Text),
                     Schedule = NullIfEmpty(StartupScheduleBox.Text)
-                }
+                },
+            SearchProvider = _manualSearchProvider,
+            MouseGesture = NormalizeMouseGestureForManifest(_manualMouseGesture)
+        };
+    }
+
+    private LocalExtensionMouseGestureManifest? NormalizeMouseGestureForManifest(LocalExtensionMouseGestureManifest? gesture)
+    {
+        if (gesture == null)
+        {
+            return null;
+        }
+
+        return new LocalExtensionMouseGestureManifest
+        {
+            Trigger = GetSelectedGestureTrigger(),
+            Sequence = gesture.Sequence,
+            Sign = gesture.Sign,
+            Data = gesture.Data,
+            Tolerance = gesture.Tolerance,
+            MinDistance = gesture.MinDistance
         };
     }
 
@@ -1351,6 +1377,9 @@ public partial class AddJsonExtensionWindow : Window
         StartupModeBox.Text = manifest.Startup?.Mode ?? string.Empty;
         StartupScheduleBox.Text = manifest.Startup?.Schedule ?? string.Empty;
         _manualHostedView = manifest.HostedView;
+        _manualSearchProvider = manifest.SearchProvider;
+        _manualMouseGesture = manifest.MouseGesture;
+        _manualUiMode = manifest.UiMode;
         SafeRefreshIconPreview();
     }
 
@@ -1592,11 +1621,42 @@ public partial class AddJsonExtensionWindow : Window
             return new TestExecutionResult(true, "测试通过，已实际打开搜索结果地址。", logBuilder.ToString());
         }
 
+        if (manifest.SearchProvider != null)
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yanzi-extension-test", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            try
+            {
+                var command = BuildTestCommand(manifest, tempDirectory);
+                var mainWindow = Owner as MainWindow
+                    ?? System.Windows.Application.Current.Windows.OfType<MainWindow>().FirstOrDefault();
+                if (mainWindow == null)
+                {
+                    logBuilder.AppendLine("未找到主窗口实例，无法预览搜索提供器。");
+                    return new TestExecutionResult(false, "没有可用的主窗口来预览文件夹搜索。", logBuilder.ToString());
+                }
+
+                await mainWindow.Dispatcher.InvokeAsync(() => mainWindow.OpenSearchProviderInLauncher(command, string.Empty));
+                logBuilder.AppendLine("类型：扩展搜索提供器");
+                logBuilder.AppendLine($"提供器：{manifest.SearchProvider.Type}");
+                logBuilder.AppendLine($"搜索目录：{manifest.SearchProvider.Path ?? manifest.OpenTarget ?? "未设置"}");
+                logBuilder.AppendLine("已拉起主窗口并进入该扩展的搜索输入。");
+                return new TestExecutionResult(true, "测试通过，已在主窗口中打开搜索入口。", logBuilder.ToString());
+            }
+            finally
+            {
+                TryDeleteDirectory(tempDirectory);
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(manifest.OpenTarget))
         {
             var target = manifest.OpenTarget.Trim();
             var exists = File.Exists(target) || Directory.Exists(target);
             var isUri = Uri.TryCreate(target, UriKind.Absolute, out _);
+            // 系统协议（shell:、ms-settings:、ms-photos: 之类）和 PATH 查得到的可执行文件也算合法目标
+            var isShellProtocol = target.Contains(':') && !Path.IsPathFullyQualified(target);
+            var resolvedFromPath = !exists && TryResolveExecutableOnPath(target);
             Process.Start(new ProcessStartInfo
             {
                 FileName = target,
@@ -1606,15 +1666,59 @@ public partial class AddJsonExtensionWindow : Window
             logBuilder.AppendLine($"目标：{target}");
             logBuilder.AppendLine($"本地存在：{exists}");
             logBuilder.AppendLine($"绝对地址：{isUri}");
+            if (resolvedFromPath)
+            {
+                logBuilder.AppendLine("PATH 解析：找到对应可执行文件。");
+            }
+            if (isShellProtocol)
+            {
+                logBuilder.AppendLine("协议地址：识别为 shell 或系统协议。");
+            }
             logBuilder.AppendLine("已实际执行打开动作。");
+            var success = exists || isUri || isShellProtocol || resolvedFromPath;
             return new TestExecutionResult(
-                exists || isUri,
-                exists || isUri ? "测试通过，已实际执行打开动作。" : "测试未通过，目标既不是可访问地址，也不是现有文件/目录。",
+                success,
+                success ? "测试通过，已实际执行打开动作。" : "测试未通过，目标既不是可访问地址，也不是现有文件/目录。",
                 logBuilder.ToString());
         }
 
         logBuilder.AppendLine("未检测到 runtime、queryTargetTemplate 或 openTarget。");
         return new TestExecutionResult(false, "当前扩展缺少可测试的执行入口。", logBuilder.ToString());
+    }
+
+    private static bool TryResolveExecutableOnPath(string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName) || fileName.IndexOfAny(new[] { '\\', '/' }) >= 0)
+        {
+            return false;
+        }
+
+        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var pathExt = (Environment.GetEnvironmentVariable("PATHEXT") ?? ".EXE;.BAT;.CMD;.COM").Split(';', StringSplitOptions.RemoveEmptyEntries);
+        var hasExt = Path.HasExtension(fileName);
+
+        foreach (var dir in pathEnv.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                if (hasExt)
+                {
+                    if (File.Exists(Path.Combine(dir, fileName))) return true;
+                }
+                else
+                {
+                    foreach (var ext in pathExt)
+                    {
+                        if (File.Exists(Path.Combine(dir, fileName + ext))) return true;
+                    }
+                }
+            }
+            catch
+            {
+                // ignore unparseable PATH entries
+            }
+        }
+        return false;
     }
 
     private async Task RunTestAndRenderAsync(
@@ -2481,33 +2585,16 @@ Write-Output $normalized.Trim()
             Name = "C# 动作示例",
             Version = "0.1.0",
             Category = "C#",
-            Description = "使用 C# 读取宿主传入的上下文并返回结果。",
+            Description = "使用 C# 打开一个原生示例窗口。",
             Keywords = ["csharp", "dotnet", "context", "示例"],
             Runtime = "csharp",
+            UiMode = "native-window",
             EntryMode = "inline",
             Permissions = ["context.read"],
             Icon = "mdi:code",
             Script = new LocalExtensionInlineScriptManifest
             {
-                Source =
-"""
-public static class YanziAction
-{
-    public static Task<string> RunAsync(YanziActionContext context)
-    {
-        var input = string.IsNullOrWhiteSpace(context.InputText)
-            ? "没有收到选中内容。"
-            : context.InputText.Trim();
-
-        return Task.FromResult(
-            $"来源: {context.LaunchSource}" + Environment.NewLine +
-            $"扩展目录: {context.ExtensionDirectory}" + Environment.NewLine +
-            Environment.NewLine +
-            "输入:" + Environment.NewLine +
-            input);
-    }
-}
-"""
+                Source = CreateCSharpWindowScript()
             }
         };
 
@@ -3093,6 +3180,28 @@ Write-Output "说明：这是模板输出，后续可以替换为真实翻译 AP
     private static SolidColorBrush CreateBrush(string colorHex)
     {
         return new SolidColorBrush((MediaColor)MediaColorConverter.ConvertFromString(colorHex));
+    }
+
+    private TResult ExecuteWithListenerServicesPaused<TResult>(Func<TResult> action)
+    {
+        var mainWindow = System.Windows.Application.Current.Windows
+            .OfType<MainWindow>()
+            .FirstOrDefault(static window => window.IsLoaded);
+
+        if (mainWindow == null)
+        {
+            return action();
+        }
+
+        mainWindow.PauseListenerServices();
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            mainWindow.ResumeListenerServices();
+        }
     }
 
     private enum WizardStep

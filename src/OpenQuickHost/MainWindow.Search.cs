@@ -364,6 +364,45 @@ public partial class MainWindow
         }
     }
 
+    public void OpenSearchProviderInLauncher(CommandItem command, string? initialQuery = null)
+    {
+        var provider = ResolveSearchProviderForCommand(command);
+        if (provider == null)
+        {
+            LastRunMessage = $"当前扩展没有搜索提供器：{command.Title}";
+            return;
+        }
+
+        if (IsHostedViewOpen)
+        {
+            CloseHostedView();
+        }
+
+        ShowPanel();
+        Activate();
+
+        var extensionScope = SearchScopes.FirstOrDefault(scope =>
+            scope.Key.Equals(SearchScopeExtension, StringComparison.OrdinalIgnoreCase));
+        if (extensionScope != null)
+        {
+            SelectedSearchScope = extensionScope;
+        }
+
+        var alias = command.QueryPrefixes.FirstOrDefault(static item => !string.IsNullOrWhiteSpace(item) && !item.Contains(' '))
+                    ?? provider.Aliases.FirstOrDefault(static item => !string.IsNullOrWhiteSpace(item) && !item.Contains(' '))
+                    ?? command.ExtensionId;
+        var query = string.IsNullOrWhiteSpace(initialQuery)
+            ? $"{alias} "
+            : $"{alias} {initialQuery.Trim()}";
+
+        SearchBox.Text = query;
+        SearchBox.CaretIndex = SearchBox.Text.Length;
+        SearchBox.Focus();
+        ApplyFilter(SearchBox.Text);
+        LastRunMessage = $"已打开搜索：{command.Title}";
+        HostAssets.AppendLog($"Opened search provider in launcher: id={command.ExtensionId}, title={command.Title}, alias={alias}");
+    }
+
     private bool TryResolveInlineSearchProviderCommand(SearchQueryState parsed, string? rawQuery, out CommandItem command, out string providerTerm)
     {
         command = null!;

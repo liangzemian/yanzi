@@ -62,6 +62,7 @@ public partial class MainWindow
         }
 
         UpsertLocalExtensionCommand(command);
+        StartMouseGestureService();
         ApplyFilter(SearchBox.Text);
         SelectedCommand = _allCommands.FirstOrDefault(x => x.ExtensionId.Equals(command.ExtensionId, StringComparison.OrdinalIgnoreCase));
         CommandList.SelectedItem = SelectedCommand;
@@ -255,6 +256,7 @@ public partial class MainWindow
                 var command = LocalExtensionCatalog.SaveJsonExtension(dialog.JsonContent);
                 QueueCSharpPrebuild(command, isEditMode ? "extension-edit-fallback" : "extension-add-fallback");
                 UpsertLocalExtensionCommand(command);
+                StartMouseGestureService();
                 ApplyFilter(SearchBox.Text);
                 SelectedCommand = _allCommands.FirstOrDefault(x => x.ExtensionId.Equals(command.ExtensionId, StringComparison.OrdinalIgnoreCase));
                 CommandList.SelectedItem = SelectedCommand;
@@ -564,7 +566,10 @@ public partial class MainWindow
             () => _radialMenu?.ShowAtMouse(),
             () => _radialMenu?.ExecuteSelectedFromHoldRelease(),
             () => _yanmOverlay?.ShowTemporary(),
-            () => _yanmOverlay?.HideTemporary());
+            () => _yanmOverlay?.HideTemporary(),
+            () => _windowSnapAssistService.BeginMouseDragSelectionAtMouse(),
+            () => _windowSnapAssistService.UpdateMouseDragSelectionAtMouse(),
+            () => _windowSnapAssistService.CompleteMouseDragSelectionAtMouse());
     }
 
     public void StopMousePanelService()
@@ -979,6 +984,7 @@ public partial class MainWindow
         KeyboardDoubleTapService.Stop();
         YanyuTriggerService.Stop();
         YarnSelectService.Stop();
+        MouseGestureService.Stop();
         _windowBoundExtensionsService.Stop();
         _windowSnapAssistService.Stop();
         UnregisterLauncherHotkey();
@@ -996,6 +1002,7 @@ public partial class MainWindow
         StartKeyboardTriggerService();
         YanyuTriggerService.Start(HandleYanyuRuleTriggered);
         YarnSelectService.Start(HandleYarnSelectAction);
+        StartMouseGestureService();
         RefreshYanyuRules();
         _windowBoundExtensionsService.Start(_appSettings.WindowBindings);
         _windowSnapAssistService.Start();
@@ -1005,6 +1012,43 @@ public partial class MainWindow
         RefreshWindowSnapAssistHotkeyRegistration();
         RefreshExtensionHotkeys();
         SyncStatus = "已恢复快捷键、扩展快捷键、燕选和鼠标面板监听。";
+    }
+
+    /// <summary>启动全局鼠标手势服务并扫描所有扩展中的 MouseGesture 注册到服务里。</summary>
+    public void StartMouseGestureService()
+    {
+        if (!MouseGestureService.IsRunning)
+        {
+            MouseGestureService.Start((level, msg) => HostAssets.AppendLog(msg));
+        }
+        var count = MouseGestureService.ReloadFromCatalog(HandleMouseGestureExecute);
+        HostAssets.AppendLog($"MouseGesture: catalog reloaded, registrations={count}.");
+    }
+
+    /// <summary>扩展保存后调用，重新扫描注册表。</summary>
+    public void ReloadMouseGestureRegistrations()
+    {
+        if (!MouseGestureService.IsRunning) return;
+        var count = MouseGestureService.ReloadFromCatalog(HandleMouseGestureExecute);
+        HostAssets.AppendLog($"MouseGesture: registrations refreshed -> {count}.");
+    }
+
+    private void HandleMouseGestureExecute(RegisteredGesture gesture)
+    {
+        // 钩子线程上回调，UI 线程执行扩展
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            var command = _allCommands.FirstOrDefault(c =>
+                string.Equals(c.ExtensionId, gesture.ExtensionId, StringComparison.OrdinalIgnoreCase));
+            if (command == null)
+            {
+                HostAssets.AppendLog($"MouseGesture: extension not found in commands, id={gesture.ExtensionId}.");
+                LastRunMessage = $"鼠标手势：未找到扩展 {gesture.ExtensionName}";
+                return;
+            }
+            ExecuteCommandExternally(command, explicitInput: null, launchSource: "mouse-gesture");
+            LastRunMessage = $"鼠标手势 {gesture.Sequence} 触发：{command.Title}";
+        }));
     }
 
     private void PinAutoHideButton_Click(object sender, RoutedEventArgs e)
@@ -1049,6 +1093,7 @@ public partial class MainWindow
             StartKeyboardTriggerService();
             YanyuTriggerService.Start(HandleYanyuRuleTriggered);
             YarnSelectService.Start(HandleYarnSelectAction);
+            StartMouseGestureService();
             RefreshYanyuRules();
             RefreshLauncherHotkeyRegistration();
             RefreshYanmHotkeyRegistration();
@@ -1972,6 +2017,7 @@ public partial class MainWindow
             UpsertLocalExtensionCommand(command);
         }
 
+        StartMouseGestureService();
         ApplyFilter(SearchBox.Text);
         if (!string.IsNullOrWhiteSpace(statusText))
         {
@@ -2022,6 +2068,7 @@ public partial class MainWindow
                 return Task.FromResult((false, string.Empty));
             }
 
+            ReplaceEditedExtensionReferences(extensionId, updated.ExtensionId);
             LastRunMessage = $"已更新本地 JSON 扩展：{updated.Title}";
             QueueBackgroundWebDavSync("extension-edit-settings");
             return Task.FromResult((true, $"已更新扩展：{updated.Title}"));
@@ -2035,6 +2082,135 @@ public partial class MainWindow
     public Task<(bool ok, string message)> EditExtensionFromQuickPanelAsync(string extensionId, Window? owner = null)
     {
         return EditExtensionFromSettingsAsync(extensionId, owner);
+    }
+
+    private void ReplaceEditedExtensionReferences(string oldExtensionId, string newExtensionId)
+    {
+        if (string.IsNullOrWhiteSpace(oldExtensionId) ||
+            string.IsNullOrWhiteSpace(newExtensionId) ||
+            string.Equals(oldExtensionId, newExtensionId, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var settings = AppSettingsStore.Load();
+        var changed = false;
+
+        changed |= ReplaceExtensionId(settings.FavoriteExtensionIds, oldExtensionId, newExtensionId);
+        changed |= ReplaceExtensionId(settings.GlobalFavoriteExtensionIds, oldExtensionId, newExtensionId);
+        changed |= ReplaceExtensionId(settings.ContextFavoriteExtensionIds, oldExtensionId, newExtensionId);
+        changed |= ReplaceExtensionId(settings.DisabledExtensionIds, oldExtensionId, newExtensionId);
+        changed |= ReplaceExtensionId(settings.PinnedSearchScopeCommandIds, oldExtensionId, newExtensionId);
+        changed |= ReplaceExtensionId(settings.RecentlyAddedExtensionIds, oldExtensionId, newExtensionId);
+        changed |= ReplaceExtensionId(settings.UnreadNewExtensionIds, oldExtensionId, newExtensionId);
+        changed |= ReplaceNullableExtensionId(settings.QuickPanelSlots, oldExtensionId, newExtensionId);
+
+        foreach (var group in settings.QuickPanelGlobalGroups.Concat(settings.QuickPanelContextGroups))
+        {
+            changed |= ReplaceNullableExtensionId(group.Slots, oldExtensionId, newExtensionId);
+            group.SlotItems ??= [];
+            for (var index = 0; index < group.SlotItems.Count; index++)
+            {
+                var item = group.SlotItems[index];
+                if (ReplaceExtensionInQuickPanelSlotItem(item, oldExtensionId, newExtensionId))
+                {
+                    changed = true;
+                }
+            }
+
+            group.Slots = group.SlotItems
+                .Take(12)
+                .Select(static item => item != null && !item.IsFolder ? item.ExtensionId : null)
+                .ToList();
+        }
+
+        if (settings.RadialMenu != null)
+        {
+            changed |= ReplaceNullableExtensionId(settings.RadialMenu.Slots, oldExtensionId, newExtensionId);
+            foreach (var page in settings.RadialMenu.Pages)
+            {
+                changed |= ReplaceNullableExtensionId(page.Slots, oldExtensionId, newExtensionId);
+            }
+        }
+
+        if (!changed)
+        {
+            return;
+        }
+
+        AppSettingsStore.Save(settings);
+        _appSettings = settings;
+        _windowBoundExtensionsService.Reload(_appSettings.WindowBindings);
+        _quickPanel?.ReloadSlots();
+        NotifyQuickPanelSettingsChanged("extension-edit-id-replace");
+        HostAssets.AppendLog($"Extension edit references replaced: oldId={oldExtensionId}, newId={newExtensionId}.");
+    }
+
+    private static bool ReplaceExtensionId(List<string> values, string oldExtensionId, string newExtensionId)
+    {
+        var changed = false;
+        for (var index = 0; index < values.Count; index++)
+        {
+            if (!values[index].Equals(oldExtensionId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            values[index] = newExtensionId;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private static bool ReplaceNullableExtensionId(List<string?> values, string oldExtensionId, string newExtensionId)
+    {
+        var changed = false;
+        for (var index = 0; index < values.Count; index++)
+        {
+            if (!string.Equals(values[index], oldExtensionId, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            values[index] = newExtensionId;
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private static bool ReplaceExtensionInQuickPanelSlotItem(QuickPanelSlotItem? item, string oldExtensionId, string newExtensionId)
+    {
+        if (item == null)
+        {
+            return false;
+        }
+
+        if (!item.IsFolder)
+        {
+            if (!string.Equals(item.ExtensionId, oldExtensionId, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            item.ExtensionId = newExtensionId;
+            return true;
+        }
+
+        var changed = ReplaceExtensionId(item.FolderExtensionIds, oldExtensionId, newExtensionId);
+        item.FolderSlotItems ??= [];
+        foreach (var child in item.FolderSlotItems)
+        {
+            changed |= ReplaceExtensionInQuickPanelSlotItem(child, oldExtensionId, newExtensionId);
+        }
+
+        item.FolderExtensionIds = item.FolderSlotItems
+            .Where(static slot => slot != null && !slot.IsFolder && !string.IsNullOrWhiteSpace(slot.ExtensionId))
+            .Select(static slot => slot!.ExtensionId!)
+            .ToList();
+
+        return changed;
     }
 
     public Task<(bool ok, string message)> DeleteExtensionFromSettingsAsync(string extensionId, Window? owner = null)
@@ -2328,6 +2504,29 @@ public partial class MainWindow
         catch (Exception ex)
         {
             return Task.FromResult<(bool ok, string message, CommandItem? updated)>((false, $"更新自动运行失败：{FormatExceptionMessage(ex)}", null));
+        }
+    }
+
+    public Task<(bool ok, string message, CommandItem? updated)> UpdateExtensionMouseGestureFromSettingsAsync(
+        string extensionId,
+        LocalExtensionMouseGestureManifest? mouseGesture)
+    {
+        try
+        {
+            var updated = LocalExtensionCatalog.SetMouseGesture(extensionId, mouseGesture);
+            UpsertLocalExtensionCommand(updated);
+            ApplyFilter(SearchBox.Text);
+            ReloadMouseGestureRegistrations();
+            QueueBackgroundWebDavSync("extension-mouse-gesture-settings");
+
+            var message = mouseGesture == null || string.IsNullOrWhiteSpace(mouseGesture.Sequence)
+                ? $"已清除鼠标手势：{updated.Title}"
+                : $"已绑定鼠标手势：{updated.Title} -> {mouseGesture.Sign ?? mouseGesture.Sequence}";
+            return Task.FromResult<(bool ok, string message, CommandItem? updated)>((true, message, updated));
+        }
+        catch (Exception ex)
+        {
+            return Task.FromResult<(bool ok, string message, CommandItem? updated)>((false, $"更新鼠标手势失败：{FormatExceptionMessage(ex)}", null));
         }
     }
 

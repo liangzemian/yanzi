@@ -15,6 +15,9 @@ using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using OpenQuickHost.Sync;
+using WpfComboBox = System.Windows.Controls.ComboBox;
+using WpfPoint = System.Windows.Point;
+using WpfVector = System.Windows.Vector;
 
 namespace OpenQuickHost;
 
@@ -59,6 +62,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private bool _isRenamingRadialMenuPage;
     private bool _suspendActivationRefresh;
     private RadialMenuSlotEditorItem? _selectedRadialMenuSlot;
+    private readonly Dictionary<string, WpfComboBox> _mouseTriggerTargetCombos = new(StringComparer.Ordinal);
+    private bool _isUpdatingMouseTriggerTargetCombos;
     
     // 扩展名称缓存，避免重复读取文件
     private static readonly Dictionary<string, string> _extensionNameCache = new();
@@ -91,6 +96,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             new SettingsNavigationItem("sync", "mdi:sync", "同步", "#FF22C55E"),
             new SettingsNavigationItem("extensions", "mdi:dashboard", "扩展", "#FFF97316"),
             new SettingsNavigationItem("quickpanel", "mdi:mouse-panel", "鼠标触发", "#FFEC4899"),
+            new SettingsNavigationItem("mousegestures", "mdi:gesture-tap", "鼠标手势", "#FFFB923C"),
             new SettingsNavigationItem("radial", "mdi:circle-outline", "燕环", "#FFA855F7"),
             new SettingsNavigationItem("yarnselect", "mdi:shortcut", "燕选", "#FF14B8A6"),
             new SettingsNavigationItem("yanm", "mdi:monitor-dashboard", "燕幕", "#FF60A5FA"),
@@ -124,6 +130,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         RadialMenuPreviewSeparators = new ObservableCollection<RadialSeparatorViewModel>();
         RadialMenuPages = new ObservableCollection<RadialMenuPageEditorItem>();
         RadialMenuChildPageOptions = new ObservableCollection<RadialMenuPageEditorItem>();
+        MouseGestureItems = new ObservableCollection<SettingsMouseGestureItem>();
+        MouseGestureQuickBindItems = new ObservableCollection<MouseGestureQuickBindItem>();
+        MouseGestureExtensionOptions = new ObservableCollection<MouseGestureExtensionOption>();
         DataContext = this;
         // 延迟到Loaded事件中执行，避免构造函数卡顿
         // RefreshRadialMenuSlots();
@@ -159,6 +168,12 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     public ObservableCollection<RadialMenuPageEditorItem> RadialMenuPages { get; }
 
     public ObservableCollection<RadialMenuPageEditorItem> RadialMenuChildPageOptions { get; }
+
+    public ObservableCollection<SettingsMouseGestureItem> MouseGestureItems { get; }
+
+    public ObservableCollection<MouseGestureQuickBindItem> MouseGestureQuickBindItems { get; }
+
+    public ObservableCollection<MouseGestureExtensionOption> MouseGestureExtensionOptions { get; }
 
     public IReadOnlyList<YarnSelectActionTypeOption> YarnSelectActionOptions { get; } =
     [
@@ -200,6 +215,43 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         new(MouseTriggerModes.HorizontalWheel, "滚轮左右")
     ];
 
+    public IReadOnlyList<MouseTriggerOption> MouseGestureTriggerOptions { get; } =
+    [
+        new(MouseGestureTriggerModes.None, "不启用鼠标手势"),
+        new(MouseGestureTriggerModes.RightDrag, "按住右键移动"),
+        new(MouseGestureTriggerModes.MiddleDrag, "按住中键移动")
+    ];
+
+    private static readonly IReadOnlyList<MouseTriggerOption> StandardMouseTriggerTargetOptions =
+    [
+        new("None", "禁用"),
+        new("Panel", "鼠标面板"),
+        new("Radial", "燕环"),
+        new("Yanm", "燕幕")
+    ];
+
+    private static readonly IReadOnlyList<MouseTriggerOption> GestureMouseTriggerTargetOptions =
+    [
+        new("None", "禁用"),
+        new("Panel", "鼠标面板"),
+        new("Radial", "燕环"),
+        new("Yanm", "燕幕"),
+        new("WindowSnap", "窗口排列"),
+        new("Gesture", "鼠标手势")
+    ];
+
+    private static readonly IReadOnlyList<MouseGestureTemplateDefinition> CommonMouseGestureTemplates =
+    [
+        new("↑", "上划", "适合返回顶部、打开常用入口"),
+        new("↓", "下划", "适合关闭、隐藏或最小化"),
+        new("←", "左划", "适合后退、上一项"),
+        new("→", "右划", "适合前进、下一项"),
+        new("↓→", "L", "适合打开目录、窗口操作"),
+        new("→↓←", "C", "适合复制、剪贴板动作"),
+        new("↑→↓←", "P", "适合打开面板或固定扩展"),
+        new("→↓←↑", "S", "适合搜索、选择类动作")
+    ];
+
     public SettingsNavigationItem? SelectedNavigation
     {
         get => _selectedNavigation;
@@ -221,6 +273,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(IsExtensionsSelected));
             OnPropertyChanged(nameof(IsRecycleBinSelected));
             OnPropertyChanged(nameof(IsQuickPanelSelected));
+            OnPropertyChanged(nameof(IsMouseGesturesSelected));
             OnPropertyChanged(nameof(IsRadialSelected));
             OnPropertyChanged(nameof(IsYarnSelectSelected));
             OnPropertyChanged(nameof(IsYanmSelected));
@@ -240,6 +293,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             else if (IsRadialSelected)
             {
                 EnsureRadialEditorLoaded();
+            }
+            else if (IsMouseGesturesSelected)
+            {
+                RefreshMouseGestureManagement();
             }
 
             if (!IsExtensionsSelected)
@@ -1155,10 +1212,39 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             if (trigger.MiddleButtonLongPress) labels.Add("长按中键");
             if (trigger.RightButtonLongPress) labels.Add("长按右键");
             if (trigger.RightButtonDrag) labels.Add("按右键移动");
+            if (trigger.MiddleButtonDrag) labels.Add("按中键移动");
             if (trigger.HorizontalWheel) labels.Add("滚轮左右");
 
             return labels.Count == 0 ? "未启用鼠标触发，默认回退为长按中键。" : string.Join("、", labels);
         }
+    }
+
+    public string MouseGestureTriggerSummary => MouseGestureTriggerModes.Normalize(_settings.MouseGestureTriggerMode) switch
+    {
+        MouseGestureTriggerModes.RightDrag => "按住右键移动",
+        MouseGestureTriggerModes.MiddleDrag => "按住中键移动",
+        _ => "未启用"
+    };
+
+    public string MouseGestureManagementSummary
+    {
+        get
+        {
+            var count = MouseGestureItems?.Count ?? 0;
+            var trigger = MouseGestureTriggerSummary;
+            return count == 0
+                ? $"当前没有扩展绑定鼠标手势。全局触发方式：{trigger}。"
+                : $"当前有 {count} 个扩展绑定鼠标手势。全局触发方式：{trigger}。";
+        }
+    }
+
+    public Visibility MouseGestureEmptyVisibility =>
+        MouseGestureItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    public string MouseGestureTriggerMode
+    {
+        get => MouseGestureTriggerModes.Normalize(_settings.MouseGestureTriggerMode);
+        set => UpdateMouseGestureTriggerMode(value);
     }
 
     public string RadialAssignedMouseTriggerSummary => BuildAssignedMouseTriggerSummary(
@@ -1172,6 +1258,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         (_settings.RadialMenu.TriggerMiddleButtonLongPress, "长按中键"),
         (_settings.RadialMenu.TriggerRightButtonLongPress, "长按右键"),
         (_settings.RadialMenu.TriggerRightButtonDrag, "按右键移动"),
+        (_settings.RadialMenu.TriggerMiddleButtonDrag, "按中键移动"),
         (_settings.RadialMenu.TriggerHorizontalWheel, "滚轮左右")
     ]);
 
@@ -1186,6 +1273,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         (_settings.Yanm.TriggerMiddleButtonLongPress, "长按中键"),
         (_settings.Yanm.TriggerRightButtonLongPress, "长按右键"),
         (_settings.Yanm.TriggerRightButtonDrag, "按右键移动"),
+        (_settings.Yanm.TriggerMiddleButtonDrag, "按中键移动"),
         (_settings.Yanm.TriggerHorizontalWheel, "滚轮左右")
     ]);
 
@@ -1228,7 +1316,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         "sync" => "管理云账号状态、同步入口和当前服务端连接信息。",
         "extensions" => "查看本地扩展目录和当前机器已发现的扩展数量。",
         "recycle" => "查看已删除扩展，支持恢复和彻底删除。",
-        "quickpanel" => "统一分配鼠标手势给面板、燕环和燕幕，避免触发方式重叠。",
+        "quickpanel" => "统一分配鼠标动作给面板、燕环、燕幕、窗口排列和鼠标手势，避免触发方式重叠。",
+        "mousegestures" => "管理扩展使用的鼠标轨迹，快速查看冲突并把常用手势绑定到扩展。",
         "radial" => "配置燕环的启用状态、键盘触发和轮盘内容；鼠标触发只在“鼠标触发”页统一分配。",
         "yarnselect" => "按住左键选中文本时，用字母或鼠标键快速复制、搜索、运行或粘贴。",
         "yanm" => "配置全局信息层燕幕，包括启用状态、按住显示和双击固定的触发键；鼠标触发只做只读展示。",
@@ -1247,6 +1336,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     public bool IsRecycleBinSelected => SelectedNavigation?.Key == "recycle";
 
     public bool IsQuickPanelSelected => SelectedNavigation?.Key == "quickpanel";
+
+    public bool IsMouseGesturesSelected => SelectedNavigation?.Key == "mousegestures";
 
     public bool IsRadialSelected => SelectedNavigation?.Key == "radial";
 
@@ -1292,6 +1383,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         RefreshVisibleSectionData();
         
         // Initialize gesture card colors
+        InitializeMouseTriggerTargetDropdowns();
         UpdateAllGestureCardColors();
         ScheduleExtensionCardWidthUpdate();
     }
@@ -1356,6 +1448,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         RefreshVisibleSectionData();
         
         // Refresh gesture card colors after settings reload
+        InitializeMouseTriggerTargetDropdowns();
         UpdateAllGestureCardColors();
     }
 
@@ -1717,6 +1810,100 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         HostAssets.AppendLog($"Gesture {gestureName} assigned to {target}");
     }
 
+    private void InitializeMouseTriggerTargetDropdowns()
+    {
+        var gestures = GetMouseTriggerGestureNames();
+        foreach (var gesture in gestures)
+        {
+            if (_mouseTriggerTargetCombos.ContainsKey(gesture))
+            {
+                continue;
+            }
+
+            if (FindName($"{gesture}_None") is not System.Windows.Controls.Button noneButton ||
+                noneButton.Parent is not Grid grid)
+            {
+                continue;
+            }
+
+            grid.Children.Clear();
+            grid.ColumnDefinitions.Clear();
+            grid.RowDefinitions.Clear();
+
+            var combo = new WpfComboBox
+            {
+                Tag = gesture,
+                Height = 28,
+                MinWidth = 120,
+                HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+                ItemsSource = GetMouseTriggerTargetOptions(gesture),
+                DisplayMemberPath = nameof(MouseTriggerOption.Label),
+                SelectedValuePath = nameof(MouseTriggerOption.Value),
+                Style = TryFindResource("DarkComboBoxStyle") as Style
+            };
+            combo.SelectionChanged += MouseTriggerTargetCombo_SelectionChanged;
+            grid.Children.Add(combo);
+            _mouseTriggerTargetCombos[gesture] = combo;
+        }
+    }
+
+    private static IReadOnlyList<MouseTriggerOption> GetMouseTriggerTargetOptions(string gestureName) => gestureName switch
+    {
+        "RightButtonDrag" => GestureMouseTriggerTargetOptions,
+        "MiddleButtonDrag" => GestureMouseTriggerTargetOptions,
+        _ => StandardMouseTriggerTargetOptions
+    };
+
+    private void MouseTriggerTargetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isUpdatingMouseTriggerTargetCombos)
+        {
+            return;
+        }
+
+        if (sender is not WpfComboBox { Tag: string gestureName } combo)
+        {
+            return;
+        }
+
+        var target = combo.SelectedValue as string;
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return;
+        }
+
+        ClearGestureFromAllTargets(gestureName);
+        AssignGestureToTarget(gestureName, target);
+        UpdateAllGestureCardColors();
+        SaveQuickPanelTriggerSettings();
+
+        HostAssets.AppendLog($"Mouse trigger target changed: gesture={gestureName}, target={target}.");
+    }
+
+    private void UpdateMouseGestureTriggerMode(string? value)
+    {
+        var normalized = MouseGestureTriggerModes.Normalize(value);
+        if (string.Equals(MouseGestureTriggerModes.Normalize(_settings.MouseGestureTriggerMode), normalized, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (normalized == MouseGestureTriggerModes.RightDrag)
+        {
+            ClearGestureFromAllTargets("RightButtonDrag");
+        }
+        else if (normalized == MouseGestureTriggerModes.MiddleDrag)
+        {
+            ClearGestureFromAllTargets("MiddleButtonDrag");
+        }
+
+        _settings.MouseGestureTriggerMode = normalized;
+        UpdateAllGestureCardColors();
+        SaveQuickPanelTriggerSettings();
+        OnPropertyChanged(nameof(MouseGestureTriggerMode));
+        OnPropertyChanged(nameof(MouseGestureTriggerSummary));
+    }
+
     private void RecordMouseTriggerButton_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new MouseTriggerCaptureWindow
@@ -1747,6 +1934,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         MouseTriggerModes.RightLongPress => "RightButtonLongPress",
         MouseTriggerModes.MiddleLongPress => "MiddleButtonLongPress",
         MouseTriggerModes.RightDrag => "RightButtonDrag",
+        MouseTriggerModes.MiddleDrag => "MiddleButtonDrag",
         MouseTriggerModes.MiddleDown => "MiddleButtonDown",
         MouseTriggerModes.X1Down => "X1ButtonDown",
         MouseTriggerModes.X2Down => "X2ButtonDown",
@@ -1762,6 +1950,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         MouseTriggerModes.RightLongPress => "长按右键",
         MouseTriggerModes.MiddleLongPress => "长按中键",
         MouseTriggerModes.RightDrag => "按右键移动",
+        MouseTriggerModes.MiddleDrag => "按中键移动",
         MouseTriggerModes.MiddleDown => "按下中键",
         MouseTriggerModes.X1Down => "按下 X1 键",
         MouseTriggerModes.X2Down => "按下 X2 键",
@@ -1777,6 +1966,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         "Panel" => "面板",
         "Radial" => "燕环",
         "Yanm" => "燕幕",
+        "WindowSnap" => "窗口排列",
+        "Gesture" => "鼠标手势",
         _ => "未分配"
     };
 
@@ -1804,6 +1995,11 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                 trigger.RightButtonDrag = false;
                 radial.TriggerRightButtonDrag = false;
                 yanm.TriggerRightButtonDrag = false;
+                break;
+            case "MiddleButtonDrag":
+                trigger.MiddleButtonDrag = false;
+                radial.TriggerMiddleButtonDrag = false;
+                yanm.TriggerMiddleButtonDrag = false;
                 break;
             case "MiddleButtonDown":
                 trigger.MiddleButtonDown = false;
@@ -1842,6 +2038,19 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                 break;
         }
 
+        if ((gestureName == "RightButtonDrag" &&
+             string.Equals(MouseGestureTriggerModes.Normalize(_settings.MouseGestureTriggerMode), MouseGestureTriggerModes.RightDrag, StringComparison.Ordinal)) ||
+            (gestureName == "MiddleButtonDrag" &&
+             string.Equals(MouseGestureTriggerModes.Normalize(_settings.MouseGestureTriggerMode), MouseGestureTriggerModes.MiddleDrag, StringComparison.Ordinal)))
+        {
+            _settings.MouseGestureTriggerMode = MouseGestureTriggerModes.None;
+        }
+
+        if (string.Equals(MouseTriggerModes.Normalize(_settings.WindowSnapAssistMouseTriggerMode), legacyMode, StringComparison.OrdinalIgnoreCase))
+        {
+            _settings = _settings with { WindowSnapAssistMouseTriggerMode = MouseTriggerModes.None };
+        }
+
         if (!string.IsNullOrWhiteSpace(legacyMode))
         {
             if (string.Equals(MouseTriggerModes.Normalize(radial.MouseTriggerMode), legacyMode, StringComparison.OrdinalIgnoreCase))
@@ -1861,6 +2070,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         "RightButtonLongPress" => MouseTriggerModes.RightLongPress,
         "MiddleButtonLongPress" => MouseTriggerModes.MiddleLongPress,
         "RightButtonDrag" => MouseTriggerModes.RightDrag,
+        "MiddleButtonDrag" => MouseTriggerModes.MiddleDrag,
         "MiddleButtonDown" => MouseTriggerModes.MiddleDown,
         "X1ButtonDown" => MouseTriggerModes.X1Down,
         "X2ButtonDown" => MouseTriggerModes.X2Down,
@@ -1887,6 +2097,22 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             case "Yanm":
                 SetGestureForYanm(gestureName, true);
                 break;
+            case "WindowSnap":
+                _settings = _settings with
+                {
+                    WindowSnapAssistMouseTriggerMode = GestureNameToMouseTriggerMode(gestureName)
+                };
+                break;
+            case "Gesture":
+                if (gestureName == "RightButtonDrag")
+                {
+                    _settings.MouseGestureTriggerMode = MouseGestureTriggerModes.RightDrag;
+                }
+                else if (gestureName == "MiddleButtonDrag")
+                {
+                    _settings.MouseGestureTriggerMode = MouseGestureTriggerModes.MiddleDrag;
+                }
+                break;
         }
     }
 
@@ -1898,6 +2124,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             case "RightButtonLongPress": trigger.RightButtonLongPress = value; break;
             case "MiddleButtonLongPress": trigger.MiddleButtonLongPress = value; break;
             case "RightButtonDrag": trigger.RightButtonDrag = value; break;
+            case "MiddleButtonDrag": trigger.MiddleButtonDrag = value; break;
             case "MiddleButtonDown": trigger.MiddleButtonDown = value; break;
             case "X1ButtonDown": trigger.X1ButtonDown = value; break;
             case "X2ButtonDown": trigger.X2ButtonDown = value; break;
@@ -1916,6 +2143,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             case "RightButtonLongPress": radial.TriggerRightButtonLongPress = value; break;
             case "MiddleButtonLongPress": radial.TriggerMiddleButtonLongPress = value; break;
             case "RightButtonDrag": radial.TriggerRightButtonDrag = value; break;
+            case "MiddleButtonDrag": radial.TriggerMiddleButtonDrag = value; break;
             case "MiddleButtonDown": radial.TriggerMiddleButtonDown = value; break;
             case "X1ButtonDown": radial.TriggerX1ButtonDown = value; break;
             case "X2ButtonDown": radial.TriggerX2ButtonDown = value; break;
@@ -1934,6 +2162,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             case "RightButtonLongPress": yanm.TriggerRightButtonLongPress = value; break;
             case "MiddleButtonLongPress": yanm.TriggerMiddleButtonLongPress = value; break;
             case "RightButtonDrag": yanm.TriggerRightButtonDrag = value; break;
+            case "MiddleButtonDrag": yanm.TriggerMiddleButtonDrag = value; break;
             case "MiddleButtonDown": yanm.TriggerMiddleButtonDown = value; break;
             case "X1ButtonDown": yanm.TriggerX1ButtonDown = value; break;
             case "X2ButtonDown": yanm.TriggerX2ButtonDown = value; break;
@@ -1969,6 +2198,11 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                 panelValue = trigger.RightButtonDrag;
                 radialValue = radial.TriggerRightButtonDrag;
                 yanmValue = yanm.TriggerRightButtonDrag;
+                break;
+            case "MiddleButtonDrag":
+                panelValue = trigger.MiddleButtonDrag;
+                radialValue = radial.TriggerMiddleButtonDrag;
+                yanmValue = yanm.TriggerMiddleButtonDrag;
                 break;
             case "MiddleButtonDown":
                 panelValue = trigger.MiddleButtonDown;
@@ -2007,6 +2241,25 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                 break;
         }
 
+        if (gestureName == "RightButtonDrag" &&
+            string.Equals(MouseGestureTriggerModes.Normalize(_settings.MouseGestureTriggerMode), MouseGestureTriggerModes.RightDrag, StringComparison.Ordinal))
+        {
+            return "Gesture";
+        }
+
+        if (gestureName == "MiddleButtonDrag" &&
+            string.Equals(MouseGestureTriggerModes.Normalize(_settings.MouseGestureTriggerMode), MouseGestureTriggerModes.MiddleDrag, StringComparison.Ordinal))
+        {
+            return "Gesture";
+        }
+
+        var legacyMode = GestureNameToMouseTriggerMode(gestureName);
+        if (legacyMode != MouseTriggerModes.None &&
+            string.Equals(MouseTriggerModes.Normalize(_settings.WindowSnapAssistMouseTriggerMode), legacyMode, StringComparison.OrdinalIgnoreCase))
+        {
+            return "WindowSnap";
+        }
+
         if (panelValue) return "Panel";
         if (radialValue) return "Radial";
         if (yanmValue) return "Yanm";
@@ -2016,19 +2269,19 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     private void UpdateAllGestureCardColors()
     {
         // Update all gesture cards with their current assignments
-        var gestures = new[]
-        {
-            "RightButtonLongPress", "MiddleButtonLongPress", "RightButtonDrag",
-            "MiddleButtonDown", "X1ButtonDown", "X2ButtonDown", "HorizontalWheel",
-            "CtrlLeftClick", "CtrlRightClick", "CtrlMiddleClick"
-        };
-
-        foreach (var gesture in gestures)
+        foreach (var gesture in GetMouseTriggerGestureNames())
         {
             var target = GetGestureTarget(gesture);
             UpdateGestureCardColors(gesture, target);
         }
     }
+
+    private static string[] GetMouseTriggerGestureNames() =>
+    [
+        "RightButtonLongPress", "MiddleButtonLongPress", "RightButtonDrag", "MiddleButtonDrag",
+        "MiddleButtonDown", "X1ButtonDown", "X2ButtonDown", "HorizontalWheel",
+        "CtrlLeftClick", "CtrlRightClick", "CtrlMiddleClick"
+    ];
 
     private void UpdateGestureCardColors(string gestureName, string target)
     {
@@ -2057,6 +2310,12 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             "Yanm" => (new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x80, 0x10, 0xB9, 0x81)), // Green border
                        new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x0D, 0x10, 0xB9, 0x81)), // Green background
                        new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x10, 0xB9, 0x81))), // Green highlight
+            "Gesture" => (new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xA0, 0xFB, 0x92, 0x3C)),
+                          new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x14, 0xFB, 0x92, 0x3C)),
+                          new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0xFB, 0x92, 0x3C))),
+            "WindowSnap" => (new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xA0, 0x38, 0xBD, 0xF8)),
+                             new SolidColorBrush(System.Windows.Media.Color.FromArgb(0x14, 0x38, 0xBD, 0xF8)),
+                             new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x38, 0xBD, 0xF8))),
             _ => (new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x27, 0x27, 0x2A)), // Gray border
                   new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x18, 0x18, 0x18)), // Gray background
                   new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x52, 0x52, 0x5B))) // Gray highlight
@@ -2076,7 +2335,20 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
     private void UpdateGestureButtonStyles(string gestureName, string activeTarget)
     {
-        var targets = new[] { "None", "Panel", "Radial", "Yanm" };
+        if (_mouseTriggerTargetCombos.TryGetValue(gestureName, out var combo))
+        {
+            _isUpdatingMouseTriggerTargetCombos = true;
+            try
+            {
+                combo.SelectedValue = activeTarget;
+            }
+            finally
+            {
+                _isUpdatingMouseTriggerTargetCombos = false;
+            }
+        }
+
+        var targets = new[] { "None", "Panel", "Radial", "Yanm", "WindowSnap", "Gesture" };
         
         foreach (var target in targets)
         {
@@ -2094,6 +2366,8 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
                     "Panel" => new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x25, 0x63, 0xEB)), // Blue
                     "Radial" => new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x93, 0x33, 0xEA)), // Purple
                     "Yanm" => new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x05, 0x96, 0x69)), // Green
+                    "WindowSnap" => new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x02, 0x84, 0xC7)),
+                    "Gesture" => new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0xEA, 0x58, 0x0C)),
                     _ => new SolidColorBrush(System.Windows.Media.Color.FromArgb(0xFF, 0x3F, 0x3F, 0x46))
                 };
                 button.Background = activeBrush;
@@ -3575,6 +3849,190 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(ExtensionSearchSummary));
     }
 
+    private void RefreshMouseGestureManagement()
+    {
+        MouseGestureItems.Clear();
+        MouseGestureExtensionOptions.Clear();
+        MouseGestureQuickBindItems.Clear();
+
+        var commands = _mainWindow.GetExtensionsForSettings();
+        var commandMap = commands
+            .GroupBy(static command => command.ExtensionId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (var command in commands.Where(static command => command.Source == CommandSource.LocalExtension && !command.IsProviderResult))
+        {
+            MouseGestureExtensionOptions.Add(new MouseGestureExtensionOption(command));
+        }
+
+        var assignedBySequence = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in LocalExtensionCatalog.LoadEntries())
+        {
+            var gesture = entry.Manifest.MouseGesture;
+            if (gesture == null ||
+                string.IsNullOrWhiteSpace(gesture.Sequence) && !MouseGestureTemplateRecognizer.HasTemplateData(gesture.Data))
+            {
+                continue;
+            }
+
+            commandMap.TryGetValue(entry.Manifest.Id, out var command);
+            var directory = Path.GetDirectoryName(entry.ManifestPath);
+            var sequence = MouseGestureNaming.NormalizeSequence(gesture.Sequence);
+            var sign = string.IsNullOrWhiteSpace(gesture.Sign)
+                ? MouseGestureNaming.GetDisplayName(sequence)
+                : gesture.Sign.Trim();
+            if (!string.IsNullOrWhiteSpace(sequence) && !assignedBySequence.ContainsKey(sequence))
+            {
+                assignedBySequence[sequence] = entry.Manifest.Name;
+            }
+
+            MouseGestureItems.Add(new SettingsMouseGestureItem(
+                entry.Manifest.Id,
+                entry.Manifest.Name,
+                entry.Manifest.Category ?? command?.Category ?? "扩展",
+                BuildGestureTriggerLabel(),
+                sequence,
+                sign,
+                gesture.Data,
+                gesture.MinDistance ?? 30,
+                gesture.Tolerance,
+                command?.IconSource ?? ExtensionIconLibrary.ResolveImageSource(entry.Manifest.Icon, directory),
+                command?.VectorIcon ?? ExtensionIconLibrary.ResolveVectorIcon(entry.Manifest.Icon),
+                command?.AccentBrush ?? CreateAccentBrush(entry.Manifest.AccentHex),
+                command?.DisplayGlyph ?? BuildFallbackGlyph(entry.Manifest.Name)));
+        }
+
+        foreach (var template in CommonMouseGestureTemplates)
+        {
+            assignedBySequence.TryGetValue(template.Sequence, out var assignedTitle);
+            MouseGestureQuickBindItems.Add(new MouseGestureQuickBindItem(
+                template.Sequence,
+                template.Name,
+                template.Description,
+                assignedTitle));
+        }
+
+        OnPropertyChanged(nameof(MouseGestureManagementSummary));
+        OnPropertyChanged(nameof(MouseGestureEmptyVisibility));
+    }
+
+    private async void ClearMouseGestureButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SettingsMouseGestureItem item })
+        {
+            return;
+        }
+
+        var result = await _mainWindow.UpdateExtensionMouseGestureFromSettingsAsync(item.ExtensionId, null);
+        await HandleMouseGestureUpdateResultAsync(result);
+    }
+
+    private async void EditMouseGestureExtensionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: SettingsMouseGestureItem item })
+        {
+            return;
+        }
+
+        var extensionItem = _cachedExtensionItems.FirstOrDefault(x =>
+            x.ExtensionId.Equals(item.ExtensionId, StringComparison.OrdinalIgnoreCase));
+        if (extensionItem == null)
+        {
+            RefreshExtensionCacheFromMainWindow();
+            extensionItem = _cachedExtensionItems.FirstOrDefault(x =>
+                x.ExtensionId.Equals(item.ExtensionId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (extensionItem != null)
+        {
+            await EditExtensionItemAsync(extensionItem);
+            RefreshMouseGestureManagement();
+        }
+    }
+
+    private async void BindCommonMouseGestureButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: MouseGestureQuickBindItem item } ||
+            item.SelectedExtension == null)
+        {
+            SyncStatusText = "请选择一个扩展后再绑定常用手势。";
+            return;
+        }
+
+        var runtimeTrigger = MouseGestureTriggerModes.ToRuntimeTrigger(_settings.MouseGestureTriggerMode);
+        var gesture = new LocalExtensionMouseGestureManifest
+        {
+            Trigger = string.IsNullOrWhiteSpace(runtimeTrigger) ? "right-drag" : runtimeTrigger,
+            Sequence = item.Sequence,
+            Sign = item.DisplayName,
+            MinDistance = 30
+        };
+
+        var result = await _mainWindow.UpdateExtensionMouseGestureFromSettingsAsync(item.SelectedExtension.ExtensionId, gesture);
+        await HandleMouseGestureUpdateResultAsync(result);
+    }
+
+    private void RefreshMouseGestureManagementButton_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshMouseGestureManagement();
+        SyncStatusText = "鼠标手势管理列表已刷新。";
+    }
+
+    private async Task HandleMouseGestureUpdateResultAsync((bool ok, string message, CommandItem? updated) result)
+    {
+        if (!string.IsNullOrWhiteSpace(result.message))
+        {
+            SyncStatusText = result.message;
+        }
+
+        if (!result.ok)
+        {
+            if (!string.IsNullOrWhiteSpace(result.message))
+            {
+                System.Windows.MessageBox.Show(this, result.message, "更新鼠标手势失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+
+            return;
+        }
+
+        _settings = _mainWindow.GetCurrentAppSettings();
+        RefreshExtensionCacheFromMainWindow();
+        RefreshExtensionItems();
+        RefreshMouseGestureManagement();
+        await Task.CompletedTask;
+    }
+
+    private string BuildGestureTriggerLabel()
+    {
+        return MouseGestureTriggerSummary == "未启用"
+            ? "全局触发未启用"
+            : MouseGestureTriggerSummary;
+    }
+
+    private static SolidColorBrush CreateAccentBrush(string? accentHex)
+    {
+        try
+        {
+            var normalized = string.IsNullOrWhiteSpace(accentHex) ? "#FF3B82F6" : accentHex.Trim();
+            if (normalized.StartsWith('#') && normalized.Length == 7)
+            {
+                normalized = "#FF" + normalized[1..];
+            }
+
+            return (SolidColorBrush)new BrushConverter().ConvertFromString(normalized)!;
+        }
+        catch
+        {
+            return new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x3B, 0x82, 0xF6));
+        }
+    }
+
+    private static string BuildFallbackGlyph(string? title)
+    {
+        var first = (title ?? string.Empty).Trim().EnumerateRunes().FirstOrDefault();
+        return first.Value == 0 ? "扩" : first.ToString().ToUpperInvariant();
+    }
+
     private void ClearSelectedExtensionItem()
     {
         SelectedExtensionItem = null;
@@ -3763,6 +4221,10 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         [
             "鼠标触发", "鼠标面板", "快捷面板", "面板", "鼠标", "右键", "中键", "x1", "x2", "长按", "滚轮", "松开", "quick panel", "mouse", "middle", "right click"
         ],
+        "mousegestures" =>
+        [
+            "鼠标手势", "手势", "轨迹", "录制", "绑定", "常用手势", "gesture", "mouse gesture", "stroke", "draw"
+        ],
         "radial" =>
         [
             "燕环", "轮盘", "游戏轮盘", "capslock", "caps", "radial", "ring", "wheel", "gesture"
@@ -3807,6 +4269,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         update(_settings.QuickPanelMouseTriggers);
         OnPropertyChanged();
         OnPropertyChanged(nameof(QuickPanelTriggerSummary));
+        OnPropertyChanged(nameof(MouseGestureTriggerSummary));
     }
 
     private void UpdateRadialMenu<T>(T value, Action<RadialMenuSettings> update)
@@ -3859,6 +4322,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             case MouseTriggerModes.RightDrag:
                 radial.TriggerRightButtonDrag = true;
                 break;
+            case MouseTriggerModes.MiddleDrag:
+                radial.TriggerMiddleButtonDrag = true;
+                break;
             case MouseTriggerModes.HorizontalWheel:
                 radial.TriggerHorizontalWheel = true;
                 break;
@@ -3884,6 +4350,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     {
         radial.MouseTriggerMode =
             radial.TriggerRightButtonDrag ? MouseTriggerModes.RightDrag :
+            radial.TriggerMiddleButtonDrag ? MouseTriggerModes.MiddleDrag :
             radial.TriggerRightButtonLongPress ? MouseTriggerModes.RightLongPress :
             radial.TriggerMiddleButtonLongPress ? MouseTriggerModes.MiddleLongPress :
             radial.TriggerMiddleButtonDown ? MouseTriggerModes.MiddleDown :
@@ -3928,6 +4395,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
             case MouseTriggerModes.RightDrag:
                 yanm.TriggerRightButtonDrag = true;
                 break;
+            case MouseTriggerModes.MiddleDrag:
+                yanm.TriggerMiddleButtonDrag = true;
+                break;
             case MouseTriggerModes.HorizontalWheel:
                 yanm.TriggerHorizontalWheel = true;
                 break;
@@ -3938,6 +4408,7 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
     {
         yanm.MouseTriggerMode =
             yanm.TriggerRightButtonDrag ? MouseTriggerModes.RightDrag :
+            yanm.TriggerMiddleButtonDrag ? MouseTriggerModes.MiddleDrag :
             yanm.TriggerRightButtonLongPress ? MouseTriggerModes.RightLongPress :
             yanm.TriggerMiddleButtonLongPress ? MouseTriggerModes.MiddleLongPress :
             yanm.TriggerMiddleButtonDown ? MouseTriggerModes.MiddleDown :
@@ -3968,10 +4439,17 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
         _mainWindow.RefreshAppSettings();
         _mainWindow.NotifyQuickPanelSettingsChanged("quickpanel-trigger-settings-saved");
         SyncStatusText = $"鼠标面板触发已保存：{QuickPanelTriggerSummary}";
+        OnPropertyChanged(nameof(MouseGestureTriggerSummary));
+        OnPropertyChanged(nameof(MouseGestureTriggerMode));
+        OnPropertyChanged(nameof(MouseGestureManagementSummary));
         OnPropertyChanged(nameof(YanmSummary));
         OnPropertyChanged(nameof(RadialAssignedMouseTriggerSummary));
         OnPropertyChanged(nameof(YanmAssignedMouseTriggerSummary));
         OnPropertyChanged(nameof(RadialMenuSummary));
+        if (IsMouseGesturesSelected)
+        {
+            RefreshMouseGestureManagement();
+        }
     }
 
     private void SaveYarnSelectSettings_Click(object sender, RoutedEventArgs e)
@@ -5297,6 +5775,9 @@ public partial class SettingsWindow : Window, INotifyPropertyChanged
 
         OnPropertyChanged(nameof(ExecuteOnButtonRelease));
         OnPropertyChanged(nameof(QuickPanelTriggerSummary));
+        OnPropertyChanged(nameof(MouseGestureTriggerSummary));
+        OnPropertyChanged(nameof(MouseGestureTriggerMode));
+        OnPropertyChanged(nameof(MouseGestureManagementSummary));
         OnPropertyChanged(nameof(EnableRadialMenu));
         OnPropertyChanged(nameof(EnableRadialCapsLockHold));
         OnPropertyChanged(nameof(RadialActivationKey));
@@ -5374,6 +5855,243 @@ public sealed record SettingsNavigationItem(string Key, string IconReference, st
     public Geometry? IconGeometry => ExtensionIconLibrary.ResolveVectorIcon(IconReference);
 }
 
+public sealed record MouseGestureTemplateDefinition(string Sequence, string Name, string Description);
+
+public sealed class SettingsMouseGestureItem
+{
+    public SettingsMouseGestureItem(
+        string extensionId,
+        string title,
+        string category,
+        string triggerLabel,
+        string sequence,
+        string displayName,
+        int[]? data,
+        int minDistance,
+        int? tolerance,
+        ImageSource? iconSource,
+        Geometry? vectorIcon,
+        System.Windows.Media.Brush accentBrush,
+        string displayGlyph)
+    {
+        ExtensionId = extensionId;
+        Title = title;
+        Category = category;
+        TriggerLabel = triggerLabel;
+        Sequence = sequence;
+        DisplayName = string.IsNullOrWhiteSpace(displayName) ? MouseGestureNaming.GetDisplayName(sequence) : displayName;
+        MinDistance = minDistance;
+        Tolerance = tolerance;
+        IconSource = iconSource;
+        VectorIcon = vectorIcon;
+        AccentBrush = accentBrush;
+        DisplayGlyph = displayGlyph;
+        PreviewGeometry = MouseGesturePreviewGeometryFactory.Create(sequence, data);
+    }
+
+    public string ExtensionId { get; }
+
+    public string Title { get; }
+
+    public string Category { get; }
+
+    public string TriggerLabel { get; }
+
+    public string Sequence { get; }
+
+    public string DisplayName { get; }
+
+    public int MinDistance { get; }
+
+    public int? Tolerance { get; }
+
+    public string DetailText
+    {
+        get
+        {
+            var sequenceText = string.IsNullOrWhiteSpace(Sequence) ? "已录制图形" : $"序列 {Sequence}";
+            return $"{sequenceText} · 最小距离 {MinDistance}px" + (Tolerance is > 0 ? $" · 容差 {Tolerance}" : string.Empty);
+        }
+    }
+
+    public ImageSource? IconSource { get; }
+
+    public Geometry? VectorIcon { get; }
+
+    public System.Windows.Media.Brush AccentBrush { get; }
+
+    public string DisplayGlyph { get; }
+
+    public Geometry PreviewGeometry { get; }
+
+    public bool HasImageIcon => IconSource != null;
+
+    public bool HasVectorIcon => VectorIcon != null;
+
+    public bool UseGlyphIcon => !HasImageIcon && !HasVectorIcon && !string.IsNullOrWhiteSpace(DisplayGlyph);
+}
+
+public sealed class MouseGestureQuickBindItem : INotifyPropertyChanged
+{
+    private MouseGestureExtensionOption? _selectedExtension;
+
+    public MouseGestureQuickBindItem(string sequence, string displayName, string description, string? assignedTitle)
+    {
+        Sequence = sequence;
+        DisplayName = displayName;
+        Description = description;
+        AssignedTitle = assignedTitle ?? string.Empty;
+        PreviewGeometry = MouseGesturePreviewGeometryFactory.Create(sequence, data: null);
+    }
+
+    public string Sequence { get; }
+
+    public string DisplayName { get; }
+
+    public string Description { get; }
+
+    public string AssignedTitle { get; }
+
+    public Geometry PreviewGeometry { get; }
+
+    public bool IsAssigned => !string.IsNullOrWhiteSpace(AssignedTitle);
+
+    public string StatusText => IsAssigned ? $"已被 {AssignedTitle} 使用" : "未绑定";
+
+    public MouseGestureExtensionOption? SelectedExtension
+    {
+        get => _selectedExtension;
+        set
+        {
+            if (Equals(value, _selectedExtension))
+            {
+                return;
+            }
+
+            _selectedExtension = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SelectedExtension)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
+
+public sealed class MouseGestureExtensionOption
+{
+    public MouseGestureExtensionOption(CommandItem command)
+    {
+        ExtensionId = command.ExtensionId;
+        Label = command.Title;
+        Category = command.Category;
+        IconSource = command.IconSource;
+        VectorIcon = command.VectorIcon;
+        AccentBrush = command.AccentBrush;
+        DisplayGlyph = command.DisplayGlyph;
+    }
+
+    public string ExtensionId { get; }
+
+    public string Label { get; }
+
+    public string Category { get; }
+
+    public ImageSource? IconSource { get; }
+
+    public Geometry? VectorIcon { get; }
+
+    public System.Windows.Media.Brush AccentBrush { get; }
+
+    public string DisplayGlyph { get; }
+
+    public bool HasImageIcon => IconSource != null;
+
+    public bool HasVectorIcon => VectorIcon != null;
+
+    public bool UseGlyphIcon => !HasImageIcon && !HasVectorIcon && !string.IsNullOrWhiteSpace(DisplayGlyph);
+
+    public override string ToString() => Label;
+}
+
+internal static class MouseGesturePreviewGeometryFactory
+{
+    public static Geometry Create(string? sequence, int[]? data)
+    {
+        var points = MouseGestureTemplateRecognizer.HasTemplateData(data)
+            ? DecodeTemplateData(data!)
+            : BuildSequencePoints(MouseGestureNaming.NormalizeSequence(sequence));
+        return BuildGeometry(ScalePoints(points, 52, 8));
+    }
+
+    private static List<WpfPoint> DecodeTemplateData(int[] data)
+    {
+        var points = new List<WpfPoint>(data.Length / 2);
+        for (var index = 0; index + 1 < data.Length; index += 2)
+        {
+            points.Add(new WpfPoint(data[index], data[index + 1]));
+        }
+
+        return points;
+    }
+
+    private static List<WpfPoint> BuildSequencePoints(string sequence)
+    {
+        var points = new List<WpfPoint> { new(0, 0) };
+        var current = new WpfPoint(0, 0);
+        foreach (var ch in sequence)
+        {
+            var delta = ch switch
+            {
+                '↑' => new WpfVector(0, -1),
+                '↗' => new WpfVector(1, -1),
+                '→' => new WpfVector(1, 0),
+                '↘' => new WpfVector(1, 1),
+                '↓' => new WpfVector(0, 1),
+                '↙' => new WpfVector(-1, 1),
+                '←' => new WpfVector(-1, 0),
+                '↖' => new WpfVector(-1, -1),
+                _ => new WpfVector(0, 0)
+            };
+            current += delta;
+            points.Add(current);
+        }
+
+        return points.Count > 1 ? points : [new WpfPoint(0, 0), new WpfPoint(1, 0)];
+    }
+
+    private static List<WpfPoint> ScalePoints(IReadOnlyList<WpfPoint> points, double size, double padding)
+    {
+        var minX = points.Min(static point => point.X);
+        var maxX = points.Max(static point => point.X);
+        var minY = points.Min(static point => point.Y);
+        var maxY = points.Max(static point => point.Y);
+        var width = Math.Max(1, maxX - minX);
+        var height = Math.Max(1, maxY - minY);
+        var scale = Math.Min((size - (padding * 2)) / width, (size - (padding * 2)) / height);
+        var actualWidth = width * scale;
+        var actualHeight = height * scale;
+        var offsetX = padding + ((size - (padding * 2) - actualWidth) / 2);
+        var offsetY = padding + ((size - (padding * 2) - actualHeight) / 2);
+        return points
+            .Select(point => new WpfPoint(
+                offsetX + ((point.X - minX) * scale),
+                offsetY + ((point.Y - minY) * scale)))
+            .ToList();
+    }
+
+    private static Geometry BuildGeometry(IReadOnlyList<WpfPoint> points)
+    {
+        var geometry = new StreamGeometry();
+        using (var context = geometry.Open())
+        {
+            context.BeginFigure(points[0], isFilled: false, isClosed: false);
+            context.PolyLineTo(points.Skip(1).ToList(), isStroked: true, isSmoothJoin: true);
+        }
+
+        geometry.Freeze();
+        return geometry;
+    }
+}
+
 public sealed record SettingsShortcutItem(string ExtensionId, string Title, string Category, string? Shortcut)
 {
     public string ShortcutValue => Shortcut ?? string.Empty;
@@ -5390,7 +6108,10 @@ public sealed record YarnSelectActionTypeOption(string Value, string Label)
 
 public sealed record YanmActivationKeyOption(string Value, string Label);
 
-public sealed record MouseTriggerOption(string Value, string Label);
+public sealed record MouseTriggerOption(string Value, string Label)
+{
+    public override string ToString() => Label;
+}
 
 public sealed record YarnSelectExtensionOption(
     string ExtensionId,
